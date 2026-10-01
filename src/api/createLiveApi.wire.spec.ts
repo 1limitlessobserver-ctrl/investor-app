@@ -784,6 +784,25 @@ describe('the refresh and its edges', () => {
     expect(t.calls.map(bearer)).toEqual(['Bearer a1', 'Bearer a2']);
   });
 
+  it('refreshes rather than retry with an empty access token that only looks newer', async () => {
+    // By the time the 401 lands the store holds a refresh token alone (an empty access token): that
+    // is not a token to send, so the call refreshes with it and retries with the pair it gets.
+    const wait = gate();
+    const t = setup(async (c) => {
+      if (isRefresh(c)) return json(200, pair(3));
+      if (bearer(c) !== 'Bearer a1') return json(200, { id: 'u1' });
+      await wait.open;
+      return json(401, { error: 'unauthorized' });
+    });
+    const first = t.api.me();
+    t.store({ ...pair(2), accessToken: '' });
+    wait.release();
+    expect((await first).id).toBe('u1');
+    expect(t.calls.map(path)).toEqual(['/me', '/auth/refresh', '/me']);
+    expect(t.calls.map(bearer)).toEqual(['Bearer a1', null, 'Bearer a3']);
+    expect(bodyOf(t.calls[1]!)).toEqual({ refreshToken: 'r2' });
+  });
+
   it('waits for a refresh already under way before it judges a session_revoked', async () => {
     // The refresh has been applied by the platform, which replaced the session of a1, but its
     // answer has not been stored yet when the call made with a1 hears session_revoked.

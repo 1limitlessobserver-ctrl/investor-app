@@ -349,8 +349,9 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
     // Signed out meanwhile (logout(), or another call's revocation): nothing to refresh with, and
     // no one left to tell.
     if (now === null) throw e;
-    // Another call refreshed since this one went out.
-    if (now.accessToken !== sent) return now.accessToken;
+    // Another call refreshed since this one went out. A refresh token alone (an empty access token)
+    // is not a token to send, so it falls through to refreshing with it.
+    if (now.accessToken !== '' && now.accessToken !== sent) return now.accessToken;
     if (e.code === 'unauthorized') return (await refreshOnce()).accessToken;
     // session_revoked, and no newer token to try: the session is over.
     await endSession(sent);
