@@ -491,6 +491,13 @@ describe('the error envelope', () => {
     ]);
     const missing = await failure(setup(page(404)).api.me());
     expect([missing.code, missing.status]).toEqual(['request_failed', 404]);
+    // A host's own 429 page still means slow down.
+    const busy = setup(
+      () =>
+        new Response('<html>Slow down</html>', { status: 429, headers: { 'Retry-After': '9' } }),
+    );
+    const limited = await failure(busy.api.me());
+    expect([limited.code, limited.retryAfterSeconds]).toEqual(['rate_limited', 9]);
     const empty = await failure(setup(() => new Response(null, { status: 500 })).api.me());
     expect([empty.code, empty.status]).toEqual(['server_error', 500]);
     // JSON that is not an object has no envelope to read either.
@@ -1099,36 +1106,32 @@ describe('the refresh and its edges', () => {
     },
   );
 
-  const lasting: [string, () => Response, string][] = [
-    [
-      'a 426',
-      () => json(426, { error: 'upgrade_required', minSupportedAppVersion: '1.3.0' }),
-      'upgrade_required',
-    ],
-    ['a 429', () => json(429, { error: 'rate_limited' }, { 'Retry-After': '5' }), 'rate_limited'],
-    [
-      'a lost connection',
-      () => {
-        throw new TypeError('Failed to fetch');
-      },
-      'network',
-    ],
-  ];
-  it.each(lasting)('keeps the session when the refresh meets %s', async (_name, answer, code) => {
-    const t = setup((c) => (isRefresh(c) ? answer() : json(401, { error: 'unauthorized' })));
-    expect((await failure(t.api.me())).code).toBe(code);
-    expect(t.signedOut).toEqual([]);
-    expect(t.tokens()).toEqual(pair(1));
-  });
-
-  it('signs out when the refresh is refused with any other 4xx', async () => {
-    const t = setup((c) =>
-      isRefresh(c) ? json(403, { error: 'forbidden' }) : json(401, { error: 'unauthorized' }),
-    );
-    expect((await failure(t.api.me())).code).toBe('forbidden');
-    expect(t.signedOut).toEqual(['refresh_failed']);
-    expect(t.tokens()).toBeNull();
-  });
+  // A refusal is the platform's own word about the refresh token: a 4xx that names an error, but
+  // 426 (update first) and 429 (slow down). A host's or proxy's page names none, and keeps it.
+  const page = (status: number) => () => new Response('<html>Not here</html>', { status });
+  it.each([
+    ['401 session_revoked', () => json(401, { error: 'session_revoked' }), 'session_revoked', true],
+    ['403 forbidden', () => json(403, { error: 'forbidden' }), 'forbidden', true],
+    ['400 invalid_input', () => json(400, { error: 'invalid_input' }), 'invalid_input', true],
+    ['403 page', page(403), 'request_failed', false],
+    ['404 page', page(404), 'request_failed', false],
+    ['408 page', page(408), 'request_failed', false],
+    ['421 page', page(421), 'request_failed', false],
+    ['426', () => json(426, { error: 'upgrade_required' }), 'upgrade_required', false],
+    ['429', () => json(429, { error: 'rate_limited' }), 'rate_limited', false],
+    ['500', () => json(500, { error: 'server_error' }), 'server_error', false],
+    ['503 page', page(503), 'server_error', false],
+    ['a lost connection', () => Promise.reject(new TypeError('Failed to fetch')), 'network', false],
+  ] as const)(
+    'throws a refresh answered %s as it is, and signs out only on a refusal',
+    async (_answer, answer: Script, code, refused) => {
+      const t = setup((c) => (isRefresh(c) ? answer(c) : json(401, { error: 'unauthorized' })));
+      expect((await failure(t.api.me())).code).toBe(code);
+      expect([t.signedOut, t.tokens()]).toEqual(
+        refused ? [['refresh_failed'], null] : [[], pair(1)],
+      );
+    },
+  );
 
   // The platform answers a refresh some time after it was asked, and the store can change in
   // between: the investor signs out, signs in again, or another tab refreshes (the refresh token

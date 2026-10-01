@@ -253,12 +253,22 @@ const isTokenProblem = (e: unknown): e is TokenProblem =>
   e.status === 401 &&
   (e.code === 'unauthorized' || e.code === 'session_revoked');
 
+/** The errors whose code the platform named itself: an envelope with a non-empty `error`. */
+const namedByPlatform = new WeakSet<MobileApiError>();
+
 /**
- * The platform refused the refresh token itself (revoked, replayed, expired): any 4xx but a 426
- * (the app must update first) and a 429 (slow down), which say nothing about the token.
+ * The platform refused the refresh token itself (revoked, replayed, expired): a 4xx with a
+ * platform error code, but 426 (update first) and 429 (slow down), which say nothing about the
+ * token. A 4xx without a code is some host's or proxy's page and keeps the session. This is
+ * narrower, on purpose, than the design's "a refresh refused with 4xx".
  */
 const isRefusal = (e: unknown): e is MobileApiError =>
-  MobileApiError.is(e) && e.status >= 400 && e.status < 500 && e.status !== 426 && e.status !== 429;
+  MobileApiError.is(e) &&
+  namedByPlatform.has(e) &&
+  e.status >= 400 &&
+  e.status < 500 &&
+  e.status !== 426 &&
+  e.status !== 429;
 
 /** The token store failed before the platform was asked anything. */
 const storageError = (cause: unknown): MobileApiError =>
@@ -317,9 +327,15 @@ const STATEMENT_TYPE = /^text\/(?:csv|plain)\s*(?:;|$)/i;
 const hasSessions = (value: unknown): value is { sessions: SessionView[] } =>
   isRecord(value) && Array.isArray(value.sessions);
 
-/** What an answer without a usable `error` is called: the platform's own fallback, or what a 426 is. */
+/** What an answer without a usable `error` is called: what a 426 or 429 is, else the platform's. */
 const fallbackCode = (status: number): string =>
-  status === 426 ? 'upgrade_required' : status >= 500 ? 'server_error' : 'request_failed';
+  status === 426
+    ? 'upgrade_required'
+    : status === 429
+      ? 'rate_limited'
+      : status >= 500
+        ? 'server_error'
+        : 'request_failed';
 
 /**
  * A Retry-After header as seconds: whole seconds, or an HTTP date as the whole seconds until then
@@ -350,7 +366,8 @@ function errorFrom(
   fieldNames: ReadonlyMap<string, string> | undefined,
 ): MobileApiError {
   const { error, message, fields, detail, retryAfterSeconds } = envelope;
-  return new MobileApiError(textOf(error) ?? fallbackCode(status), status, textOf(message), {
+  const code = textOf(error);
+  const e = new MobileApiError(code ?? fallbackCode(status), status, textOf(message), {
     fields: isRecord(fields)
       ? Object.fromEntries(
           Object.entries(fields)
@@ -364,6 +381,8 @@ function errorFrom(
         ? retryAfterSeconds
         : secondsOf(retryAfter),
   });
+  if (code !== undefined) namedByPlatform.add(e);
+  return e;
 }
 
 export function createLiveApi(config: LiveApiConfig): LiveApi {
