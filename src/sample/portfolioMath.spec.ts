@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import expected from './__fixtures__/expected.json';
+import { sampleData } from './sampleData';
 import { portfolioMath, type PositionInput } from './portfolioMath';
 
 // The platform's own cases (src/lib/mobile/portfolio.test.ts), unchanged but for the import.
@@ -219,5 +221,79 @@ describe('portfolioMath (what the platform’s staged cases leave open)', () => 
       },
     ]);
     expect(portfolioMath.buildLiveKpis(a, 1234)[3]?.value).toBe('#1,234');
+  });
+});
+
+// The brief's parity spec, adjusted to the fixture (ruling 5) and to the platform's arguments as
+// gen/generate.ts called the functions:
+//   - expected.json carries `now`, not `generatedAt`; `positions` is keyed by id; the projection is
+//     summarised as { length, first, middle: series[11], last }; `nextSteps` lists the ids only;
+//     `kpis` are mapped as the dashboard route maps them ({ label, value, hint, basis }).
+//   - positionView, allocationBySector and projectionSeries take PositionInput rows (generate.ts
+//     joins each position with its plan, as the platform's toPositionInput does); allocation and
+//     projection get the ACTIVE and MATURED ones, as GET /dashboard passes them.
+//   - getUserAggregates(rows, now) is the platform's function minus its database read (which
+//     selected the ACTIVE and MATURED positions); buildLiveKpis(aggregates, rank) and
+//     nextSteps(NextStepsInput) keep the platform's signatures. The next-steps input is read from
+//     the sample world the way GET /dashboard reads it from the database.
+describe('portfolioMath parity with the platform', () => {
+  const now = new Date(expected.now);
+  const state = sampleData.createState({ now });
+  const planById = new Map(state.plans.map((p) => [p.id, p]));
+  const inputs: PositionInput[] = state.positions.map((p) => {
+    const plan = planById.get(p.planId)!;
+    return {
+      id: p.id,
+      planName: plan.name,
+      sector: plan.sector,
+      amountCents: p.amountCents,
+      projectedReturnPct: plan.projectedReturnPct,
+      termMonths: plan.termMonths,
+      status: p.status,
+      startedAt: p.startedAt,
+      maturesAt: p.maturesAt,
+    };
+  });
+  const open = inputs.filter((p) => p.status === 'ACTIVE' || p.status === 'MATURED');
+
+  it('values every position as the platform does', () => {
+    expect(inputs.map((p) => p.id)).toEqual(Object.keys(expected.positions));
+    const want = expected.positions as Record<string, unknown>;
+    for (const p of inputs) expect(portfolioMath.positionView(p, now), p.id).toEqual(want[p.id]);
+  });
+
+  it('aggregates, allocates, projects and advises as the platform does', () => {
+    const aggregates = portfolioMath.getUserAggregates(inputs, now);
+    expect(aggregates).toEqual(expected.aggregates);
+    expect(portfolioMath.allocationBySector(open)).toEqual(expected.allocation);
+    const series = portfolioMath.projectionSeries(open, now);
+    expect({
+      length: series.length,
+      first: series[0],
+      middle: series[11],
+      last: series[series.length - 1],
+    }).toEqual(expected.series);
+    expect(
+      portfolioMath
+        .buildLiveKpis(aggregates, state.rank)
+        .map((k) => ({
+          label: k.label,
+          value: k.value,
+          hint: k.hint,
+          basis: k.basis ?? 'projection',
+        })),
+    ).toEqual(expected.kpis);
+    const steps = portfolioMath.nextSteps({
+      kycRequired: state.brand.features.kyc,
+      kycStatus: state.kyc.status,
+      hasLegacyPlan: state.legacy.plan !== null,
+      pendingChoices: state.maturityChoices.filter((c) => c.status === 'PENDING').length,
+      pendingRequests:
+        state.manualDeposits.filter((d) => d.status === 'PENDING').length +
+        state.cashWithdrawals.filter((w) => w.status === 'PENDING').length +
+        state.positionWithdrawals.filter((w) => w.status === 'PENDING').length,
+      positionCount: aggregates.positionCount,
+    });
+    expect(steps.map((s) => s.id)).toEqual(expected.nextSteps);
   });
 });
