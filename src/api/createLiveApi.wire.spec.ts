@@ -168,8 +168,8 @@ describe('the request as it goes out', () => {
     ['baseUrl', 'an unset origin', { baseUrl: 'undefined/api/mobile/v1' }],
     ['baseUrl', 'another scheme', { baseUrl: 'ftp://platform.test/api/mobile/v1' }],
     ['app.deviceId', 'too short', { app: { ...APP, deviceId: 'device1' } }],
-    ['app.deviceId', 'with an en dash', { app: { ...APP, deviceId: 'device–0001' } }],
-    ['app.deviceId', 'with a newline', { app: { ...APP, deviceId: 'device-0001\n' } }],
+    ['app.deviceId', 'spelled with an en dash', { app: { ...APP, deviceId: 'device–0001' } }],
+    ['app.deviceId', 'ended by a newline', { app: { ...APP, deviceId: 'device-0001\n' } }],
     ['app.version', 'empty', { app: { ...APP, version: '' } }],
   ])('refuses at once a config whose %s is %s', (field, _what, change) => {
     const build = () =>
@@ -452,13 +452,32 @@ describe('the routes', () => {
     path(c).startsWith('/statements/file?')
       ? new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8' } })
       : json(200, body);
+  // What a method resolves from that answer where it is not the body as it is: nothing for the
+  // methods whose answer the interface drops, the list, the bare pair, the CSV.
+  const shaped: Partial<Record<ApiMethod, unknown>> = {
+    sessions: [],
+    refresh: pair(9),
+    loginTwoFactor: pair(9),
+    statementCsv: csv,
+    logout: undefined,
+    changePassword: undefined,
+    setPin: undefined,
+    disableTwoFactor: undefined,
+    closeAccount: undefined,
+    pushSubscribe: undefined,
+    pushUnsubscribe: undefined,
+    replyTicket: undefined,
+    maturityChoice: undefined,
+    removeBeneficiary: undefined,
+  };
 
   it.each(everyMethod)(
-    '%s sends one request, to its route, as the platform reads it',
+    '%s sends one request, to its route, as the platform reads it, and resolves what it should',
     async (name) => {
       const t = setup(anything);
       const row = wire[name];
-      await row.run(t.api);
+      const answer = await row.run(t.api);
+      expect(answer).toEqual(Object.hasOwn(shaped, name) ? shaped[name] : body);
       expect(t.calls).toHaveLength(1);
       const call = t.calls[0]!;
       const [verb, target] = row.route.split(' ') as [string, string];
@@ -502,24 +521,16 @@ describe('the routes', () => {
     expect(bodyOf(t.calls[2]!)).toEqual({});
   });
 
-  it('answers what the interface promises: the unwrapped list, nothing, or the body', async () => {
-    const t = setup(() =>
-      json(200, { ok: true, current: true, sessionsRevoked: 2, sessions: [{ id: 's1' }] }),
-    );
-    expect(await t.api.sessions()).toEqual([{ id: 's1' }]);
-    expect(await t.api.revokeSession('s1')).toMatchObject({ ok: true, current: true });
-    const nothing: ApiMethod[] = [
-      'changePassword',
-      'setPin',
-      'disableTwoFactor',
-      'closeAccount',
-      'pushSubscribe',
-      'pushUnsubscribe',
-      'replyTicket',
-      'maturityChoice',
-      'removeBeneficiary',
-    ];
-    for (const name of nothing) expect(await wire[name].run(t.api)).toBeUndefined();
+  it('encodes a query value so that the platform reads it back as it was', async () => {
+    const t = setup(() => json(200, {}));
+    for (const id of ['a b+c#d é', '']) await t.api.investment(id);
+    await t.api.notifications(0);
+    expect(t.calls.map(path)).toEqual([
+      '/investments/detail?id=a+b%2Bc%23d+%C3%A9',
+      '/investments/detail?id=',
+      '/notifications?limit=0',
+    ]);
+    expect(new URL(t.calls[0]!.url).searchParams.get('id')).toBe('a b+c#d é');
   });
 });
 
@@ -634,6 +645,9 @@ describe('the error envelope', () => {
       expect(await wait(limited, { 'Retry-After': unusable })).toBeNull();
     }
     expect(await wait(limited)).toBeNull();
+    // A Retry-After on another answer, such as a 503, is read as well.
+    const busy = setup(() => json(503, { error: 'server_error' }, { 'Retry-After': '120' }));
+    expect((await failure(busy.api.me())).retryAfterSeconds).toBe(120);
     // JSON can spell a number too big to be finite (1e999); that is no wait either.
     const huge = '{"error":"rate_limited","retryAfterSeconds":1e999}';
     const overflow = setup(
@@ -1235,6 +1249,38 @@ describe('the refresh and its edges', () => {
     expect(bearer(t.calls.find(isRefresh)!)).toBeNull();
     expect(t.calls.filter((c) => !isRefresh(c)).map(bearer)).toEqual(['Bearer a2', 'Bearer a2']);
   });
+
+  it.each([
+    ['refused', () => json(401, { error: 'session_revoked' }), 'session_revoked', true],
+    ['lost', () => Promise.reject(new TypeError('Failed to fetch')), 'network', false],
+    ['answered 503', () => json(503, { error: 'server_error' }), 'server_error', false],
+    ['answered 429', () => json(429, { error: 'rate_limited' }), 'rate_limited', false],
+  ] as const)(
+    'sends nothing but the first refresh after a restart when it is %s',
+    async (_how, answer: Script, code, refused) => {
+      const t = setup((c) => (isRefresh(c) ? answer(c) : json(200, {})), restarted(1));
+      expect((await failure(t.api.me())).code).toBe(code);
+      expect(t.calls.map(path)).toEqual(['/auth/refresh']);
+      expect([t.signedOut, t.tokens()]).toEqual(
+        refused ? [['refresh_failed'], null] : [[], restarted(1)],
+      );
+    },
+  );
+
+  it('refreshes again for the next call after a refresh that failed', async () => {
+    let refreshes = 0;
+    const t = setup((c) => {
+      if (isRefresh(c)) {
+        return ++refreshes === 1 ? Promise.reject(new TypeError('Failed')) : json(200, pair(2));
+      }
+      return bearer(c) === 'Bearer a1'
+        ? json(401, { error: 'unauthorized' })
+        : json(200, { id: 'u1' });
+    });
+    expect((await failure(t.api.me())).code).toBe('network');
+    expect((await t.api.me()).id).toBe('u1');
+    expect([refreshes, t.signedOut, t.tokens()]).toEqual([2, [], pair(2)]);
+  });
 });
 
 // A request belongs to the session it went out with. That session is over once the client has
@@ -1502,5 +1548,68 @@ describe('a platform that does not answer', () => {
     expect((await t.api.me()).id).toBe('u1');
     expect(t.calls.filter(isRefresh)).toHaveLength(2);
     expect([t.signedOut, t.tokens()]).toEqual([[], pair(2)]);
+  });
+});
+
+// The platform has no idempotency key: a money call sent twice can move money twice. Only a 401
+// about the token, which the platform answers before its handler runs, is ever sent again.
+describe.each([
+  ['a lost connection', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ['a 500', () => json(500, { error: 'server_error' })],
+  ['a 503', () => json(503, { error: 'payments_not_configured' })],
+  ['a 429', () => json(429, { error: 'rate_limited' }, { 'Retry-After': '1' })],
+] as const)('a money call answered with %s', (_answer, answer: Script) => {
+  it.each([
+    [
+      'sendTransfer',
+      (a: PlatformApi) => a.sendTransfer({ recipient: '$bob', amountCents: 300, pin: '1234' }),
+    ],
+    ['invest', (a: PlatformApi) => a.invest({ planId: 'p1', amountCents: 10000 })],
+    [
+      'requestWithdrawal',
+      (a: PlatformApi) => a.requestWithdrawal({ kind: 'cash', amountCents: 100 }),
+    ],
+    ['manualDeposit', (a: PlatformApi) => a.manualDeposit({ methodId: 'm1', amountCents: 1200 })],
+    ['cardDeposit', (a: PlatformApi) => a.cardDeposit({ amountCents: 5000 })],
+  ])('%s is sent once, and its failure thrown', async (_method, ask) => {
+    const t = setup(answer);
+    await failure(ask(t.api));
+    expect([t.calls.length, t.signedOut, t.tokens()]).toEqual([1, [], pair(1)]);
+  });
+});
+
+describe('onSignedOut', () => {
+  it.each([
+    ['a revoked session', () => json(401, { error: 'session_revoked' }), 'session_revoked'],
+    [
+      'a refused refresh',
+      (c: Call) =>
+        isRefresh(c)
+          ? json(401, { error: 'session_revoked' })
+          : json(401, { error: 'unauthorized' }),
+      'refresh_failed',
+    ],
+  ] as const)(
+    'hears of %s once the store is already clear',
+    async (_what, script: Script, reason) => {
+      const heard: [string, StoredSession | null][] = [];
+      const t = setup(script, pair(1), {
+        config: { onSignedOut: (why) => heard.push([why, t.tokens()]) },
+      });
+      await failure(t.api.me());
+      expect(heard).toEqual([[reason, null]]);
+    },
+  );
+
+  it('hears once of a refused refresh that several calls share', async () => {
+    const t = setup((c) =>
+      isRefresh(c) ? json(401, { error: 'session_revoked' }) : json(401, { error: 'unauthorized' }),
+    );
+    await Promise.all([t.api.me(), t.api.dashboard(), t.api.kyc()].map(failure));
+    expect([t.calls.filter(isRefresh).length, t.signedOut, t.writes]).toEqual([
+      1,
+      ['refresh_failed'],
+      [null],
+    ]);
   });
 });
