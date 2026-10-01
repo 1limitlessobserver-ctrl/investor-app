@@ -1,0 +1,117 @@
+{
+  "now": "2026-10-01T12:00:00.000Z",
+  "positions": {
+    "pos_helios": {
+      "principalCents": 42000000,
+      "accruedCents": 6446065,
+      "termReturnCents": 9660000,
+      "valueCents": 48446065,
+      "progressPct": 66.7
+    },
+    "pos_orbital": {
+      "principalCents": 30000000,
+      "accruedCents": 5634649,
+      "termReturnCents": 16200000,
+      "valueCents": 35634649,
+      "progressPct": 34.8
+    },
+    "pos_meridian": {
+      "principalCents": 18000000,
+      "accruedCents": 1350864,
+      "termReturnCents": 2430000,
+      "valueCents": 19350864,
+      "progressPct": 55.6
+    },
+    "pos_evergreen": {
+      "principalCents": 10000000,
+      "accruedCents": 750000,
+      "termReturnCents": 750000,
+      "valueCents": 10750000,
+      "progressPct": 100
+    },
+    "pos_treasury": {
+      "principalCents": 25000000,
+      "accruedCents": 1300000,
+      "termReturnCents": 1300000,
+      "valueCents": 26300000,
+      "progressPct": 100
+    }
+  },
+  "aggregates": {
+    "deployedCents": 100000000,
+    "portfolioValueCents": 114181578,
+    "earningsCents": 14181578,
+    "projectedYieldPct": 12.6,
+    "positionCount": 4,
+    "activeCount": 3,
+    "maturedCount": 1
+  },
+  "kpis": [
+    {
+      "label": "Projected Portfolio",
+      "value": "$1,141,815",
+      "hint": "4 recorded positions · principal + estimate",
+      "basis": "projection"
+    },
+    {
+      "label": "Estimated Earnings",
+      "value": "$141,815",
+      "hint": "Plan-rate estimate · not realized profit",
+      "basis": "projection"
+    },
+    {
+      "label": "Projected Yield",
+      "value": "12.6%",
+      "hint": "Configured plan rates · annualized",
+      "basis": "projection"
+    },
+    {
+      "label": "Projection-based Rank",
+      "value": "#128",
+      "hint": "Estimate-based ranking · not measured performance",
+      "basis": "projection"
+    }
+  ],
+  "allocation": [
+    {
+      "label": "Energy",
+      "valueCents": 42000000,
+      "weightPct": 42
+    },
+    {
+      "label": "Aerospace",
+      "valueCents": 30000000,
+      "weightPct": 30
+    },
+    {
+      "label": "Real Estate",
+      "valueCents": 18000000,
+      "weightPct": 18
+    },
+    {
+      "label": "Green Bonds",
+      "valueCents": 10000000,
+      "weightPct": 10
+    }
+  ],
+  "series": {
+    "length": 24,
+    "first": {
+      "date": "2025-06-01T09:00:00.000Z",
+      "valueCents": 42000000
+    },
+    "middle": {
+      "date": "2026-12-28T04:54:46.957Z",
+      "valueCents": 117028149
+    },
+    "last": {
+      "date": "2028-09-15T07:00:00.000Z",
+      "valueCents": 129040000
+    }
+  },
+  "nextSteps": [
+    "maturity_choice",
+    "pending_requests",
+    "legacy_plan"
+  ]
+}

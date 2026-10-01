@@ -7,3 +7,5 @@ coverage/
 dist/
 node_modules/
 package-lock.json
+# Written by the platform's own functions (Plan B's gen/generate.ts) and kept byte-identical to it.
+src/sample/__fixtures__/
