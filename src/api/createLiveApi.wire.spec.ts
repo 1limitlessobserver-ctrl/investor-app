@@ -422,10 +422,17 @@ describe('the routes', () => {
         verb === 'POST' ? bodyOf(call) : call.init.body,
       ]).toEqual(verb === 'POST' ? ['application/json', row.body] : [null, undefined]);
       expect(bearer(call)).toBe(publicRoutes.includes(name) ? null : 'Bearer a1');
-      expect([header(call, 'Accept'), call.init.credentials, call.init.cache]).toEqual([
+      // The platform never redirects, and following one would turn a POST into a GET.
+      expect([
+        header(call, 'Accept'),
+        call.init.credentials,
+        call.init.cache,
+        call.init.redirect,
+      ]).toEqual([
         name === 'statementCsv' ? 'text/csv, text/plain' : 'application/json',
         'omit',
         'no-store',
+        'error',
       ]);
       expect(ROUTES[name]).toEqual({ method: verb, path: target.split('?')[0] });
     },
@@ -638,20 +645,32 @@ describe('the error envelope', () => {
     }
   });
 
-  it('turns a failure while reading the answer, like one while sending, into a network error', async () => {
-    const cut = () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.error(new TypeError('terminated'));
-          },
-        }),
-      );
-    expect((await failure(setup(cut).api.me())).code).toBe('network');
-    const aborted = () => {
-      throw new DOMException('The operation was aborted.', 'AbortError');
-    };
-    expect((await failure(setup(aborted).api.me())).code).toBe('network');
+  it('reports a request that never got an answer as offline, and a lost answer by its status', async () => {
+    for (const dropped of [
+      new TypeError('Failed to fetch'),
+      new DOMException('The operation was aborted.', 'AbortError'),
+    ]) {
+      const e = await failure(setup(() => Promise.reject(dropped)).api.me());
+      expect([e.code, e.status, e.cause]).toEqual(['network', 0, dropped]);
+    }
+    const cut = new TypeError('terminated');
+    const lost = (status: number) => () =>
+      new Response(new ReadableStream({ start: (controller) => controller.error(cut) }), {
+        status,
+      });
+    // A 2xx means the platform acted (the transfer went through): the answer is lost, not the
+    // connection, so it must not read as offline and invite the investor to send it again.
+    const sent = await failure(
+      setup(lost(200)).api.sendTransfer({ recipient: '$bob', amountCents: 300, pin: '1234' }),
+    );
+    expect([sent.code, sent.status, sent.cause]).toEqual(['server_error', 200, cut]);
+    for (const [status, code] of [
+      [503, 'server_error'],
+      [404, 'request_failed'],
+    ] as const) {
+      const e = await failure(setup(lost(status)).api.me());
+      expect([e.code, e.status]).toEqual([code, status]);
+    }
   });
 });
 

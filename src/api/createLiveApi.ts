@@ -374,6 +374,8 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       headers,
       credentials: 'omit',
       cache: 'no-store',
+      // The platform never redirects, and following one would turn a POST into a GET.
+      redirect: 'error',
     };
     if (route.method === 'POST') {
       headers['Content-Type'] = 'application/json';
@@ -381,12 +383,18 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     }
 
     let res: Response;
-    let raw: string;
     try {
       res = await fetchImpl(root + route.path + queryString(options.query), init);
+    } catch (cause) {
+      throw MobileApiError.network({ cause });
+    }
+    let raw = '';
+    try {
       raw = await res.text();
-    } catch {
-      throw MobileApiError.network();
+    } catch (cause) {
+      // The platform answered and its body was lost. A 2xx means it acted (a transfer went
+      // through), so this is not offline; any other status is read as an empty envelope.
+      if (res.ok) throw new MobileApiError('server_error', res.status, undefined, { cause });
     }
     if (!res.ok) {
       const envelope = envelopeOf(raw);
