@@ -514,10 +514,23 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     loginTwoFactor: async (body) => pairOf(await call('loginTwoFactor', { body })),
     refresh: () => refreshOnce(),
     logout: async () => {
+      let stored: StoredSession | null = null;
+      let broken: { cause: unknown } | undefined;
+      try {
+        stored = await tokenStore.get();
+      } catch (cause) {
+        broken = { cause };
+      }
+      // The session ends here, at once: the count moves and the store is cleared in one step, so a
+      // call that hears a 401 from now on belongs to an ended session and changes nothing.
       generation += 1;
       try {
-        const stored = await tokenStore.get();
-        if (stored !== null) {
+        await tokenStore.set(null);
+      } catch (cause) {
+        broken ??= { cause };
+      }
+      if (stored !== null) {
+        try {
           // One plain request, so signing out never refreshes, retries or reports a sign-out. The
           // refresh token names the session on its own when there is no access token to send.
           await send(
@@ -525,13 +538,12 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
             { body: { refreshToken: stored.refreshToken }, as: 'none' },
             textOf(stored.accessToken),
           );
+        } catch {
+          // Whatever went wrong, the investor is signed out here: the platform ends the session,
+          // or the tokens run out by themselves.
         }
-      } catch {
-        // Whatever went wrong, the investor is signed out here: the platform ends the session, or
-        // the tokens run out by themselves.
-      } finally {
-        await tokenStore.set(null);
       }
+      if (broken) throw new MobileApiError('storage_error', 0, undefined, broken);
     },
     brand: () => call('brand'),
 

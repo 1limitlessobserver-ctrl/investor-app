@@ -42,23 +42,34 @@ const pair = (n: number): MobileTokens => ({
 /** What the store answers after a restart: the refresh token alone. */
 const restarted = (n: number): StoredSession => ({ refreshToken: `r${n}`, accessToken: null });
 
+/** Makes the fake store fail: each returns the error to reject with, or undefined to work. */
+type Faults = {
+  get?: () => Error | undefined;
+  set?: (tokens: MobileTokens | null) => Error | undefined;
+};
+
 function setup(
   script: Script,
   initial: StoredSession | null = pair(1),
-  options: { baseUrl?: string; app?: AppIdentity } = {},
+  options: { baseUrl?: string; app?: AppIdentity; faults?: Faults } = {},
 ) {
   const calls: Call[] = [];
   let tokens = initial;
-  /** Every pair the client stored, and every clear (null), in order. */
+  /** Every write the client asked for (a pair, or null to clear), in order, failed ones too. */
   const writes: (MobileTokens | null)[] = [];
   const signedOut: string[] = [];
   const upgrades: string[] = [];
   const api = createLiveApi({
     baseUrl: options.baseUrl ?? BASE,
     tokenStore: {
-      get: () => Promise.resolve(tokens),
+      get: () => {
+        const fault = options.faults?.get?.();
+        return fault === undefined ? Promise.resolve(tokens) : Promise.reject(fault);
+      },
       set: (t) => {
         writes.push(t);
+        const fault = options.faults?.set?.(t);
+        if (fault !== undefined) return Promise.reject(fault);
         tokens = t;
         return Promise.resolve();
       },
@@ -696,6 +707,61 @@ describe('sign-in and sign-out', () => {
     expect([bearer(t.calls[0]!), bodyOf(t.calls[0]!)]).toEqual([null, { refreshToken: 'r1' }]);
     expect(t.tokens()).toBeNull();
   });
+
+  it('clears the store before it tells the platform, which may never answer', async () => {
+    const reached = gate();
+    const t = setup(() => {
+      reached.release();
+      return new Promise<Response>(() => undefined);
+    });
+    void t.api.logout();
+    await reached.open;
+    expect([t.tokens(), t.writes, t.calls.map(path)]).toEqual([null, [null], ['/auth/logout']]);
+  });
+
+  it.each(['session_revoked', 'unauthorized'])(
+    'neither refreshes nor reports a sign-out for a call that hears %s during a logout',
+    async (code) => {
+      const callOut = gate();
+      const logoutOut = gate();
+      const answerCall = gate();
+      const t = setup(async (c) => {
+        if (path(c) === '/auth/logout') {
+          logoutOut.release();
+          return json(200, { ok: true });
+        }
+        if (isRefresh(c)) return json(200, pair(2));
+        callOut.release();
+        await answerCall.open;
+        return json(401, { error: code });
+      });
+      const call = failure(t.api.me());
+      await callOut.open;
+      const out = t.api.logout();
+      await logoutOut.open;
+      answerCall.release();
+      expect((await call).code).toBe(code);
+      await out;
+      expect(t.calls.map(path)).toEqual(['/me', '/auth/logout']);
+      expect([t.signedOut, t.tokens()]).toEqual([[], null]);
+    },
+  );
+
+  const unreadable = new DOMException('Decryption failed', 'OperationError');
+  const closed = new DOMException('The database is closed', 'InvalidStateError');
+  it.each([
+    ['read', { get: () => unreadable }, unreadable, []],
+    ['cleared', { set: () => closed }, closed, ['/auth/logout']],
+  ])(
+    'still clears and tells what it can, then rejects storage_error, when the store cannot be %s',
+    async (_what, faults: Faults, cause, sent) => {
+      const t = setup(() => json(200, { ok: true }), pair(1), { faults });
+      const e = await failure(t.api.logout());
+      expect([e.code, e.status, e.cause]).toEqual(['storage_error', 0, cause]);
+      // The clear is asked for either way; the platform is told whenever the tokens were read.
+      expect([t.writes, t.calls.map(path)]).toEqual([[null], sent]);
+    },
+  );
 });
 
 describe('the refresh and its edges', () => {
