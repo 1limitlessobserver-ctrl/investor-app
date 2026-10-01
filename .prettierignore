@@ -1,0 +1,9 @@
+# Not formatted by `npm run format`: owner-controlled docs and ledger files, reference material,
+# generated output and the lockfile.
+docs/
+.superpowers/
+.reference/
+coverage/
+dist/
+node_modules/
+package-lock.json
