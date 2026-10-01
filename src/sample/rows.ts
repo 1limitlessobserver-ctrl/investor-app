@@ -1,6 +1,14 @@
-// Joins over the sample world's rows, shared by the statements and the sample API's handlers.
+// Helpers over the sample world's rows, shared by the world itself, its statements and the sample
+// API's handlers. Types only come in from sampleData, so nothing here imports it at run time.
 import type { PositionInput } from './portfolioMath';
 import type { SamplePlan, SamplePosition, SampleState } from './sampleData';
+
+/** Calendar months later, as the platform dates a maturity. */
+export function addMonths(date: Date, months: number): Date {
+  const next = new Date(date.getTime());
+  next.setUTCMonth(next.getUTCMonth() + months);
+  return next;
+}
 
 /** The plan a position was bought in; every sample position names one of the sample plans. */
 export function planOf(state: Pick<SampleState, 'plans'>, position: SamplePosition): SamplePlan {

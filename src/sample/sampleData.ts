@@ -31,6 +31,7 @@ import type {
   TransferStatus,
   Wallet,
 } from '../api/types';
+import { addMonths } from './rows';
 import { sampleStatements } from './sampleStatements';
 import qr from './__fixtures__/qr.json';
 
@@ -190,8 +191,8 @@ export interface SampleBeneficiary {
   updatedAt: Date;
 }
 
+/** Identity verification. Whether it is required is the brand's `kyc` switch, as on the platform. */
 export interface SampleKyc {
-  required: boolean;
   status: KycStatus;
   submittedAt: Date | null;
   approvedAt: Date | null;
@@ -274,13 +275,6 @@ const HOUR = 3_600_000;
 /** `days` (and `hours`) from now; negative is the past. */
 function offset(now: Date, days: number, hours = 0): Date {
   return new Date(now.getTime() + days * DAY + hours * HOUR);
-}
-
-/** Calendar months later, as the platform dates a maturity. */
-function addMonths(date: Date, months: number): Date {
-  const next = new Date(date.getTime());
-  next.setUTCMonth(next.getUTCMonth() + months);
-  return next;
 }
 
 /** A valid uncompressed P-256 public key (65 bytes, base64url) with no private key anywhere. */
@@ -891,7 +885,6 @@ function createState(opts: { now?: Date; stress?: boolean } = {}): SampleState {
     currentSessionId: 'sess_phone',
     depositMethods: sampleDepositMethods(),
     kyc: {
-      required: true,
       status: 'APPROVED',
       submittedAt: offset(now, -810, -5),
       approvedAt: offset(now, -809, -2),
