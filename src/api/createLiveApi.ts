@@ -176,6 +176,13 @@ export const ROUTES = {
   oracleAsk: { method: 'POST', path: '/oracle/ask' },
 } as const satisfies Readonly<Record<ApiMethod, Route>>;
 
+/** How long a request may take before the client gives up on it (`timeout`). */
+const TIMEOUT_MS = 20_000;
+/** A refresh's: well under the 30 seconds in which the platform honours a lost answer's token. */
+const REFRESH_TIMEOUT_MS = 15_000;
+/** POST /kyc's: its body carries up to 4 MB of camera images. */
+const KYC_TIMEOUT_MS = 90_000;
+
 /** What a method puts into its request. */
 type RequestParts = {
   /** What a POST sends as JSON; `{}` when left out. */
@@ -188,6 +195,8 @@ type RequestParts = {
    * fields it owns.
    */
   fieldNames?: ReadonlyMap<string, string>;
+  /** How long the request may take; TIMEOUT_MS when left out. */
+  timeoutMs?: number;
 };
 
 /**
@@ -409,6 +418,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     };
     if (app.deviceName) headers['X-Device-Name'] = encodeURIComponent(app.deviceName);
     if (bearer !== undefined) headers.Authorization = `Bearer ${bearer}`;
+    const signal = AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS);
     const init: RequestInit = {
       method: route.method,
       headers,
@@ -416,6 +426,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       cache: 'no-store',
       // The platform never redirects, and following one would turn a POST into a GET.
       redirect: 'error',
+      signal,
     };
     if (route.method === 'POST') {
       headers['Content-Type'] = 'application/json';
@@ -426,7 +437,11 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     try {
       res = await fetchImpl(root + route.path + queryString(options.query), init);
     } catch (cause) {
-      throw MobileApiError.network({ cause });
+      // A request the client gave up on may still have been carried out (a transfer), so it does
+      // not read as offline either.
+      throw signal.aborted
+        ? new MobileApiError('timeout', 0, undefined, { cause })
+        : MobileApiError.network({ cause });
     }
     let raw = '';
     try {
@@ -589,7 +604,11 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     try {
       const answer = await send<MobileTokens>(
         ROUTES.refresh,
-        { body: { refreshToken: stored.refreshToken }, check: isTokenPair },
+        {
+          body: { refreshToken: stored.refreshToken },
+          check: isTokenPair,
+          timeoutMs: REFRESH_TIMEOUT_MS,
+        },
         undefined,
       );
       fresh = pairOf(answer);
@@ -708,7 +727,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     maturityChoice: (body) => callVoid('maturityChoice', { body }),
 
     kyc: () => call('kyc'),
-    submitKyc: (submission) => call('submitKyc', { body: submission }),
+    submitKyc: (submission) => call('submitKyc', { body: submission, timeoutMs: KYC_TIMEOUT_MS }),
 
     legacyPlan: () => call('legacyPlan'),
     saveLegacyPlan: (body) => call('saveLegacyPlan', { body }),

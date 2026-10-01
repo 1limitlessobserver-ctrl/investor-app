@@ -1386,3 +1386,75 @@ describe('when the token store or a callback fails', () => {
     expect(reported).toEqual([bug, bug, bug]);
   });
 });
+
+describe('a platform that does not answer', () => {
+  /**
+   * Puts the client's timeouts on Vitest's fake clock. The global AbortSignal here is Node's, whose
+   * timeout() runs on a timer the fake clock does not reach; jsdom's runs on the faked setTimeout.
+   */
+  function fakeClock() {
+    vi.useFakeTimers();
+    const dom = (globalThis as unknown as { jsdom: { window: { AbortSignal: unknown } } }).jsdom;
+    vi.stubGlobal('AbortSignal', dom.window.AbortSignal);
+  }
+  /** Answers nothing until the request's signal gives up on it, as fetch does. */
+  const silent: Script = ({ init }) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(init.signal?.reason as Error));
+    });
+  /** Where a call stands: undefined while it waits, else what it ended in. */
+  function watch(call: Promise<unknown>) {
+    const state: { error?: MobileApiError } = {};
+    void failure(call).then((e) => (state.error = e));
+    return state;
+  }
+
+  it.each([
+    [
+      'a transfer',
+      20_000,
+      (a: PlatformApi) => a.sendTransfer({ recipient: '$bob', amountCents: 300, pin: '1234' }),
+    ],
+    [
+      'an identity check, with its images,',
+      90_000,
+      (a: PlatformApi) => a.submitKyc({ legalName: 'Ada' } as KycSubmission),
+    ],
+  ])(
+    'gives up on %s after %i ms, as a timeout: it may have gone through',
+    async (_what, ms, ask) => {
+      fakeClock();
+      const t = setup(silent);
+      const call = watch(ask(t.api));
+      await vi.advanceTimersByTimeAsync(ms - 1);
+      expect(call.error).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect([
+        call.error?.code,
+        call.error?.status,
+        (call.error?.cause as Error | undefined)?.name,
+      ]).toEqual(['timeout', 0, 'TimeoutError']);
+      expect([t.calls.length, t.signedOut, t.tokens()]).toEqual([1, [], pair(1)]);
+    },
+  );
+
+  it('gives a refresh 15 s, holds no call past that, and lets the next call refresh again', async () => {
+    fakeClock();
+    let refreshes = 0;
+    const t = setup((c) => {
+      if (isRefresh(c)) return ++refreshes === 1 ? silent(c) : json(200, pair(2));
+      return bearer(c) === 'Bearer a1'
+        ? json(401, { error: 'unauthorized' })
+        : json(200, { id: 'u1' });
+    });
+    const first = watch(t.api.me());
+    const joined = watch(t.api.dashboard());
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect([first.error, joined.error]).toEqual([undefined, undefined]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect([first.error?.code, joined.error?.code]).toEqual(['timeout', 'timeout']);
+    expect((await t.api.me()).id).toBe('u1');
+    expect(t.calls.filter(isRefresh)).toHaveLength(2);
+    expect([t.signedOut, t.tokens()]).toEqual([[], pair(2)]);
+  });
+});
