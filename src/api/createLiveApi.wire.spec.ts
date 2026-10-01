@@ -726,6 +726,27 @@ describe('sign-in and sign-out', () => {
     expect(t.tokens()).toBeNull();
   });
 
+  // The session layer stores what sign-in answers, so it must be a session to store.
+  it.each([
+    ['loginTwoFactor', 'nothing', {}],
+    ['loginTwoFactor', 'an empty access token', { ...pair(3), accessToken: '' }],
+    ['loginTwoFactor', 'another token type', { ...pair(3), tokenType: 'MAC' }],
+    ['login', 'nothing', {}],
+    ['login', 'no tokens', { requiresTwoFactor: false }],
+    ['login', 'no requiresTwoFactor', { ...pair(3) }],
+    ['login', 'an empty refresh token', { requiresTwoFactor: false, ...pair(3), refreshToken: '' }],
+    ['login', 'no challenge', { requiresTwoFactor: true }],
+    ['login', 'an empty challenge', { requiresTwoFactor: true, challenge: '' }],
+  ] as const)('turns a %s answer with %s into a server error', async (method, _what, answer) => {
+    const t = setup(() => json(200, answer), null);
+    const ask =
+      method === 'login'
+        ? t.api.login(credentials)
+        : t.api.loginTwoFactor({ challenge: 'c1', code: '123456' });
+    const e = await failure(ask);
+    expect([e.code, e.status]).toEqual(['server_error', 200]);
+  });
+
   it.each([
     [401, 'invalid_credentials'],
     [423, 'account_locked'],
@@ -1055,9 +1076,18 @@ describe('the refresh and its edges', () => {
     expect(t.signedOut).toEqual([]);
   });
 
-  it.each([[{ ...pair(2), accessToken: 7 }], [{ tokenType: 'Bearer' }], ['tokens'], [null]])(
-    'treats a refresh answer that is not a token pair (%j) as a server error and keeps the session',
-    async (answer) => {
+  // Not a token pair: a session cannot be stored from it.
+  it.each([
+    ['a number for a token', { ...pair(2), accessToken: 7 }],
+    ['no tokens', { tokenType: 'Bearer' }],
+    ['a string', 'tokens'],
+    ['null', null],
+    ['an empty access token', { ...pair(2), accessToken: '' }],
+    ['an empty refresh token', { ...pair(2), refreshToken: '' }],
+    ['another token type', { ...pair(2), tokenType: 'bearer' }],
+  ])(
+    'treats a refresh answer with %s as a server error and keeps the session',
+    async (_what, answer) => {
       const t = setup((c) =>
         isRefresh(c) ? json(200, answer) : json(401, { error: 'unauthorized' }),
       );

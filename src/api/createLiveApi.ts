@@ -28,7 +28,7 @@
 
 import { MobileApiError } from './MobileApiError';
 import type { PlatformApi } from './PlatformApi';
-import type { MobileTokens, SessionView } from './types';
+import type { LoginResult, MobileTokens, SessionView } from './types';
 
 /**
  * What the token store answers: the refresh token, and this page's access token. `accessToken` is
@@ -218,11 +218,21 @@ const isStringEntry = (entry: [string, unknown]): entry is [string, string] =>
 const textOf = (value: unknown): string | undefined =>
   isString(value) && value !== '' ? value : undefined;
 
+/** A token pair a session can be stored from: Bearer tokens that are not empty, and their expiry. */
 const isTokenPair = (value: unknown): value is MobileTokens =>
   isRecord(value) &&
-  ['tokenType', 'accessToken', 'refreshToken', 'accessExpiresAt', 'refreshExpiresAt'].every((key) =>
-    isString(value[key]),
-  );
+  value.tokenType === 'Bearer' &&
+  textOf(value.accessToken) !== undefined &&
+  textOf(value.refreshToken) !== undefined &&
+  isString(value.accessExpiresAt) &&
+  isString(value.refreshExpiresAt);
+
+/** A sign-in answer: the challenge of the second step, or the token pair. */
+const isLoginResult = (value: unknown): value is LoginResult =>
+  isRecord(value) &&
+  (value.requiresTwoFactor === true
+    ? textOf(value.challenge) !== undefined
+    : value.requiresTwoFactor === false && isTokenPair(value));
 
 /** The token pair and nothing else: the sign-in routes also answer `requiresTwoFactor`. */
 const pairOf = (t: MobileTokens): MobileTokens => ({
@@ -593,8 +603,9 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   const api: LiveApi = {
     mode: 'live',
 
-    login: (body) => call('login', { body }),
-    loginTwoFactor: async (body) => pairOf(await call('loginTwoFactor', { body })),
+    login: (body) => call('login', { body, check: isLoginResult }),
+    loginTwoFactor: async (body) =>
+      pairOf(await call('loginTwoFactor', { body, check: isTokenPair })),
     refresh: () => refreshOnce(),
     logout: async () => {
       let stored: StoredSession | null = null;
