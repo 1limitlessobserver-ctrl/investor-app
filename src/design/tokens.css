@@ -1,0 +1,230 @@
+/*
+ * Design tokens. The colours mirror src/design/themes.ts: :root holds Orbital, and each
+ * [data-theme] block holds one theme, so the CSS alone renders any theme before themes.apply()
+ * writes the same values, with the company's accent, inline on <html>. The accent variables hold
+ * the template accent #6EA8FF as themes.accent() makes it readable on each theme.
+ * tokens.spec.ts fails if this file and themes.ts drift apart.
+ */
+
+:root {
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-7: 1.75rem;
+  --space-8: 2rem;
+
+  --font-ui: 'Inter Tight Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+  --text-4xl: 3rem;
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/* Declared on every themed element, so they follow a theme set on an inner element too. */
+:root,
+[data-theme] {
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-full: 9999px;
+  --glass: color-mix(in srgb, var(--card) 72%, transparent);
+  --glass-border: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+:root,
+[data-theme='orbital'] {
+  color-scheme: dark;
+  --background: #05070f;
+  --foreground: #ecf1ff;
+  --surface: #0e1428;
+  --card: #0b1020;
+  --card-foreground: #ecf1ff;
+  --popup: #121a33;
+  --popup-foreground: #ecf1ff;
+  --muted: #1a2340;
+  --muted-foreground: #a9b4d0;
+  --border: #25304d;
+  --success: #7ee2b8;
+  --error: #ff9c9c;
+  --warning: #f2c879;
+  --info: #8fb8ff;
+  --signature-accent: #6ea8ff;
+  --primary: #6ea8ff;
+  --primary-foreground: #000000;
+  --accent-text: #6ea8ff;
+  --glow: rgba(110, 168, 255, 0.45);
+}
+
+[data-theme='obsidian'] {
+  color-scheme: dark;
+  --background: #101713;
+  --foreground: #edf0eb;
+  --surface: #202f27;
+  --card: #18231e;
+  --card-foreground: #edf0eb;
+  --popup: #18231e;
+  --popup-foreground: #edf0eb;
+  --muted: #202f27;
+  --muted-foreground: #b4c1bd;
+  --border: #59645c;
+  --success: #a6e2b8;
+  --error: #ffb5b5;
+  --warning: #f5c484;
+  --info: #a2c9eb;
+  --signature-accent: #dec590;
+  --primary: #6ea8ff;
+  --primary-foreground: #000000;
+  --accent-text: #6ea8ff;
+  --glow: rgba(110, 168, 255, 0.45);
+}
+
+[data-theme='ivory'] {
+  color-scheme: light;
+  --background: #f2efe5;
+  --foreground: #25392e;
+  --surface: #e6eadd;
+  --card: #fffdf5;
+  --card-foreground: #25392e;
+  --popup: #fffdf5;
+  --popup-foreground: #25392e;
+  --muted: #e6eadd;
+  --muted-foreground: #506356;
+  --border: #a3ac9c;
+  --success: #225d3c;
+  --error: #992c32;
+  --warning: #8e480b;
+  --info: #23538b;
+  --signature-accent: #735124;
+  --primary: #3686ff;
+  --primary-foreground: #000000;
+  --accent-text: #005de8;
+  --glow: rgba(0, 93, 232, 0.45);
+}
+
+[data-theme='aurora'] {
+  color-scheme: dark;
+  --background: #111326;
+  --foreground: #efedff;
+  --surface: #292a4c;
+  --card: #1a2037;
+  --card-foreground: #efedff;
+  --popup: #1a2037;
+  --popup-foreground: #efedff;
+  --muted: #292a4c;
+  --muted-foreground: #b8bddb;
+  --border: #565e83;
+  --success: #8ee9c4;
+  --error: #ffb5c5;
+  --warning: #f9d48b;
+  --info: #adbbff;
+  --signature-accent: #8de3df;
+  --primary: #6ea8ff;
+  --primary-foreground: #000000;
+  --accent-text: #6ea8ff;
+  --glow: rgba(110, 168, 255, 0.45);
+}
+
+[data-theme='verdant'] {
+  color-scheme: dark;
+  --background: #0b211b;
+  --foreground: #edf4e8;
+  --surface: #214537;
+  --card: #14342a;
+  --card-foreground: #edf4e8;
+  --popup: #14342a;
+  --popup-foreground: #edf4e8;
+  --muted: #214537;
+  --muted-foreground: #b5cbb9;
+  --border: #53765e;
+  --success: #b3e3a4;
+  --error: #ffb7ab;
+  --warning: #f2ce88;
+  --info: #a5d2e9;
+  --signature-accent: #c9d99a;
+  --primary: #6ea8ff;
+  --primary-foreground: #000000;
+  --accent-text: #73abff;
+  --glow: rgba(115, 171, 255, 0.45);
+}
+
+[data-theme='aegis'] {
+  color-scheme: dark;
+  --background: #06090e;
+  --foreground: #eaf3f9;
+  --surface: #111d29;
+  --card: #0b121c;
+  --card-foreground: #eaf3f9;
+  --popup: #0b121c;
+  --popup-foreground: #eaf3f9;
+  --muted: #111d29;
+  --muted-foreground: #a8bbcb;
+  --border: #263745;
+  --success: #a9dcc8;
+  --error: #f39b9b;
+  --warning: #e2b771;
+  --info: #a1c5f7;
+  --signature-accent: #8be7f5;
+  --primary: #6ea8ff;
+  --primary-foreground: #000000;
+  --accent-text: #6ea8ff;
+  --glow: rgba(110, 168, 255, 0.45);
+  --font-display: var(--font-ui);
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+}
+
+html {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+}
+
+body {
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hidden on screen, still read by screen readers. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
