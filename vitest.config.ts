@@ -9,6 +9,9 @@ export default defineConfig({
     // Explicit rather than just the default: tests stub globals, so every file keeps its own worker.
     // It also stops Vitest suggesting `isolate: false` in the run summary.
     isolate: true,
+    // Explicit for the same reason: with several DOM test files Vitest would otherwise suggest
+    // `vmThreads` in the run summary. Plain forks (the default) keep every file in its own process.
+    pool: 'forks',
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.{spec,test}.{ts,tsx}', 'scripts/**/*.spec.ts'],
     exclude: [...configDefaults.exclude, '.reference/**'],
