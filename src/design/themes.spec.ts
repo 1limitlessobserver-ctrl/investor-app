@@ -148,24 +148,49 @@ describe('themes', () => {
   });
 
   it('moves only the lightness, and only as far as it needs to', () => {
-    const cases = [
-      { accent: '#123456', id: 'orbital', lighter: true },
-      // Readable on background, card and surface; only Orbital's lighter muted fill needs a lift.
-      { accent: '#FF3B30', id: 'orbital', lighter: true },
-      { accent: '#E8F0A0', id: 'ivory', lighter: false },
-    ] as const;
-    for (const { accent, id, lighter } of cases) {
-      const t = themes.tokens(id);
-      const text = themes.accent(accent, id).accentText;
+    const t = themes.tokens('orbital');
+    // #FF3B30 is readable on background, card and surface; only the lighter muted fill lifts it.
+    for (const accent of ['#123456', '#FF3B30']) {
+      const text = themes.accent(accent, 'orbital').accentText;
       const before = hexToHsl(accent);
       const after = hexToHsl(text);
       expect(after.h, `${accent} hue`).toBeCloseTo(before.h, 0);
       expect(Math.abs(after.s - before.s), `${accent} saturation`).toBeLessThan(2);
-      expect(after.l > before.l, `${accent} direction`).toBe(lighter);
+      expect(after.l, `${accent} lightness`).toBeGreaterThan(before.l);
       const surfaces = [t.background, t.card, t.surface, t.popup, t.muted];
       const lowest = Math.min(...surfaces.map((s) => contrast(text, s)));
       expect(lowest, `${accent} lands just past 4.5:1`).toBeLessThan(4.8);
     }
+  });
+
+  it('takes the company accent on Orbital and the signature accent on the website themes', () => {
+    expect(themes.accent('#6EA8FF', 'orbital').primary).toBe('#6ea8ff');
+    expect(themes.accent('#123456', 'orbital')).not.toEqual(themes.accent('#6EA8FF', 'orbital'));
+    const website = [
+      ['obsidian', '#dec590', '#000000'],
+      ['ivory', '#735124', '#ffffff'],
+      ['aurora', '#8de3df', '#000000'],
+      ['verdant', '#c9d99a', '#000000'],
+      ['aegis', '#8be7f5', '#000000'],
+    ] as const;
+    for (const [id, signature, label] of website) {
+      expect(themes.tokens(id).signatureAccent, id).toBe(signature);
+      for (const company of ['#123456', '#6EA8FF', '#FF3B30'])
+        expect(themes.accent(company, id), `${id} with ${company}`).toMatchObject({
+          primary: signature,
+          primaryForeground: label,
+          accentText: signature,
+        });
+    }
+    const root = document.createElement('div');
+    themes.apply('ivory', '#123456', root);
+    expect(root.style.getPropertyValue('--primary')).toBe('#735124');
+    expect(root.style.getPropertyValue('--accent-text')).toBe('#735124');
+  });
+
+  it('rejects a malformed company accent on every theme, even one that shows its own', () => {
+    for (const id of themes.ids)
+      expect(() => themes.accent('red', id), id).toThrow('Expected a colour like #6EA8FF');
   });
 
   it('writes every colour token and accent token as a kebab-case variable', () => {

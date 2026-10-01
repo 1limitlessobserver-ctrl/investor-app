@@ -29,7 +29,7 @@ export type ThemeTokens = Record<(typeof COLOUR_TOKENS)[number], string> & {
   starfield: boolean;
 };
 
-/** A company accent made readable on one theme. */
+/** The accent a theme shows, made readable on it. */
 export type AccentTokens = {
   primary: string;
   primaryForeground: string;
@@ -253,9 +253,14 @@ function glow(hex: string): string {
   return `rgba(${r}, ${g}, ${b}, 0.45)`;
 }
 
+/**
+ * The company accent drives Orbital; the five website themes keep their own signature accent, so
+ * there `accentHex` is only checked for being a colour.
+ */
 function accent(accentHex: string, id: ThemeId): AccentTokens {
   const t = THEMES[id].tokens;
-  const hex = rgbToHex(hexToRgb(accentHex));
+  const company = rgbToHex(hexToRgb(accentHex));
+  const hex = id === 'orbital' ? company : t.signatureAccent;
   const accentText = readableText(hex, t);
   const primary = buttonFill(hex, t);
   return { primary, primaryForeground: buttonText(primary), accentText, glow: glow(accentText) };
@@ -267,9 +272,10 @@ function cssVariable(token: string): string {
 }
 
 /**
- * Writes the theme onto `root`: `data-theme`, `color-scheme`, every colour token and the accent
- * tokens as CSS variables, and, on `<html>`, the browser's theme colour. `display` and `radius`
- * follow from `data-theme` in tokens.css; the starfield reads `starfield` from `themes.tokens`.
+ * Writes the theme onto `root`: `data-theme`, `color-scheme`, every colour token and the tokens of
+ * `accent(accentHex, id)` as CSS variables, and, on `<html>`, the browser's theme colour. Pass the
+ * company accent whatever the theme. `display` and `radius` follow from `data-theme` in tokens.css;
+ * the starfield reads `starfield` from `themes.tokens`.
  */
 function apply(id: ThemeId, accentHex: string, root: HTMLElement = document.documentElement): void {
   const t = THEMES[id].tokens;

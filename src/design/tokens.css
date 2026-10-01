@@ -1,8 +1,9 @@
 /*
  * Design tokens. The colours mirror src/design/themes.ts: :root holds Orbital, and each
  * [data-theme] block holds one theme, so the CSS alone renders any theme before themes.apply()
- * writes the same values, with the company's accent, inline on <html>. The accent variables hold
- * the template accent #6EA8FF as themes.accent() makes it readable on each theme.
+ * writes the same values inline on <html>. The accent variables are themes.accent()'s: Orbital's
+ * come from the template accent #6EA8FF (apply() puts the company's in their place), and each
+ * website theme shows its own signature accent.
  * tokens.spec.ts fails if this file and themes.ts drift apart.
  */
 
@@ -86,10 +87,10 @@
   --warning: #f5c484;
   --info: #a2c9eb;
   --signature-accent: #dec590;
-  --primary: #6ea8ff;
+  --primary: #dec590;
   --primary-foreground: #000000;
-  --accent-text: #6ea8ff;
-  --glow: rgba(110, 168, 255, 0.45);
+  --accent-text: #dec590;
+  --glow: rgba(222, 197, 144, 0.45);
 }
 
 [data-theme='ivory'] {
@@ -109,10 +110,10 @@
   --warning: #8e480b;
   --info: #23538b;
   --signature-accent: #735124;
-  --primary: #3686ff;
-  --primary-foreground: #000000;
-  --accent-text: #005de8;
-  --glow: rgba(0, 93, 232, 0.45);
+  --primary: #735124;
+  --primary-foreground: #ffffff;
+  --accent-text: #735124;
+  --glow: rgba(115, 81, 36, 0.45);
 }
 
 [data-theme='aurora'] {
@@ -132,10 +133,10 @@
   --warning: #f9d48b;
   --info: #adbbff;
   --signature-accent: #8de3df;
-  --primary: #6ea8ff;
+  --primary: #8de3df;
   --primary-foreground: #000000;
-  --accent-text: #6ea8ff;
-  --glow: rgba(110, 168, 255, 0.45);
+  --accent-text: #8de3df;
+  --glow: rgba(141, 227, 223, 0.45);
 }
 
 [data-theme='verdant'] {
@@ -155,10 +156,10 @@
   --warning: #f2ce88;
   --info: #a5d2e9;
   --signature-accent: #c9d99a;
-  --primary: #6ea8ff;
+  --primary: #c9d99a;
   --primary-foreground: #000000;
-  --accent-text: #73abff;
-  --glow: rgba(115, 171, 255, 0.45);
+  --accent-text: #c9d99a;
+  --glow: rgba(201, 217, 154, 0.45);
 }
 
 [data-theme='aegis'] {
@@ -178,10 +179,10 @@
   --warning: #e2b771;
   --info: #a1c5f7;
   --signature-accent: #8be7f5;
-  --primary: #6ea8ff;
+  --primary: #8be7f5;
   --primary-foreground: #000000;
-  --accent-text: #6ea8ff;
-  --glow: rgba(110, 168, 255, 0.45);
+  --accent-text: #8be7f5;
+  --glow: rgba(139, 231, 245, 0.45);
   --font-display: var(--font-ui);
   --radius-sm: 3px;
   --radius-md: 4px;
