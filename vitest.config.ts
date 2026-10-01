@@ -6,6 +6,9 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: false,
+    // Explicit rather than just the default: tests stub globals, so every file keeps its own worker.
+    // It also stops Vitest suggesting `isolate: false` in the run summary.
+    isolate: true,
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.{spec,test}.{ts,tsx}', 'scripts/**/*.spec.ts'],
     exclude: [...configDefaults.exclude, '.reference/**'],
