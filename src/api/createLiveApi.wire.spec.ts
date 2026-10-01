@@ -427,7 +427,7 @@ describe('the routes', () => {
 });
 
 describe('the error envelope', () => {
-  it('treats a body that is not JSON as an empty envelope', async () => {
+  it('treats a body that is not a JSON object as an empty envelope', async () => {
     const page = (status: number) => () => new Response('<html>Bad gateway</html>', { status });
     const gateway = await failure(setup(page(502)).api.me());
     expect([gateway.code, gateway.status, gateway.message]).toEqual([
@@ -439,6 +439,11 @@ describe('the error envelope', () => {
     expect([missing.code, missing.status]).toEqual(['request_failed', 404]);
     const empty = await failure(setup(() => new Response(null, { status: 500 })).api.me());
     expect([empty.code, empty.status]).toEqual(['server_error', 500]);
+    // JSON that is not an object has no envelope to read either.
+    for (const raw of ['null', '[]', '"oops"', '42']) {
+      const e = await failure(setup(() => new Response(raw, { status: 503 })).api.me());
+      expect([e.code, e.status]).toEqual(['server_error', 503]);
+    }
   });
 
   it('reads only what has the right type from the envelope', async () => {
@@ -454,6 +459,9 @@ describe('the error envelope', () => {
       wrong.detail,
       wrong.retryAfterSeconds,
     ]).toEqual(['request_failed', new MobileApiError('request_failed', 409).message, {}, [], null]);
+    // An empty code is no code either.
+    const nameless = await failure(setup(() => json(500, { error: '' })).api.me());
+    expect(nameless.code).toBe('server_error');
     const mixed = await failure(
       setup(() =>
         json(400, {
@@ -490,10 +498,16 @@ describe('the error envelope', () => {
     // below 0 once it has passed.
     expect(await wait(limited, { 'Retry-After': 'Thu, 01 Oct 2026 12:01:30 GMT' })).toBe(90);
     expect(await wait(limited, { 'Retry-After': 'Thu, 01 Oct 2026 11:59:00 GMT' })).toBe(0);
-    for (const unusable of ['soon', '-5', '1.5', '']) {
+    for (const unusable of ['soon', '-5', '1.5', '', 'Thu, soon']) {
       expect(await wait(limited, { 'Retry-After': unusable })).toBeNull();
     }
     expect(await wait(limited)).toBeNull();
+    // JSON can spell a number too big to be finite (1e999); that is no wait either.
+    const huge = '{"error":"rate_limited","retryAfterSeconds":1e999}';
+    const overflow = setup(
+      () => new Response(huge, { status: 429, headers: { 'Retry-After': '7' } }),
+    );
+    expect((await failure(overflow.api.me())).retryAfterSeconds).toBe(7);
   });
 
   it('tells onUpgradeRequired the version a 426 names, or an empty one, and still throws', async () => {
@@ -647,6 +661,17 @@ describe('the refresh and its edges', () => {
   });
 
   it.each(['unauthorized', 'session_revoked'])(
+    'throws a 403 %s as it is: only a 401 is about the token',
+    async (code) => {
+      const t = setup(() => json(403, { error: code }));
+      expect((await failure(t.api.me())).code).toBe(code);
+      expect(t.calls).toHaveLength(1);
+      expect(t.signedOut).toEqual([]);
+      expect(t.tokens()).toEqual(pair(1));
+    },
+  );
+
+  it.each(['unauthorized', 'session_revoked'])(
     'throws the original error, and tells no one, when the tokens are gone by the time it answers %s',
     async (code) => {
       const wait = gate();
@@ -789,7 +814,8 @@ describe('the refresh and its edges', () => {
 
   it('shares the refresh with refresh(), and starts a new one once that has finished', async () => {
     let n = 1;
-    const t = setup(() => json(200, pair(++n)));
+    // The pair is answered and stored without whatever else the platform's answer carries.
+    const t = setup(() => json(200, { ...pair(++n), requiresTwoFactor: false }));
     const [x, y] = await Promise.all([t.api.refresh(), t.api.refresh()]);
     expect([x, y]).toEqual([pair(2), pair(2)]);
     expect(t.calls).toHaveLength(1);
@@ -801,7 +827,8 @@ describe('the refresh and its edges', () => {
 
   it('rejects refresh() with unauthorized, and sends nothing, when no tokens are stored', async () => {
     const t = setup(() => json(200, pair(2)), null);
-    expect((await failure(t.api.refresh())).code).toBe('unauthorized');
+    const e = await failure(t.api.refresh());
+    expect([e.code, e.status]).toEqual(['unauthorized', 401]);
     expect(t.calls).toEqual([]);
     expect(t.signedOut).toEqual([]);
   });
