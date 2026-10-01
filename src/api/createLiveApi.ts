@@ -215,8 +215,11 @@ type RequestOptions = RequestParts & Reading;
 
 // openTicket and replyTicket: the platform keys their fields `body` and `ticketId`; PlatformApi
 // (and so the sample and the forms) calls them `message` and `id`.
-const OPEN_TICKET_FIELDS: ReadonlyMap<string, string> = new Map([['body', 'message']]);
-const REPLY_TICKET_FIELDS: ReadonlyMap<string, string> = new Map([
+type FieldOf<K extends ApiMethod> = keyof Parameters<PlatformApi[K]>[0] & string;
+const OPEN_TICKET_FIELDS: ReadonlyMap<string, FieldOf<'openTicket'>> = new Map([
+  ['body', 'message'],
+]);
+const REPLY_TICKET_FIELDS: ReadonlyMap<string, FieldOf<'replyTicket'>> = new Map([
   ['body', 'message'],
   ['ticketId', 'id'],
 ]);
