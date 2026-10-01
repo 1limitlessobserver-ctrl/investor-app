@@ -15,6 +15,15 @@ async function pixel(file: string, x: number, y: number): Promise<string> {
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
 }
 
+// Every pixel of an image, row by row.
+async function rgbaPixels(file: string) {
+  const { data } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return Array.from({ length: data.length / 4 }, (_, i) => {
+    const [r = 0, g = 0, b = 0, a = 0] = data.subarray(i * 4, i * 4 + 4);
+    return { r, g, b, a };
+  });
+}
+
 describe('generateIcons', () => {
   let dir: string;
   let written: string[];
@@ -27,6 +36,15 @@ describe('generateIcons', () => {
       .png()
       .toFile(source);
     written = await generateIcons(source, path.join(dir, 'out'), BACKGROUND);
+
+    // A round mark on the background colour, as in a real icon, for the badge silhouette.
+    const markSource = path.join(dir, 'mark.png');
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">' +
+      `<rect width="1024" height="1024" fill="${BACKGROUND}"/>` +
+      `<circle cx="512" cy="512" r="300" fill="${ARTWORK}"/></svg>`;
+    await sharp(Buffer.from(svg)).png().toFile(markSource);
+    await generateIcons(markSource, path.join(dir, 'mark-out'), BACKGROUND);
   });
 
   afterAll(async () => {
@@ -55,5 +73,16 @@ describe('generateIcons', () => {
     expect(await pixel(out('icon-512-maskable.png'), 48, 256)).toBe(BACKGROUND);
     expect(await pixel(out('icon-512-maskable.png'), 54, 256)).toBe(ARTWORK);
     expect(await pixel(out('icon-512-maskable.png'), 256, 256)).toBe(ARTWORK);
+  });
+
+  it('draws the badge as a white silhouette on a transparent background', async () => {
+    const badge = await rgbaPixels(path.join(dir, 'mark-out', 'badge-96.png'));
+    expect(badge).toHaveLength(96 * 96);
+    expect(badge[0]?.a).toBe(0); // a corner is background
+    expect(badge[48 * 96 + 48]).toEqual({ r: 255, g: 255, b: 255, a: 255 }); // the middle of the mark
+    expect(badge.some(({ a }) => a > 0 && a < 255)).toBe(true); // the edge stays anti-aliased
+    expect(badge.every(({ r, g, b, a }) => a === 0 || (r === 255 && g === 255 && b === 255))).toBe(
+      true,
+    );
   });
 });
