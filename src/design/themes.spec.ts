@@ -53,7 +53,7 @@ describe('themes', () => {
         '#6EA8FF',
       ]) {
         const a = themes.accent(accent, id);
-        for (const surface of [t.background, t.card, t.surface])
+        for (const surface of [t.background, t.card, t.surface, t.popup, t.muted])
           expect(contrast(a.accentText, surface), `${id} ${accent} text`).toBeGreaterThanOrEqual(
             4.5,
           );
@@ -99,8 +99,10 @@ describe('themes', () => {
     ]);
   });
 
-  it('keeps status colours and the signature accent readable on background, card and surface', () => {
+  it('keeps text, status colours and the signature accent readable on every surface', () => {
     const TEXT = [
+      'foreground',
+      'mutedForeground',
       'cardForeground',
       'success',
       'error',
@@ -110,7 +112,7 @@ describe('themes', () => {
     ] as const;
     for (const id of themes.ids) {
       const t = themes.tokens(id);
-      for (const surface of [t.background, t.card, t.surface])
+      for (const surface of [t.background, t.card, t.surface, t.popup, t.muted])
         for (const key of TEXT)
           expect(contrast(t[key], surface), `${id}.${key} on ${surface}`).toBeGreaterThanOrEqual(
             4.5,
@@ -128,7 +130,9 @@ describe('themes', () => {
             const accent = rgbToHex({ r, g, b });
             const a = themes.accent(accent, id);
             const lowest = Math.min(
-              ...[t.background, t.card, t.surface].map((s) => contrast(a.accentText, s)),
+              ...[t.background, t.card, t.surface, t.popup, t.muted].map((s) =>
+                contrast(a.accentText, s),
+              ),
             );
             expect(lowest, `${id} ${accent} text`).toBeGreaterThanOrEqual(4.5);
             expect(
@@ -146,6 +150,8 @@ describe('themes', () => {
   it('moves only the lightness, and only as far as it needs to', () => {
     const cases = [
       { accent: '#123456', id: 'orbital', lighter: true },
+      // Readable on background, card and surface; only Orbital's lighter muted fill needs a lift.
+      { accent: '#FF3B30', id: 'orbital', lighter: true },
       { accent: '#E8F0A0', id: 'ivory', lighter: false },
     ] as const;
     for (const { accent, id, lighter } of cases) {
@@ -156,7 +162,8 @@ describe('themes', () => {
       expect(after.h, `${accent} hue`).toBeCloseTo(before.h, 0);
       expect(Math.abs(after.s - before.s), `${accent} saturation`).toBeLessThan(2);
       expect(after.l > before.l, `${accent} direction`).toBe(lighter);
-      const lowest = Math.min(...[t.background, t.card, t.surface].map((s) => contrast(text, s)));
+      const surfaces = [t.background, t.card, t.surface, t.popup, t.muted];
+      const lowest = Math.min(...surfaces.map((s) => contrast(text, s)));
       expect(lowest, `${accent} lands just past 4.5:1`).toBeLessThan(4.8);
     }
   });

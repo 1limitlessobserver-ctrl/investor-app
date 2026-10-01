@@ -224,10 +224,14 @@ function towardForeground(t: ThemeTokens): 1 | -1 {
   return t.scheme === 'dark' ? 1 : -1;
 }
 
-/** Readable as text: at least 4.5:1 on the background, card and surface. */
+/**
+ * Readable as text: at least 4.5:1 on every fill text sits on. Orbital's popup and muted fills are
+ * lighter than its surface; on the website themes they repeat the card and surface.
+ */
 function readableText(hex: string, t: ThemeTokens): string {
+  const fills = [t.background, t.card, t.surface, t.popup, t.muted];
   return shiftLightness(hex, towardForeground(t), (colour) =>
-    [t.background, t.card, t.surface].every((surface) => contrast(colour, surface) >= 4.5),
+    fills.every((fill) => contrast(colour, fill) >= 4.5),
   );
 }
 
