@@ -10,6 +10,7 @@
 //     right type, so a host's HTML error page counts as an empty envelope; a lost connection is
 //     `MobileApiError.network()`; a 426 also tells onUpgradeRequired the oldest version served; the
 //     two ticket calls key `fields` by the interface's names (`message`, `id`), not the platform's;
+//     a 2xx answer that cannot be read as the JSON object it should be is a `server_error` too;
 //   - 401 `unauthorized` (the access token expired) refreshes once, shared by every call that meets
 //     it at the same time, and retries once with the token that is then stored;
 //   - 401 `session_revoked` retries once with a newer token if another call has stored one since (the
@@ -19,8 +20,8 @@
 // A refresh the platform refuses with a 4xx ends the session too (`refresh_failed`); one that fails
 // any other way (5xx, 429, 426, no connection) leaves it for the next try. A refresh answered after
 // the investor has signed out or signed in again stores nothing and signs no one out. logout() is
-// one plain request that refreshes and retries nothing. login and loginTwoFactor answer the tokens and store
-// nothing: the session stores the pair it signs in with.
+// one plain request that refreshes and retries nothing. login and loginTwoFactor answer the tokens
+// and store nothing: the session stores the pair it signs in with.
 //
 // The access token lives in memory only, so after a restart the store holds just the refresh token
 // (an empty `accessToken`): the first signed-in call then refreshes before it sends anything.
@@ -139,10 +140,13 @@ type RequestOptions = {
   auth?: boolean;
   /**
    * What a 2xx answer is: JSON (the default), text (the statement CSV), or nothing the interface
-   * keeps (`{ ok: true }` and the like), which is not even read.
+   * keeps (`{ ok: true }` and the like), which is read but not parsed.
    */
   as?: 'json' | 'text' | 'none';
-  /** A JSON answer that fails this is a server error: the refresh answer must be a token pair. */
+  /**
+   * A JSON answer that fails this is a server error. By default it must be an object, as every
+   * answer of the platform is; the refresh answer must be a token pair.
+   */
   check?: (answer: unknown) => boolean;
   /**
    * The interface's name for each field the platform names differently, by the platform's name: an
@@ -318,7 +322,7 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
     } catch {
       throw new MobileApiError('server_error', res.status);
     }
-    if (options.check && !options.check(answer)) {
+    if (!(options.check ?? isRecord)(answer)) {
       throw new MobileApiError('server_error', res.status);
     }
     return answer as T;

@@ -566,6 +566,24 @@ describe('the error envelope', () => {
     expect([e.code, e.status]).toEqual(['server_error', 200]);
   });
 
+  // Every JSON answer of the platform is an object (it wraps what would be a list), so anything
+  // else is not its answer, and must not reach a method that unwraps it as a raw TypeError.
+  it.each(['null', '[]', '"oops"', '42'])(
+    'turns a success that is JSON but not an object (%s) into a server error',
+    async (raw) => {
+      const t = setup(() => new Response(raw));
+      const asks = [
+        (a: PlatformApi) => a.sessions(),
+        (a: PlatformApi) => a.loginTwoFactor({ challenge: 'c1', code: '123456' }),
+        (a: PlatformApi) => a.me(),
+      ];
+      for (const ask of asks) {
+        const e = await failure(ask(t.api));
+        expect([e.code, e.status]).toEqual(['server_error', 200]);
+      }
+    },
+  );
+
   it('lets a method that answers nothing ignore the body, whatever it is', async () => {
     for (const answer of [
       new Response(null, { status: 204 }),
@@ -922,9 +940,9 @@ describe('the refresh and its edges', () => {
     expect(t.tokens()).toBeNull();
   });
 
-  // The platform answers a refresh some time after it was asked, and the store can change meanwhile:
-  // the investor signs out, or signs in again. The answer then belongs to a session that is over,
-  // so it must change nothing of what the store holds now.
+  // The platform answers a refresh some time after it was asked, and the store can change in
+  // between: the investor signs out, or signs in again. The answer then belongs to a session that
+  // is over, so it must change nothing of what the store holds now.
   const changes: [string, 'logout' | 'sign-in'][] = [
     ['a logout', 'logout'],
     ['a new sign-in', 'sign-in'],
