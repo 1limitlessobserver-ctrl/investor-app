@@ -49,6 +49,8 @@ function setup(
 ) {
   const calls: Call[] = [];
   let tokens = initial;
+  /** Every pair the client stored, and every clear (null), in order. */
+  const writes: (MobileTokens | null)[] = [];
   const signedOut: string[] = [];
   const upgrades: string[] = [];
   const api = createLiveApi({
@@ -56,6 +58,7 @@ function setup(
     tokenStore: {
       get: () => Promise.resolve(tokens),
       set: (t) => {
+        writes.push(t);
         tokens = t;
         return Promise.resolve();
       },
@@ -75,6 +78,7 @@ function setup(
   return {
     api,
     calls,
+    writes,
     signedOut,
     upgrades,
     tokens: () => tokens,
@@ -785,23 +789,32 @@ describe('the refresh and its edges', () => {
     expect(t.tokens()).toBeNull();
   });
 
-  it('does not end a session that another request has refreshed again since the retry went out', async () => {
+  it.each([
+    ['another request refreshed again', pair(3)],
+    ['another tab rotated the refresh token', { ...pair(2), refreshToken: 'r9' }],
+  ])('does not end the session when %s while the retry was out', async (_how, moved) => {
     const first = gate();
+    const retried = gate();
     const second = gate();
     const t = setup(async (c) => {
-      await (bearer(c) === 'Bearer a1' ? first : second).open;
+      if (bearer(c) === 'Bearer a1') {
+        await first.open;
+      } else {
+        retried.release();
+        await second.open;
+      }
       return json(401, { error: 'session_revoked' });
     });
     const call = failure(t.api.me());
     t.store(pair(2));
     first.release(); // a1 is revoked, the store holds a2: the call retries with a2
-    await later();
-    t.store(pair(3)); // and while a2 is out, another request refreshes again
+    await retried.open;
+    t.store(moved);
     second.release();
     expect((await call).code).toBe('session_revoked');
     expect(t.calls.map(bearer)).toEqual(['Bearer a1', 'Bearer a2']);
     expect(t.signedOut).toEqual([]);
-    expect(t.tokens()).toEqual(pair(3));
+    expect(t.tokens()).toEqual(moved);
   });
 
   it('retries with the stored token instead of refreshing when it is newer than the expired one', async () => {
@@ -1011,5 +1024,96 @@ describe('the refresh and its edges', () => {
     expect(t.calls.map(path).sort()).toEqual(['/auth/refresh', '/dashboard', '/me']);
     expect(bearer(t.calls.find(isRefresh)!)).toBeNull();
     expect(t.calls.filter((c) => !isRefresh(c)).map(bearer)).toEqual(['Bearer a2', 'Bearer a2']);
+  });
+});
+
+// A request belongs to the session it went out with. That session is over once the client has
+// ended one since (logout(), a revocation, a refused refresh); it has moved on when another call
+// or tab stored newer tokens. Only a session that is neither is refreshed, retried or ended.
+describe('the session a request belongs to', () => {
+  it.each(['unauthorized', 'session_revoked'])(
+    'throws %s untouched when the investor signed out meanwhile, even with a new sign-in stored',
+    async (code) => {
+      const held = gate();
+      const t = setup(async (c) => {
+        if (path(c) === '/auth/logout') return json(200, { ok: true });
+        if (bearer(c) !== 'Bearer a1') return json(200, { kind: 'wallet' });
+        await held.open;
+        return json(401, { error: code });
+      });
+      const invest = failure(t.api.invest({ planId: 'p1', amountCents: 500000 }));
+      await t.api.logout();
+      t.store(pair(5)); // someone signs in: the session layer stores the new pair
+      held.release();
+      expect((await invest).code).toBe(code);
+      // The investment and the logout, both as a1: nothing goes out as the new session.
+      expect(t.calls.map((c) => `${path(c)} ${bearer(c)}`)).toEqual([
+        '/invest Bearer a1',
+        '/auth/logout Bearer a1',
+      ]);
+      expect([t.signedOut, t.tokens()]).toEqual([[], pair(5)]);
+    },
+  );
+
+  it.each(['unauthorized', 'session_revoked'])(
+    'refreshes with the refresh token another tab rotated, and retries, on %s',
+    async (code) => {
+      // Tabs share the refresh token, not the access token: another tab's refresh leaves this
+      // tab's a1 stale, and the platform may say so with either code.
+      const held = gate();
+      const t = setup(async (c) => {
+        if (isRefresh(c)) return json(200, pair(10));
+        if (bearer(c) !== 'Bearer a1') return json(200, { id: 'u1' });
+        await held.open;
+        return json(401, { error: code });
+      });
+      const call = t.api.me();
+      t.store({ ...pair(1), refreshToken: 'r9' });
+      held.release();
+      expect((await call).id).toBe('u1');
+      expect(t.calls.map((c) => `${path(c)} ${bearer(c)}`)).toEqual([
+        '/me Bearer a1',
+        '/auth/refresh null',
+        '/me Bearer a10',
+      ]);
+      expect(bodyOf(t.calls[1]!)).toEqual({ refreshToken: 'r9' });
+      expect([t.signedOut, t.tokens()]).toEqual([[], pair(10)]);
+    },
+  );
+
+  it.each(['joined', 'started'])(
+    'throws the 401 untouched when the refresh it %s lands after a logout',
+    async (how) => {
+      const started = gate();
+      const answer = gate();
+      const t = setup(async (c) => {
+        if (path(c) === '/auth/logout') return json(200, { ok: true });
+        if (!isRefresh(c)) return json(401, { error: 'unauthorized' });
+        started.release();
+        await answer.open;
+        return json(200, pair(2));
+      });
+      const refreshing = how === 'joined' ? t.api.refresh() : undefined;
+      const call = failure(t.api.me());
+      await started.open;
+      await t.api.logout();
+      answer.release();
+      expect((await call).code).toBe('unauthorized');
+      await refreshing;
+      // No retry: the pair belongs to a session the investor has ended.
+      expect(t.calls.map(path).sort()).toEqual(['/auth/logout', '/auth/refresh', '/me']);
+      expect([t.signedOut, t.tokens()]).toEqual([[], null]);
+    },
+  );
+
+  it('ends a revoked session once for every call that hears it at the same time', async () => {
+    const t = setup(() => json(401, { error: 'session_revoked' }));
+    const heard = await Promise.all([t.api.me(), t.api.dashboard(), t.api.kyc()].map(failure));
+    expect(heard.map((e) => e.code)).toEqual([
+      'session_revoked',
+      'session_revoked',
+      'session_revoked',
+    ]);
+    expect([t.signedOut, t.writes]).toEqual([['session_revoked'], [null]]);
   });
 });
