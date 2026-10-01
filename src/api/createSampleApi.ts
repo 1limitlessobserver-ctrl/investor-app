@@ -32,7 +32,11 @@ export interface SampleApiOptions {
 }
 
 export type SampleApi = PlatformApi & {
-  /** Ends the session: every later call but brand, login and loginTwoFactor answers 401. */
+  /**
+   * Ends the session, as a revocation elsewhere would: every later call answers 401
+   * `session_revoked` except the public routes (brand, login, loginTwoFactor and logout), until a
+   * sign-in starts a new session.
+   */
   _test_revoke(): void;
 };
 
@@ -58,8 +62,11 @@ export function createSampleApiFor(
 
   /**
    * Waits the latency, then answers as the platform would: a signed-in route of an ended session
-   * is 401 `session_revoked`; a public one (brand, sign-in) always runs. The answer is a copy, as
-   * if it had crossed the wire, so no caller holds a piece of the world.
+   * is 401 `session_revoked`; a public one always runs. The public ones are the platform's
+   * (mobilePublicRoute): GET /brand, the two sign-in steps and POST /auth/logout, which answers
+   * `{ ok: true }` whatever the tokens. POST /auth/refresh is public there too, but a refresh of an
+   * ended session is refused with `session_revoked`, so it goes through the session check here. The
+   * answer is a copy, as if it had crossed the wire, so no caller holds a piece of the world.
    */
   async function answer<T>(run: () => T, access: 'signed-in' | 'public' = 'signed-in'): Promise<T> {
     await new Promise<void>((resolve) => {
@@ -78,7 +85,7 @@ export function createSampleApiFor(
     login: (body) => answer(() => account.login(ctx, body), 'public'),
     loginTwoFactor: (body) => answer(() => account.loginTwoFactor(ctx, body), 'public'),
     refresh: () => answer(() => account.refresh(ctx)),
-    logout: () => answer(() => account.logout()),
+    logout: () => answer(() => account.logout(), 'public'),
     brand: () => answer(() => account.brand(ctx), 'public'),
 
     me: () => answer(() => account.me(ctx)),

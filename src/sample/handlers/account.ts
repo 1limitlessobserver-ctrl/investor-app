@@ -3,6 +3,9 @@
 // two-factor turned on, takes the two-factor step, whose code is 123456. The sample password for
 // the password-gated actions is "sample" until the investor changes it.
 //
+// Signing out always succeeds, as POST /auth/logout answers `{ ok: true }` whatever the tokens
+// (a public route, even for a revoked session or a closed account).
+//
 // Sample-only simplifications: the sign-in, re-authentication and PIN rate limits are not kept (a
 // quick demo would trip them), tokens are opaque sample strings, and signing out ends nothing,
 // since there are no tokens to revoke.

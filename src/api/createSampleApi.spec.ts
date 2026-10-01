@@ -204,10 +204,12 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
   it('ends the session on _test_revoke and keeps the public routes until the next sign-in', async () => {
     const a = api();
     a._test_revoke();
-    for (const call of [() => a.me(), () => a.dashboard(), () => a.refresh(), () => a.logout()]) {
+    for (const call of [() => a.me(), () => a.dashboard(), () => a.refresh()]) {
       const e = await failure(call());
       expect([e.code, e.status]).toEqual(['session_revoked', 401]);
     }
+    // Signing out always succeeds: POST /auth/logout answers { ok: true } whatever the tokens.
+    await expect(a.logout()).resolves.toBeUndefined();
     await expect(a.brand()).resolves.toMatchObject({ apiVersion: 1 });
     expect((await a.login({ email: 'anyone@example.com', password: 'x' })).requiresTwoFactor).toBe(
       false,
@@ -361,6 +363,7 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
     const a = createSampleApiFor(state, { latencyMs: 0 });
     await expect(a.closeAccount({ currentPassword: 'sample' })).resolves.toBeUndefined();
     expect((await failure(a.me())).code).toBe('session_revoked');
+    await expect(a.logout()).resolves.toBeUndefined();
     const refused = await failure(
       a.login({ email: 'alex.morgan@example.com', password: 'sample' }),
     );
@@ -806,6 +809,7 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
     expect((await a.sessions()).find((s) => s.current)?.id).toBe(me.sessionId);
     expect(await a.revokeSession(me.sessionId)).toEqual({ ok: true, current: true });
     expect((await failure(a.me())).code).toBe('session_revoked');
+    await expect(a.logout()).resolves.toBeUndefined();
     await a.login({ email: 'anyone@example.com', password: 'x' });
     const sessions = await a.sessions();
     expect(sessions.some((s) => s.id === me.sessionId)).toBe(false);
