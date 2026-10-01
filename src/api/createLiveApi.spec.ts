@@ -28,9 +28,10 @@ function setup(
   const api = createLiveApi({
     baseUrl: 'https://platform.test/api/mobile/v1',
     tokenStore: {
-      get: async () => tokens,
-      set: async (t) => {
+      get: () => Promise.resolve(tokens),
+      set: (t) => {
         tokens = t;
+        return Promise.resolve();
       },
     },
     app: { version: '1.2.0', platform: 'web', deviceId: 'device-0001', deviceName: 'Ada’s laptop' },
@@ -80,7 +81,7 @@ describe('createLiveApi', () => {
     );
     expect((await t.api.me()).id).toBe('u1');
     expect(t.calls.map((c) => c.url.split('/v1')[1])).toEqual(['/me', '/auth/refresh', '/me']);
-    expect(JSON.parse(String(t.calls[1]!.init.body))).toEqual({ refreshToken: 'r1' });
+    expect(JSON.parse(t.calls[1]!.init.body as string)).toEqual({ refreshToken: 'r1' });
     expect(t.tokens()?.accessToken).toBe('a2');
   });
 
@@ -186,7 +187,7 @@ describe('createLiveApi', () => {
   it('logs out with the refresh token and always clears tokens', async () => {
     const t = setup(() => json(500, { error: 'server_error' }));
     await t.api.logout();
-    expect(JSON.parse(String(t.calls[0]!.init.body))).toEqual({ refreshToken: 'r1' });
+    expect(JSON.parse(t.calls[0]!.init.body as string)).toEqual({ refreshToken: 'r1' });
     expect(t.tokens()).toBeNull();
   });
 
