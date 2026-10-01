@@ -24,21 +24,29 @@
 // and store nothing: the session stores the pair it signs in with.
 //
 // The access token lives in memory only, so after a restart the store holds just the refresh token
-// (an empty `accessToken`): the first signed-in call then refreshes before it sends anything.
+// (a null `accessToken`): the first signed-in call then refreshes before it sends anything.
 
 import { MobileApiError } from './MobileApiError';
 import type { PlatformApi } from './PlatformApi';
 import type { MobileTokens, SessionView } from './types';
 
 /**
- * Where the app keeps the signed-in session (src/session/tokens.ts). After a restart `get()` answers
- * the pair with an empty `accessToken`: the access token lives in memory only, and only the refresh
- * token was kept.
+ * What the token store answers: the refresh token, and this page's access token. `accessToken` is
+ * null when this page has none yet (after a restart): the next signed-in call refreshes first.
  */
+export type StoredSession = {
+  readonly refreshToken: string;
+  readonly accessToken: string | null;
+};
+
+/** Where the app keeps the signed-in session. */
 export type TokenStore = {
-  get(): Promise<MobileTokens | null>;
+  get(): Promise<StoredSession | null>;
   set(tokens: MobileTokens | null): Promise<void>;
 };
+
+/** The tokens a request went out with: an access token, and the refresh token stored beside it. */
+type Sent = { readonly accessToken: string; readonly refreshToken: string };
 
 export type LiveApiConfig = {
   /** The platform's API root, such as "https://platform.example.com/api/mobile/v1". */
@@ -330,15 +338,22 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
 
   /** A call with the session's rules: refresh and retry on 401, end the session when it is revoked. */
   async function request<T>(route: Route, options: RequestOptions = {}): Promise<T> {
-    let stored = options.auth === false ? null : await tokenStore.get();
-    // Only the refresh token survives a restart: there is no access token to send yet.
-    if (stored?.accessToken === '') stored = await refreshOnce();
+    const stored = options.auth === false ? null : await tokenStore.get();
+    let sent: Sent | null = null;
+    if (stored !== null) {
+      const access = textOf(stored.accessToken);
+      // Only the refresh token survives a restart: there is no access token to send yet.
+      sent =
+        access === undefined
+          ? await refreshOnce()
+          : { accessToken: access, refreshToken: stored.refreshToken };
+    }
     try {
-      return await send<T>(route, options, stored?.accessToken);
+      return await send<T>(route, options, sent?.accessToken);
     } catch (e) {
       // A 401 is about the token only when the call sent one: the sign-in routes answer 401 too.
-      if (stored === null || !isTokenProblem(e)) throw e;
-      const token = await tokenAfter401(stored.accessToken, e);
+      if (sent === null || !isTokenProblem(e)) throw e;
+      const token = await tokenAfter401(sent.accessToken, e);
       try {
         return await send<T>(route, options, token);
       } catch (again) {
@@ -357,9 +372,10 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
     // Signed out meanwhile (logout(), or another call's revocation): nothing to refresh with, and
     // no one left to tell.
     if (now === null) throw e;
-    // Another call refreshed since this one went out. A refresh token alone (an empty access token)
-    // is not a token to send, so it falls through to refreshing with it.
-    if (now.accessToken !== '' && now.accessToken !== sent) return now.accessToken;
+    // Another call refreshed since this one went out. A refresh token alone (no access token) is
+    // not a token to send, so it falls through to refreshing with it.
+    const newer = textOf(now.accessToken);
+    if (newer !== undefined && newer !== sent) return newer;
     if (e.code === 'unauthorized') return (await refreshOnce()).accessToken;
     // session_revoked, and no newer token to try: the session is over.
     await endSession(sent);
@@ -433,7 +449,7 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
           await send(
             ROUTES.logout,
             { body: { refreshToken: stored.refreshToken }, as: 'none' },
-            stored.accessToken || undefined,
+            textOf(stored.accessToken),
           );
         }
       } catch {

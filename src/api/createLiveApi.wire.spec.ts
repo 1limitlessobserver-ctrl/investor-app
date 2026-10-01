@@ -2,7 +2,7 @@
 // platform reads it, the error envelope read defensively, sign-in and sign-out, and the edges of
 // the refresh rules. All of it runs through a fake fetchImpl; nothing inside the client is mocked.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLiveApi, ROUTES, type LiveApiConfig } from './createLiveApi';
+import { createLiveApi, ROUTES, type LiveApiConfig, type StoredSession } from './createLiveApi';
 import { MobileApiError } from './MobileApiError';
 import type { PlatformApi } from './PlatformApi';
 import type { KycSubmission, LegacyPlan, MobileTokens } from './types';
@@ -32,10 +32,12 @@ const pair = (n: number): MobileTokens => ({
   accessExpiresAt: '2026-10-01T12:15:00.000Z',
   refreshExpiresAt: '2026-10-31T12:00:00.000Z',
 });
+/** What the store answers after a restart: the refresh token alone. */
+const restarted = (n: number): StoredSession => ({ refreshToken: `r${n}`, accessToken: null });
 
 function setup(
   script: Script,
-  initial: MobileTokens | null = pair(1),
+  initial: StoredSession | null = pair(1),
   options: { baseUrl?: string; app?: LiveApiConfig['app'] } = {},
 ) {
   const calls: Call[] = [];
@@ -70,7 +72,7 @@ function setup(
     upgrades,
     tokens: () => tokens,
     /** Changes the store behind the api's back, as another request or a sign-out would. */
-    store: (t: MobileTokens | null) => {
+    store: (t: StoredSession | null) => {
       tokens = t;
     },
   };
@@ -671,7 +673,7 @@ describe('sign-in and sign-out', () => {
   });
 
   it('logs out with the refresh token alone when only that survived a restart', async () => {
-    const t = setup(() => json(200, { ok: true }), { ...pair(1), accessToken: '' });
+    const t = setup(() => json(200, { ok: true }), restarted(1));
     await t.api.logout();
     expect([bearer(t.calls[0]!), bodyOf(t.calls[0]!)]).toEqual([null, { refreshToken: 'r1' }]);
     expect(t.tokens()).toBeNull();
@@ -803,9 +805,9 @@ describe('the refresh and its edges', () => {
     expect(t.calls.map(bearer)).toEqual(['Bearer a1', 'Bearer a2']);
   });
 
-  it('refreshes rather than retry with an empty access token that only looks newer', async () => {
-    // By the time the 401 lands the store holds a refresh token alone (an empty access token): that
-    // is not a token to send, so the call refreshes with it and retries with the pair it gets.
+  it('refreshes, rather than retry, when the store holds a refresh token alone', async () => {
+    // By the time the 401 lands the store holds a refresh token alone (no access token): there is
+    // no token to send, so the call refreshes with it and retries with the pair it gets.
     const wait = gate();
     const t = setup(async (c) => {
       if (isRefresh(c)) return json(200, pair(3));
@@ -814,7 +816,7 @@ describe('the refresh and its edges', () => {
       return json(401, { error: 'unauthorized' });
     });
     const first = t.api.me();
-    t.store({ ...pair(2), accessToken: '' });
+    t.store(restarted(2));
     wait.release();
     expect((await first).id).toBe('u1');
     expect(t.calls.map(path)).toEqual(['/me', '/auth/refresh', '/me']);
@@ -987,10 +989,10 @@ describe('the refresh and its edges', () => {
   });
 
   it('refreshes first when only the refresh token survived, once for concurrent calls', async () => {
-    const t = setup((c) => (isRefresh(c) ? json(200, pair(2)) : json(200, { id: 'u1' })), {
-      ...pair(1),
-      accessToken: '',
-    });
+    const t = setup(
+      (c) => (isRefresh(c) ? json(200, pair(2)) : json(200, { id: 'u1' })),
+      restarted(1),
+    );
     await Promise.all([t.api.me(), t.api.dashboard()]);
     expect(t.calls.map(path).sort()).toEqual(['/auth/refresh', '/dashboard', '/me']);
     expect(bearer(t.calls.find(isRefresh)!)).toBeNull();
