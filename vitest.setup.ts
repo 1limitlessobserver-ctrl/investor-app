@@ -10,7 +10,9 @@ afterEach(cleanup);
 if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true });
 }
-if (!('matchMedia' in window)) {
+// Vitest's jsdom environment already defines the `matchMedia` key (as undefined), so test the value,
+// not the key. Writable and configurable, so a test can replace it by assignment or `vi.stubGlobal`.
+if (typeof window.matchMedia !== 'function') {
   Object.defineProperty(window, 'matchMedia', {
     value: (query: string) => ({
       matches: false,
@@ -20,5 +22,7 @@ if (!('matchMedia' in window)) {
       onchange: null,
       dispatchEvent: () => false,
     }),
+    writable: true,
+    configurable: true,
   });
 }
