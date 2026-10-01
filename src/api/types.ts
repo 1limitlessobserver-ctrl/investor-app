@@ -74,6 +74,27 @@
 //   Plan said `openTicket({ subject; message })` and `replyTicket({ id; message })`; handlers read
 //     `{ subject, body }` and `{ ticketId, body }`. Those two names are request fields, not DTOs:
 //     PlatformApi keeps the plan's and createLiveApi maps them (see PlatformApi.ts).
+//   Plan said `setNotificationPrefs()` resolves `Me`; handler returns `{ notificationPrefs }`.
+//   Plan said `openTicket()` resolves a `TicketSummary`; handler returns `{ id }`.
+//   Plan said `replyTicket()` resolves a `TicketThread`; handler answers `{ ok: true }`.
+//   Plan said `manualDeposit()` resolves a `DepositRequest`; handler returns `{ id, amountCents,
+//     methodLabel, address, status: 'PENDING' }` (`ManualDepositResult`: it carries the method's
+//     `address`, so it is not a `DepositRequest`).
+//   Plan said `sendTransfer()` resolves a `TransferView`; handler returns `{ id, amountCents,
+//     currency, status }`.
+//   Plan said `invest()` resolves a `PositionView`; handler returns `{ kind, orderId, url }`, no
+//     position, and `url` is null for a wallet payment.
+//   Plan said `maturityChoice()` resolves `Investments`; handler answers `{ ok: true }`.
+//   Plan said `submitKyc()` resolves a `KycOverview`; handler returns `{ submissionId, status:
+//     'PENDING' }`.
+//   Plan said `saveLegacyPlan()` resolves a `LegacyPlanState`; handler returns `{ revision,
+//     revisionId, message }`.
+//   Plan said `addBeneficiary()` resolves `Beneficiaries`; handler returns `{ beneficiary }`.
+//   Plan said `updateBeneficiary()` resolves `Beneficiaries`; handler returns `{ beneficiary }`.
+//   Plan said `removeBeneficiary()` resolves `Beneficiaries`; handler answers `{ ok: true }`.
+//   Plan said `updateBeneficiary({ id } & Partial<BeneficiaryInput>)`; handler validates the whole
+//     record (`fullName`, `relationship` and `sharePercent` are required), so the body is
+//     `{ id } & BeneficiaryInput`.
 
 import type { ThemeId } from '../design/themes';
 
@@ -154,6 +175,11 @@ export type NotificationCategory =
 
 /** All seven categories are always present. They gate the email and the push alerts. */
 export type NotificationPrefs = Record<NotificationCategory, boolean>;
+
+/** POST /me/notification-prefs: the categories just saved. */
+export interface NotificationPrefsResult {
+  notificationPrefs: NotificationPrefs;
+}
 
 /** GET /me. */
 export interface Me {
@@ -446,6 +472,16 @@ export interface Strategies {
   strategies: Strategy[];
 }
 
+/**
+ * POST /invest. `kind` is 'wallet' when the available balance paid, and `url` is then null; any
+ * other kind carries the checkout's `url`.
+ */
+export interface InvestResult {
+  kind: 'stripe' | 'simulated' | 'wallet';
+  orderId: string;
+  url: string | null;
+}
+
 export type HistoryKind = 'deposit' | 'maturity' | 'withdrawal_paid' | 'withdrawal_rejected';
 
 /** By kind: `deposit` is PAID, `maturity` MATURED or WITHDRAWN, a withdrawal PAID or REJECTED. */
@@ -600,6 +636,11 @@ export interface TicketThread extends TicketSummary {
   messages: TicketMessage[];
 }
 
+/** POST /support/tickets: the id of the ticket just opened. */
+export interface OpenTicketResult {
+  id: string;
+}
+
 // ---- Deposits ----------------------------------------------------------------------------------
 
 /** An enabled way to pay in, as GET /deposit/methods lists it. */
@@ -656,6 +697,18 @@ export interface DepositOverview {
   cashBalanceCents: number;
   methods: DepositMethod[];
   requests: DepositRequest[];
+}
+
+/**
+ * POST /deposit/manual: the request just filed, awaiting review. It is not a `DepositRequest`: it
+ * carries the method's `address` (empty for a bank method) and no `reference` or dates.
+ */
+export interface ManualDepositResult {
+  id: string;
+  amountCents: number;
+  methodLabel: string;
+  address: string;
+  status: 'PENDING';
 }
 
 /**
@@ -738,6 +791,14 @@ export interface Transfers {
   transfers: TransferView[];
 }
 
+/** POST /transfers: the transfer just made, without its `note`, `counterparty` or `createdAt`. */
+export interface TransferResult {
+  id: string;
+  amountCents: number;
+  currency: string;
+  status: TransferStatus;
+}
+
 // ---- Identity verification (KYC) ---------------------------------------------------------------
 
 /** GET /kyc (readable with the `kyc` switch off). */
@@ -813,6 +874,12 @@ export interface KycSubmission {
   annualIncome: string;
   /** 1 to 60 characters. */
   investmentExperience: string;
+}
+
+/** POST /kyc: the new submission, awaiting manual review. */
+export interface KycSubmitResult {
+  submissionId: string;
+  status: 'PENDING';
 }
 
 // ---- Legacy plan -------------------------------------------------------------------------------
@@ -921,6 +988,16 @@ export interface LegacyPlanState {
   projection: LegacyProjection;
 }
 
+/**
+ * POST /legacy-plan: the version just saved. `revision` is what the next save sends as
+ * `expectedRevision`; `message` is text for the person, such as "Private plan saved as version 1."
+ */
+export interface SaveLegacyPlanResult {
+  revision: number;
+  revisionId: string;
+  message: string;
+}
+
 // ---- Beneficiaries -----------------------------------------------------------------------------
 
 export type BeneficiaryRelationship = 'spouse' | 'child' | 'parent' | 'sibling' | 'other';
@@ -959,6 +1036,11 @@ export interface Beneficiaries {
     /** 100 minus `totalShare`, never below 0: the room left for another beneficiary. */
     remainder: number;
   };
+}
+
+/** POST /beneficiaries and POST /beneficiaries/update: the record as saved. */
+export interface BeneficiaryResult {
+  beneficiary: Beneficiary;
 }
 
 // ---- Oracle ------------------------------------------------------------------------------------

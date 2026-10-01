@@ -1,47 +1,49 @@
 // The one interface the screens talk to, through the hooks in src/queries. createSampleApi serves
 // it from an in-memory world and createLiveApi from the platform over HTTPS (/api/mobile/v1).
 //
-// PlatformApi is the app's view of the platform, so several methods hand back more than the
-// platform's route answers: a mutation resolves with the refreshed resource. Where that is so, the
-// comment names the route, what the platform answers and what createLiveApi reads to fill the gap.
-// Where a request field has another name on the wire, the comment says so too. Every method
-// rejects with a MobileApiError.
+// A mutation answers what the platform's route answers, and nothing more: screens refresh what it
+// changed through query invalidation. Where a request field has another name on the wire, the
+// method's comment says so. Every method rejects with a MobileApiError.
 
 import type {
   Beneficiaries,
   BeneficiaryInput,
+  BeneficiaryResult,
   Brand,
   CardDepositResult,
   Dashboard,
   DepositOverview,
-  DepositRequest,
   History,
   InvestmentDetail,
   Investments,
+  InvestResult,
   KycOverview,
   KycSubmission,
+  KycSubmitResult,
   LegacyPlan,
   LegacyPlanState,
   LegacyProjection,
   LoginResult,
+  ManualDepositResult,
   MarkReadResult,
   Me,
   MobileTokens,
   NotificationCategory,
   NotificationList,
+  NotificationPrefsResult,
+  OpenTicketResult,
   OracleAnswer,
-  PositionView,
   PushSubscriptionInput,
+  SaveLegacyPlanResult,
   SessionView,
   StatementDetail,
   StatementKind,
   StatementPeriods,
   Strategies,
   TicketList,
-  TicketSummary,
   TicketThread,
-  TransferView,
   Transfers,
+  TransferResult,
   Withdrawals,
   WithdrawalRequest,
 } from './types';
@@ -74,11 +76,10 @@ export interface PlatformApi {
 
   /** GET /me. */
   me(): Promise<Me>;
-  /**
-   * POST /me/notification-prefs with all seven categories. The platform answers
-   * `{ notificationPrefs }`; the app gets the profile with them applied.
-   */
-  setNotificationPrefs(prefs: Record<NotificationCategory, boolean>): Promise<Me>;
+  /** POST /me/notification-prefs with all seven categories; answers them as saved. */
+  setNotificationPrefs(
+    prefs: Record<NotificationCategory, boolean>,
+  ): Promise<NotificationPrefsResult>;
   /** POST /me/password. */
   changePassword(body: { currentPassword: string; newPassword: string }): Promise<void>;
   /** POST /me/pin: the transfer PIN, 4 to 8 digits. */
@@ -136,33 +137,32 @@ export interface PlatformApi {
   /** GET /support/tickets?page= (page 1 when left out): 20 to a page, newest activity first. */
   supportTickets(page?: number): Promise<TicketList>;
   /**
-   * POST /support/tickets with `{ subject, body }`; `message` here is the platform's `body`. The
-   * platform answers `{ id }`; the app gets that ticket's summary. Obeys the `support` switch.
+   * POST /support/tickets with `{ subject, body }`; `message` here is the platform's `body`. Obeys
+   * the `support` switch.
    */
-  openTicket(body: { subject: string; message: string }): Promise<TicketSummary>;
+  openTicket(body: { subject: string; message: string }): Promise<OpenTicketResult>;
   /** GET /support/ticket?id=. */
   ticket(id: string): Promise<TicketThread>;
   /**
    * POST /support/reply with `{ ticketId, body }`; `id` and `message` here are the platform's
-   * `ticketId` and `body`. The platform answers `{ ok: true }`; the app gets the updated thread. It
-   * works with the `support` switch off.
+   * `ticketId` and `body`. The platform answers `{ ok: true }`. It works with the `support` switch
+   * off.
    */
-  replyTicket(body: { id: string; message: string }): Promise<TicketThread>;
+  replyTicket(body: { id: string; message: string }): Promise<void>;
 
   // ---- Money
 
   /** GET /deposit/methods (the `deposits` switch). */
   depositMethods(): Promise<DepositOverview>;
   /**
-   * POST /deposit/manual (the `deposits` switch). The platform answers `{ id, amountCents,
-   * methodLabel, address, status: 'PENDING' }`; the app gets the request as GET /deposit/methods
-   * lists it.
+   * POST /deposit/manual (the `deposits` switch): files a request for review. The answer carries
+   * the method's `address`.
    */
   manualDeposit(body: {
     methodId: string;
     amountCents: number;
     reference?: string;
-  }): Promise<DepositRequest>;
+  }): Promise<ManualDepositResult>;
   /** POST /deposit/checkout (the `deposits` switch): a card top-up that is finished at `url`. */
   cardDeposit(body: { amountCents: number }): Promise<CardDepositResult>;
   /** GET /withdrawals. */
@@ -175,42 +175,32 @@ export interface PlatformApi {
   ): Promise<WithdrawalRequest>;
   /** GET /transfers. */
   transfers(): Promise<Transfers>;
-  /**
-   * POST /transfers. The platform answers `{ id, amountCents, currency, status }`; the app gets the
-   * transfer as GET /transfers lists it. `recipient` is an email or a $tag; `currency` is USD when
-   * left out.
-   */
+  /** POST /transfers. `recipient` is an email or a $tag; `currency` is USD when left out. */
   sendTransfer(body: {
     recipient: string;
     amountCents: number;
     currency?: string;
     note?: string;
     pin: string;
-  }): Promise<TransferView>;
-  /**
-   * POST /invest, paid from the available wallet balance. The platform answers `{ kind: 'wallet',
-   * orderId, url: null }`; the app gets the position it opened, the newest in GET /investments.
-   */
-  invest(body: { planId: string; amountCents: number }): Promise<PositionView>;
+  }): Promise<TransferResult>;
+  /** POST /invest, paid from the available wallet balance. */
+  invest(body: { planId: string; amountCents: number }): Promise<InvestResult>;
   /**
    * POST /maturity-choice. Without `choiceId` it takes the earliest pending choice, and REINVEST
-   * needs a `planId`. The platform answers `{ ok: true }`; the app gets GET /investments.
+   * needs a `planId`. The platform answers `{ ok: true }`.
    */
   maturityChoice(body: {
     choiceId?: string;
     choice: 'REINVEST' | 'WITHDRAW';
     planId?: string;
-  }): Promise<Investments>;
+  }): Promise<void>;
 
   // ---- Verification
 
   /** GET /kyc. */
   kyc(): Promise<KycOverview>;
-  /**
-   * POST /kyc (the `kyc` switch). The platform answers `{ submissionId, status: 'PENDING' }`; the
-   * app gets GET /kyc.
-   */
-  submitKyc(submission: KycSubmission): Promise<KycOverview>;
+  /** POST /kyc (the `kyc` switch). */
+  submitKyc(submission: KycSubmission): Promise<KycSubmitResult>;
 
   // ---- Legacy
 
@@ -218,30 +208,25 @@ export interface PlatformApi {
   legacyPlan(): Promise<LegacyPlanState>;
   /**
    * POST /legacy-plan with `expectedRevision`, the `revision` of the last GET (409 `conflict` when
-   * it is stale). The platform answers `{ revision, revisionId, message }`; the app gets
-   * GET /legacy-plan.
+   * it is stale).
    */
-  saveLegacyPlan(body: { expectedRevision: number; plan: LegacyPlan }): Promise<LegacyPlanState>;
+  saveLegacyPlan(body: {
+    expectedRevision: number;
+    plan: LegacyPlan;
+  }): Promise<SaveLegacyPlanResult>;
   /** POST /legacy-plan/preview with `{ plan }`. Nothing is stored. */
   previewLegacyPlan(plan: LegacyPlan): Promise<{ projection: LegacyProjection }>;
   /** GET /beneficiaries. */
   beneficiaries(): Promise<Beneficiaries>;
+  /** POST /beneficiaries. Shares may not total above 100 (409 `share_exceeds_100`). */
+  addBeneficiary(body: BeneficiaryInput): Promise<BeneficiaryResult>;
   /**
-   * POST /beneficiaries. The platform answers `{ beneficiary }`; the app gets GET /beneficiaries.
-   * Shares may not total above 100 (409 `share_exceeds_100`).
+   * POST /beneficiaries/update. The platform needs the `id` and the whole record (`fullName`,
+   * `relationship`, `sharePercent` and an optional `dateOfBirth`), not only what changed.
    */
-  addBeneficiary(body: BeneficiaryInput): Promise<Beneficiaries>;
-  /**
-   * POST /beneficiaries/update. The platform needs `fullName`, `relationship` and `sharePercent` as
-   * well as the `id`, so what `body` leaves out is filled from the current record. It answers
-   * `{ beneficiary }`; the app gets GET /beneficiaries.
-   */
-  updateBeneficiary(body: { id: string } & Partial<BeneficiaryInput>): Promise<Beneficiaries>;
-  /**
-   * POST /beneficiaries/remove with `{ id }`. The platform answers `{ ok: true }`; the app gets
-   * GET /beneficiaries.
-   */
-  removeBeneficiary(id: string): Promise<Beneficiaries>;
+  updateBeneficiary(body: { id: string } & BeneficiaryInput): Promise<BeneficiaryResult>;
+  /** POST /beneficiaries/remove with `{ id }`. The platform answers `{ ok: true }`. */
+  removeBeneficiary(id: string): Promise<void>;
 
   // ---- Oracle
 
