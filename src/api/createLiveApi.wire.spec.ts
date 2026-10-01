@@ -163,6 +163,49 @@ describe('the request as it goes out', () => {
     expect(header(t.calls[0]!, 'X-Device-Id')).toBe('device-0001');
   });
 
+  it.each([
+    ['baseUrl', 'a relative path', { baseUrl: '/api/mobile/v1' }],
+    ['baseUrl', 'an unset origin', { baseUrl: 'undefined/api/mobile/v1' }],
+    ['baseUrl', 'another scheme', { baseUrl: 'ftp://platform.test/api/mobile/v1' }],
+    ['app.deviceId', 'too short', { app: { ...APP, deviceId: 'device1' } }],
+    ['app.deviceId', 'with an en dash', { app: { ...APP, deviceId: 'device–0001' } }],
+    ['app.deviceId', 'with a newline', { app: { ...APP, deviceId: 'device-0001\n' } }],
+    ['app.version', 'empty', { app: { ...APP, version: '' } }],
+  ])('refuses at once a config whose %s is %s', (field, _what, change) => {
+    const build = () =>
+      createLiveApi({
+        baseUrl: BASE,
+        tokenStore: { get: () => Promise.resolve(null), set: () => Promise.resolve() },
+        app: APP,
+        ...change,
+      });
+    expect(build).toThrow(TypeError);
+    expect(build).toThrow(field);
+  });
+
+  it('reads its config once: changing it afterwards changes nothing that is sent', async () => {
+    const app = { ...APP };
+    const t = setup(() => json(200, {}), pair(1), { app });
+    Object.assign(app, { deviceId: 'another-device', deviceName: 'Another' });
+    await t.api.me();
+    expect([header(t.calls[0]!, 'X-Device-Id'), header(t.calls[0]!, 'X-Device-Name')]).toEqual([
+      'device-0001',
+      'Ada%E2%80%99s%20laptop',
+    ]);
+  });
+
+  it.each([
+    ['a character beyond the BMP', 'Ada’s 📱', 'Ada%E2%80%99s%20%F0%9F%93%B1'],
+    ['a lone surrogate, as U+FFFD', 'Ada\uD83D', 'Ada%EF%BF%BD'],
+    ['a lone trailing surrogate, as U+FFFD', '\uDC00Ada', '%EF%BF%BDAda'],
+  ])('sends the device name with %s, and every call goes out', async (_what, deviceName, sent) => {
+    const t = setup(() => json(200, { ok: true }), pair(1), { app: { ...APP, deviceName } });
+    await t.api.me();
+    await t.api.logout();
+    expect(t.calls.map(path)).toEqual(['/me', '/auth/logout']);
+    expect(t.calls.map((c) => header(c, 'X-Device-Name'))).toEqual([sent, sent]);
+  });
+
   it('tolerates a trailing slash on the base URL', async () => {
     const t = setup(() => json(200, {}), pair(1), { baseUrl: `${BASE}/` });
     await t.api.me();

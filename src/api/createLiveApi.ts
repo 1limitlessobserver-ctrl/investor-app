@@ -394,9 +394,50 @@ function errorFrom(
   return e;
 }
 
+/** The base URL without trailing slashes: a TypeError unless it is an absolute http(s) URL. */
+function rootOf(baseUrl: string): string {
+  const root = typeof baseUrl === 'string' ? baseUrl.replace(/\/+$/, '') : '';
+  let protocol: string | undefined;
+  try {
+    protocol = new URL(root).protocol;
+  } catch {
+    protocol = undefined;
+  }
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    throw new TypeError('createLiveApi: baseUrl must be an absolute http or https URL');
+  }
+  return root;
+}
+
+/** X-Device-Id as the platform reads it (CLAUDE.md): anything else it takes for no id at all. */
+const DEVICE_ID = /^[A-Za-z0-9_-]{8,128}$/;
+
+/** A copy of the app's identity, checked: a TypeError names a field that cannot be sent. */
+function identityOf(app: AppIdentity): AppIdentity {
+  const copy = { ...app };
+  if (textOf(copy.version) === undefined) {
+    throw new TypeError('createLiveApi: app.version must be a version, not empty');
+  }
+  if (typeof copy.deviceId !== 'string' || !DEVICE_ID.test(copy.deviceId)) {
+    throw new TypeError('createLiveApi: app.deviceId must be 8 to 128 of A-Z a-z 0-9 _ -');
+  }
+  return copy;
+}
+
+/** A UTF-16 surrogate without its other half, which encodeURIComponent refuses with a URIError. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** X-Device-Name: the name as percent-encoded UTF-8, a lone surrogate as U+FFFD; null: none. */
+const nameHeaderOf = (name: string | undefined): string | null =>
+  name === undefined || name === ''
+    ? null
+    : encodeURIComponent(name.replace(LONE_SURROGATE, '\uFFFD'));
+
 export function createLiveApi(config: LiveApiConfig): LiveApi {
-  const { tokenStore, app, onSignedOut, onUpgradeRequired, onStorageError } = config;
-  const root = config.baseUrl.replace(/\/+$/, '');
+  const { tokenStore, onSignedOut, onUpgradeRequired, onStorageError } = config;
+  const root = rootOf(config.baseUrl);
+  const app = identityOf(config.app);
+  const deviceName = nameHeaderOf(app.deviceName);
   const fetchImpl: typeof fetch =
     config.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
   let refreshing: Promise<MobileTokens> | null = null;
@@ -416,7 +457,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       'X-App-Platform': app.platform,
       'X-Device-Id': app.deviceId,
     };
-    if (app.deviceName) headers['X-Device-Name'] = encodeURIComponent(app.deviceName);
+    if (deviceName !== null) headers['X-Device-Name'] = deviceName;
     if (bearer !== undefined) headers.Authorization = `Bearer ${bearer}`;
     const signal = AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS);
     const init: RequestInit = {
