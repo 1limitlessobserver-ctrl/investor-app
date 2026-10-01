@@ -1153,6 +1153,7 @@ describe('the refresh and its edges', () => {
     ['an empty access token', { ...pair(2), accessToken: '' }],
     ['an empty refresh token', { ...pair(2), refreshToken: '' }],
     ['another token type', { ...pair(2), tokenType: 'bearer' }],
+    ['an expiry that is not a string', { ...pair(2), refreshExpiresAt: 2592000 }],
   ])(
     'treats a refresh answer with %s as a server error and keeps the session',
     async (_what, answer) => {
@@ -1530,6 +1531,20 @@ describe('a platform that does not answer', () => {
       expect([t.calls.length, t.signedOut, t.tokens()]).toEqual([1, [], pair(1)]);
     },
   );
+
+  it('reads its own abort as a timeout, whatever error the fetch rejects with', async () => {
+    fakeClock();
+    const aborted = new DOMException('The operation was aborted.', 'AbortError');
+    const t = setup(
+      ({ init }) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(aborted));
+        }),
+    );
+    const call = watch(t.api.me());
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect([call.error?.code, call.error?.cause]).toEqual(['timeout', aborted]);
+  });
 
   it('gives a refresh 15 s, holds no call past that, and lets the next call refresh again', async () => {
     fakeClock();
