@@ -2,13 +2,22 @@
 // each route's order. Two balances, as on the platform: the cash ledger (`cashBalance`: approved
 // manual deposits in, cash payouts out) is what a cash payout draws on; the wallet's
 // `availableCents` is what card top-ups and incoming transfers credit and what transfers,
-// investing and reinvesting spend (an open position's principal is `lockedCents`).
+// investing and reinvesting spend. An open position's principal is `lockedCents`, and returns to
+// `availableCents` when the position matures (src/lib/funds/wallet.ts:190-254).
 //
-// In the sample, card top-ups are simulated and credited at once (`instant: 'sandbox'`, as the
+// Sources (in .reference/platform):
+//   - cash payouts: src/lib/manual-withdrawal.ts:57-113, requestManualWithdrawal;
+//   - position withdrawals: src/lib/investments/withdrawals.ts:77-135, requestWithdrawal;
+//   - transfers: src/lib/funds/transfers.ts:15-51, sendTransfer's checks;
+//   - maturity choices: src/lib/funds/wallet.ts:256-359, executeMaturityChoice;
+//   - deposits and investing: src/lib/admin/deposits.ts and src/lib/payments/payments.ts are not
+//     staged; their rules and texts are those Plan B's error inventory (mobileErrors.draft.md,
+//     sections 4.6, 5.5 and 5.7) records from them.
+//
+// In the sample, card top-ups are simulated and credited at once (`instant: 'sandbox'`, what the
 // platform does without Stripe outside production), transfers complete at once, and requests filed
-// for review stay PENDING.
+// for review stay PENDING: there is no administrator to decide them.
 import { z } from 'zod';
-import { format } from '../../lib/format';
 import type {
   CardDepositResult,
   DepositOverview,
@@ -19,8 +28,8 @@ import type {
   WithdrawalRequest,
   Withdrawals,
 } from '../../api/types';
-import { positionView } from '../portfolioMath';
-import { addMonths, planOf, toPositionInput } from '../rows';
+import { computeEarnings } from '../portfolioMath';
+import { addMonths, planOf } from '../rows';
 import type { SamplePlan, SampleState } from '../sampleData';
 import type { SampleContext } from './context';
 import { AmountCents, fail, parse, requireFeature } from './context';
@@ -36,9 +45,19 @@ import {
 } from './views';
 
 const LISTED = 50;
-/** A position withdrawal in one of these statuses blocks another request for it. */
+/** A position withdrawal in one of these statuses blocks another request for it (withdrawals.ts:102-108). */
 const IN_FLIGHT = new Set(['PENDING', 'APPROVED', 'PAID']);
 const CARD_MINIMUM_CENTS = 1_000;
+
+/**
+ * manual-withdrawal.ts's money text (lines 52-55), copied as is: "$12,500.00". Below zero it
+ * floors the dollars away from zero ("-$2.50" for -150), a quirk the sample's cash balance, which
+ * never goes below zero, does not reach.
+ */
+function fromCentsDisplay(cents: number): string {
+  const sign = cents < 0 ? '-' : '';
+  return `${sign}$${Math.abs(Math.floor(cents / 100)).toLocaleString('en-US')}.${String(Math.abs(cents) % 100).padStart(2, '0')}`;
+}
 
 const ManualBody = z.object({
   methodId: z.string().min(1).max(64),
@@ -197,18 +216,27 @@ export function withdrawals(ctx: SampleContext): Withdrawals {
   };
 }
 
+/**
+ * A cash payout, as requestManualWithdrawal files it (manual-withdrawal.ts:57-113): at most the
+ * current cash balance, or 409 `insufficient_balance`. A pending payout does not reserve the
+ * balance; the platform checks it again when an administrator approves (lines 227-258).
+ *
+ * Or the withdrawal of a matured position, as requestWithdrawal files it (withdrawals.ts:77-135):
+ * the investor's, MATURED and dated, with no request for it PENDING, APPROVED or PAID (a REJECTED
+ * one may be asked for again); the amount, principal plus the term's realized earnings, is fixed
+ * when the request is made.
+ */
 export function requestWithdrawal(ctx: SampleContext, body: unknown): WithdrawalRequest {
   const input = parse(WithdrawBody, body);
   const { state } = ctx;
   const now = ctx.now();
   if (input.kind === 'cash') {
-    // Pending payouts do not reserve the balance; the platform checks it again on approval.
     const balance = cashBalance(state);
     if (input.amountCents > balance) {
       fail(
         'insufficient_balance',
         409,
-        `Amount exceeds your available manual balance (${format.money(balance)}).`,
+        `Amount exceeds your available manual balance (${fromCentsDisplay(balance)}).`,
       );
     }
     const id = ctx.newId('cw');
@@ -236,11 +264,18 @@ export function requestWithdrawal(ctx: SampleContext, body: unknown): Withdrawal
   ) {
     fail('withdrawal_pending', 409, 'A withdrawal is already in progress for this position');
   }
-  // Principal plus the term's projected return, fixed when the request is made.
-  const amountCents = positionView(
-    toPositionInput(position, planOf(state, position)),
+  const plan = planOf(state, position);
+  const principalCents = position.amountCents;
+  const earnings = computeEarnings({
+    amountCents: principalCents,
+    projectedReturnPct: plan.projectedReturnPct,
+    termMonths: plan.termMonths,
+    startedAt: position.startedAt,
+    maturesAt: position.maturesAt,
+    status: position.status,
     now,
-  ).valueCents;
+  });
+  const amountCents = principalCents + earnings.realizedCents;
   const id = ctx.newId('pw');
   state.positionWithdrawals.unshift({
     id,
@@ -294,6 +329,13 @@ function resolveRecipient(state: SampleState, recipient: string) {
   return { self, contact };
 }
 
+/**
+ * The route's PIN rule (transfers/route.ts), then sendTransfer's checks (transfers.ts:31-51): the
+ * recipient by $tag, @tag or email, lower-cased; not the sender; enough available in the wallet of
+ * that currency. The platform finds the recipient before it compares it with the sender; the
+ * sender always exists, so checking the sender first gives the same answers. A blank note is kept
+ * as none here, where the platform stores it as an empty string (line 73).
+ */
 export function sendTransfer(ctx: SampleContext, body: unknown): TransferResult {
   const input = parse(SendBody, body);
   const { state } = ctx;
@@ -357,9 +399,19 @@ export function invest(ctx: SampleContext, body: unknown): InvestResult {
 }
 
 /**
- * Without a choice id, the earliest pending choice. REINVEST opens a position in an active plan
- * with the matured principal from the wallet (no KYC, tier, capacity or minimum gate) and closes
- * the matured one; WITHDRAW files a pending cash payout of the principal, as the platform does.
+ * The platform's executeMaturityChoice (wallet.ts:261-359), on the earliest pending choice when no
+ * id is given (maturity-choice/route.ts). Either way the choice becomes EXECUTED with its action.
+ *
+ * REINVEST (lines 282-322) opens an ACTIVE position in an active plan with the matured principal,
+ * paid from the wallet's available balance (no KYC, tier, capacity or minimum gate).
+ *
+ * WITHDRAW (lines 323-346) files a PENDING cash payout of the principal, with no check against the
+ * cash balance, and leaves the position MATURED. The principal is not moved: it stays in the
+ * wallet's available balance, where it returned at maturity ("Your matured capital is in your
+ * available balance and a withdrawal request has been submitted for admin review", lines 349-358).
+ *
+ * The sample's one departure: REINVEST also closes the matured position (WITHDRAWN). wallet.ts
+ * leaves it MATURED, which would count its principal twice beside the new position.
  */
 export function maturityChoice(ctx: SampleContext, body: unknown): void {
   const input = parse(ChoiceBody, body);
@@ -393,7 +445,8 @@ export function maturityChoice(ctx: SampleContext, body: unknown): void {
     openPosition(ctx, plan, position.amountCents);
     position.status = 'WITHDRAWN';
     position.closedAt = now;
-    choice.status = 'REINVESTED';
+    choice.status = 'EXECUTED';
+    choice.action = 'REINVEST';
     return;
   }
   state.cashWithdrawals.unshift({
@@ -405,5 +458,6 @@ export function maturityChoice(ctx: SampleContext, body: unknown): void {
     createdAt: now,
     reviewedAt: null,
   });
-  choice.status = 'WITHDRAWN';
+  choice.status = 'EXECUTED';
+  choice.action = 'WITHDRAW';
 }

@@ -66,10 +66,12 @@ export interface SamplePosition {
   basketRef: string | null;
 }
 
+/** As the platform keeps one (src/lib/funds/wallet.ts): an executed choice records its action. */
 export interface SampleMaturityChoice {
   id: string;
   investmentId: string;
-  status: 'PENDING' | 'REINVESTED' | 'WITHDRAWN' | 'EXPIRED';
+  status: 'PENDING' | 'EXECUTED' | 'EXPIRED';
+  action: 'PENDING' | 'REINVEST' | 'WITHDRAW';
   amountCents: number;
   currency: string;
   expiresAt: Date;
@@ -594,6 +596,7 @@ function createState(opts: { now?: Date; stress?: boolean } = {}): SampleState {
         id: 'choice_evergreen',
         investmentId: 'pos_evergreen',
         status: 'PENDING',
+        action: 'PENDING',
         amountCents: 10_000_000,
         currency: 'USD',
         expiresAt: offset(evergreenMatured, 7),

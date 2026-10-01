@@ -317,18 +317,106 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
     expect((await a.supportTickets(2)).tickets).toEqual([]);
   });
 
+  // The platform's executeMaturityChoice (src/lib/funds/wallet.ts:323-358): WITHDRAW keeps the
+  // principal in the wallet's available balance, files a PENDING cash payout of it whatever the
+  // cash balance, and executes the choice; the position itself stays MATURED.
   it('files a pending payout of the principal when a matured position is withdrawn', async () => {
-    const a = api();
+    const state = sampleData.createState();
+    const a = createSampleApiFor(state, { latencyMs: 0 });
     const before = await a.withdrawals();
+    const wallets = (await a.dashboard()).cash.wallets;
+    // The principal is more than the cash balance: a payout of it alone would be refused.
+    expect(
+      (await failure(a.requestWithdrawal({ kind: 'cash', amountCents: 10_000_000 }))).code,
+    ).toBe('insufficient_balance');
     await a.maturityChoice({ choice: 'WITHDRAW' });
     const after = await a.withdrawals();
     expect(after.cash).toHaveLength(before.cash.length + 1);
-    expect(after.cash[0]).toMatchObject({ amountCents: 10_000_000, status: 'PENDING' });
+    expect(after.cash[0]).toMatchObject({
+      amountCents: 10_000_000,
+      destination: null,
+      status: 'PENDING',
+    });
     expect(after.cashBalanceCents).toBe(before.cashBalanceCents);
-    expect((await a.investments()).maturityChoices).toEqual([]);
-    expect((await a.dashboard()).nextSteps.map((s) => s.title)).toEqual([
+    const investments = await a.investments();
+    expect(investments.maturityChoices).toEqual([]);
+    expect(investments.positions.find((p) => p.id === 'pos_evergreen')?.status).toBe('MATURED');
+    expect(state.maturityChoices[0]).toMatchObject({ status: 'EXECUTED', action: 'WITHDRAW' });
+    const d = await a.dashboard();
+    expect(d.cash.wallets).toEqual(wallets);
+    expect(d.nextSteps.map((s) => s.title)).toEqual([
       '2 requests under review',
       'Design your legacy plan',
+    ]);
+  });
+
+  // src/lib/investments/withdrawals.ts:77-108: a MATURED position may be withdrawn, and not again
+  // while a request for it is PENDING, APPROVED or PAID; a REJECTED one may be asked for again.
+  it('refuses a second withdrawal of a position while one is in flight', async () => {
+    const a = api();
+    expect(await a.requestWithdrawal({ kind: 'position', investmentId: 'pos_evergreen' })).toEqual({
+      kind: 'position',
+      id: anyString,
+      amountCents: 10_750_000,
+      status: 'PENDING',
+    });
+    const detail = await a.investment('pos_evergreen');
+    expect([detail.canRequestWithdrawal, detail.withdrawals.map((w) => w.status)]).toEqual([
+      false,
+      ['PENDING'],
+    ]);
+    const again = await failure(
+      a.requestWithdrawal({ kind: 'position', investmentId: 'pos_evergreen' }),
+    );
+    expect([again.code, again.status, again.message]).toEqual([
+      'withdrawal_pending',
+      409,
+      'A withdrawal is already in progress for this position',
+    ]);
+    for (const status of ['APPROVED', 'PAID', 'REJECTED'] as const) {
+      const state = sampleData.createState();
+      state.positionWithdrawals.push({
+        id: 'pw_reviewed',
+        investmentId: 'pos_evergreen',
+        amountCents: 10_750_000,
+        status,
+        notes: null,
+        createdAt: state.createdAt,
+        reviewedAt: state.createdAt,
+      });
+      const b = createSampleApiFor(state, { latencyMs: 0 });
+      const inFlight = status !== 'REJECTED';
+      expect((await b.investment('pos_evergreen')).canRequestWithdrawal, status).toBe(!inFlight);
+      const attempt = b.requestWithdrawal({ kind: 'position', investmentId: 'pos_evergreen' });
+      if (inFlight) expect((await failure(attempt)).code, status).toBe('withdrawal_pending');
+      else await expect(attempt).resolves.toMatchObject({ status: 'PENDING' });
+    }
+  });
+
+  // src/lib/manual-withdrawal.ts:57-92: a cash payout may be at most the current cash (manual)
+  // balance; a pending one does not reserve it, as the balance is checked again on approval.
+  it('pays out at most the current cash balance, which pending payouts do not reserve', async () => {
+    const a = api();
+    const { cashBalanceCents } = await a.withdrawals();
+    const over = await failure(
+      a.requestWithdrawal({ kind: 'cash', amountCents: cashBalanceCents + 1 }),
+    );
+    expect([over.code, over.status, over.message]).toEqual([
+      'insufficient_balance',
+      409,
+      'Amount exceeds your available manual balance ($12,500.00).',
+    ]);
+    // The whole balance, twice; a destination is trimmed, and a blank one is none (line 89).
+    for (const destination of ['  IBAN GB00  ', '   ']) {
+      expect(
+        await a.requestWithdrawal({ kind: 'cash', amountCents: cashBalanceCents, destination }),
+      ).toMatchObject({ amountCents: cashBalanceCents, status: 'PENDING' });
+    }
+    const after = await a.withdrawals();
+    expect(after.cashBalanceCents).toBe(cashBalanceCents);
+    expect(after.cash.slice(0, 2).map((w) => [w.amountCents, w.destination, w.status])).toEqual([
+      [cashBalanceCents, null, 'PENDING'],
+      [cashBalanceCents, 'IBAN GB00', 'PENDING'],
     ]);
   });
 
@@ -661,33 +749,18 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
         409,
         'Only matured positions can be withdrawn',
       ],
-      [
-        () => a.requestWithdrawal({ kind: 'cash', amountCents: 1_250_001 }),
-        'insufficient_balance',
-        409,
-        'Amount exceeds your available manual balance ($12,500.00).',
-      ],
     ] as const) {
       const e = await failure(call());
       expect([e.code, e.status, e.message]).toEqual([code, status, message]);
     }
-    await a.requestWithdrawal({ kind: 'position', investmentId: 'pos_evergreen' });
-    const detail = await a.investment('pos_evergreen');
-    expect([detail.canRequestWithdrawal, detail.withdrawals[0]?.status]).toEqual([
-      false,
-      'PENDING',
-    ]);
-    expect(
-      (await failure(a.requestWithdrawal({ kind: 'position', investmentId: 'pos_evergreen' })))
-        .code,
-    ).toBe('withdrawal_pending');
     const card = await a.cardDeposit({ amountCents: 2_500 });
     expect(card.kind).toBe('simulated');
     expect((await a.transfers()).wallets[0]!.availableCents).toBe(11_845_075 + 2_500);
   });
 
   it('reinvests a matured position from the wallet, once', async () => {
-    const a = api();
+    const state = sampleData.createState();
+    const a = createSampleApiFor(state, { latencyMs: 0 });
     const [choice] = (await a.investments()).maturityChoices;
     expect(choice).toMatchObject({
       investmentId: 'pos_evergreen',
@@ -701,6 +774,9 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
     await a.maturityChoice({ choice: 'REINVEST', planId: 'plan_treasury' });
     const after = await a.investments();
     expect(after.maturityChoices).toEqual([]);
+    expect(state.maturityChoices[0]).toMatchObject({ status: 'EXECUTED', action: 'REINVEST' });
+    // The sample's one departure from wallet.ts:282-322: the reinvested position is closed, so its
+    // principal is not counted twice beside the new one.
     expect(after.positions.find((p) => p.id === 'pos_evergreen')?.status).toBe('WITHDRAWN');
     expect(after.positions[0]).toMatchObject({
       status: 'ACTIVE',
