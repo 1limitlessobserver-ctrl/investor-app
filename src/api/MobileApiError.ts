@@ -57,7 +57,7 @@ export class MobileApiError extends Error {
         : (DEFAULT_MESSAGES.get(code) ?? GENERIC_MESSAGE),
       extra.cause === undefined ? undefined : { cause: extra.cause },
     );
-    // A subclass of Error keeps its own prototype only when built natively; this makes that certain.
+    // A subclass of Error keeps its own prototype only when built natively: this makes it certain.
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'MobileApiError';
     this.code = code;
@@ -74,7 +74,7 @@ export class MobileApiError extends Error {
 
   /**
    * True for a MobileApiError, including one built by another copy of this module (a second
-   * bundle or a hot reload), where `instanceof` fails: those are recognised by their name and shape.
+   * bundle or a hot reload), where `instanceof` fails: those are known by their name and shape.
    */
   static is(e: unknown): e is MobileApiError {
     if (e instanceof MobileApiError) return true;

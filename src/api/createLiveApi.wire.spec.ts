@@ -1,6 +1,7 @@
-// What the plan's twelve cases (createLiveApi.spec.ts) leave open: every method's request as the
-// platform reads it, the error envelope read defensively, sign-in and sign-out, and the edges of
-// the refresh rules. All of it runs through a fake fetchImpl; nothing inside the client is mocked.
+// What the plan's twelve cases (createLiveApi.spec.ts) leave open: every method's request and
+// answer as the platform sends them, the error envelope read defensively, sign-in and sign-out,
+// the refresh rules and their races, a failing token store or callback, and timeouts. All of it
+// runs through a fake fetchImpl and a fake store; nothing inside the client is mocked.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createLiveApi,
@@ -126,7 +127,7 @@ async function failure(p: Promise<unknown>): Promise<MobileApiError> {
   }
   throw new Error('expected a MobileApiError');
 }
-/** A request that waits at the platform until `release()`, so the store can change meanwhile. */
+/** A promise that settles on `release()`: a fake platform awaits one to hold its answer back. */
 function gate() {
   let release!: () => void;
   const open = new Promise<void>((resolve) => {
@@ -789,7 +790,7 @@ describe('sign-in and sign-out', () => {
     // The second step answers just the pair, without requiresTwoFactor.
     expect(await t.api.loginTwoFactor({ challenge: 'c1', code: '123456' })).toEqual(pair(3));
     expect(t.calls.map(bearer)).toEqual([null, null]);
-    // The session stores the pair it signs in with (AppSession.signIn), not this client.
+    // The session layer stores the pair it signs in with, not this client.
     expect(t.tokens()).toBeNull();
   });
 
@@ -1284,8 +1285,8 @@ describe('the refresh and its edges', () => {
 });
 
 // A request belongs to the session it went out with. That session is over once the client has
-// ended one since (logout(), a revocation, a refused refresh); it has moved on when another call
-// or tab stored newer tokens. Only a session that is neither is refreshed, retried or ended.
+// ended one since (logout(), a revocation, a refused refresh), and stale when another call or tab
+// has stored newer tokens. Only a session that is neither is refreshed, retried or ended.
 describe('the session a request belongs to', () => {
   it.each(['unauthorized', 'session_revoked'])(
     'throws %s untouched when the investor signed out meanwhile, even with a new sign-in stored',

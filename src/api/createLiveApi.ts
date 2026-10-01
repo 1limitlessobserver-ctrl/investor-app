@@ -1,30 +1,12 @@
-// The live PlatformApi: a company's platform over HTTPS, under /api/mobile/v1 (the platform's
-// docs/MOBILE_API.md). This is the one file in the app that calls fetch.
+// The live PlatformApi: the app's HTTP client for a company's platform under /api/mobile/v1 (the
+// platform's docs/MOBILE_API.md). Screens never call fetch; they reach this through src/queries.
 //
-// Every method but refresh and logout is one `request`:
-//   - the app headers, `credentials: 'omit'` and `cache: 'no-store'` (no investor data outlives the
-//     session), and `Authorization: Bearer <access token>` on every route but the public ones (brand,
-//     login, loginTwoFactor, refresh);
-//   - any failure is a MobileApiError, built from the error envelope `{ error, message?, fields?,
-//     detail?, retryAfterSeconds? }` and the Retry-After header, each read only as far as it has the
-//     right type, so a host's HTML error page counts as an empty envelope; a lost connection is
-//     `MobileApiError.network()`; a 426 also tells onUpgradeRequired the oldest version served; the
-//     two ticket calls key `fields` by the interface's names (`message`, `id`), not the platform's;
-//     a 2xx answer that cannot be read as the JSON object it should be is a `server_error` too;
-//   - 401 `unauthorized` (the access token expired) refreshes once, shared by every call that meets
-//     it at the same time, and retries once with the token that is then stored;
-//   - 401 `session_revoked` retries once with a newer token if another call has stored one since (the
-//     platform replaces the session row at each refresh), and otherwise ends the session. A 401 on
-//     the retry is the answer; only a `session_revoked` there still ends the session.
-//
-// A refresh the platform refuses with a 4xx ends the session too (`refresh_failed`); one that fails
-// any other way (5xx, 429, 426, no connection) leaves it for the next try. A refresh answered after
-// the investor has signed out or signed in again stores nothing and signs no one out. logout() is
-// one plain request that refreshes and retries nothing. login and loginTwoFactor answer the tokens
-// and store nothing: the session stores the pair it signs in with.
-//
-// The access token lives in memory only, so after a restart the store holds just the refresh token
-// (a null `accessToken`): the first signed-in call then refreshes before it sends anything.
+// The token store answers a StoredSession, and must read the refresh token from storage on every
+// `get`, make a `set` visible to every later `get`, and write in call order. The client ends a
+// session on its own only when the platform revokes it or refuses its refresh, and says so
+// through onSignedOut. A 426 tells onUpgradeRequired and keeps the session. Retry logic keys on
+// the platform's `code`, never on a status alone: only a 401 `unauthorized` or `session_revoked`
+// is ever sent again, and once.
 
 import { MobileApiError } from './MobileApiError';
 import type { PlatformApi } from './PlatformApi';
@@ -32,14 +14,20 @@ import type { LoginResult, MobileTokens, SessionView } from './types';
 
 /**
  * What the token store answers: the refresh token, and this page's access token. `accessToken` is
- * null when this page has none yet (after a restart): the next signed-in call refreshes first.
+ * null when this page has none yet (after a restart): the next signed-in call refreshes first. A
+ * MobileTokens pair is a StoredSession too.
  */
 export type StoredSession = {
   readonly refreshToken: string;
   readonly accessToken: string | null;
 };
 
-/** Where the app keeps the signed-in session. */
+/**
+ * Where the app keeps the session. `get` reads the refresh token from storage every time (the
+ * tabs share it), a `set` is visible to every `get` made after it was called, and writes land in
+ * call order; `set(null)` forgets the session. A store that rejects makes the call reject
+ * `storage_error`, or, where the platform has already answered, is reported beside its answer.
+ */
 export type TokenStore = {
   get(): Promise<StoredSession | null>;
   set(tokens: MobileTokens | null): Promise<void>;
@@ -48,42 +36,54 @@ export type TokenStore = {
 /** The tokens a request went out with: an access token, and the refresh token stored beside it. */
 type Sent = { readonly accessToken: string; readonly refreshToken: string };
 
-/** How the app names itself on every request (X-App-Version, X-App-Platform, X-Device-*). */
+/** How the app names itself on every request. createLiveApi refuses one it cannot send. */
 export type AppIdentity = {
+  /** X-App-Version: the package.json version; not empty. */
   version: string;
+  /** X-App-Platform. */
   platform: 'web';
+  /** X-Device-Id: random per install, 8 to 128 of A-Z a-z 0-9 _ -. */
   deviceId: string;
+  /** X-Device-Name, sent percent-encoded; left out when empty. */
   deviceName?: string | undefined;
 };
 
 /** Why the client signed the investor out on its own. */
 export type SignedOutReason = 'session_revoked' | 'refresh_failed';
 
+/** What createLiveApi takes. It reads it once: a later change to it changes nothing sent. */
 export type LiveApiConfig = {
-  /** The platform's API root, such as "https://platform.example.com/api/mobile/v1". */
+  /** The platform's API root, an absolute http(s) URL ("https://example.com/api/mobile/v1"). */
   baseUrl: string;
   tokenStore: TokenStore;
   app: AppIdentity;
   /** Tests pass their own. The default calls the global fetch at the moment of each call. */
   fetchImpl?: typeof fetch | undefined;
   /**
-   * The platform ended the session without the investor asking: it revoked the session, or it
-   * refused the refresh. The tokens are already cleared. logout() never calls this.
+   * The client ended the session on its own: the platform revoked it (`session_revoked`) or
+   * refused its refresh (`refresh_failed`). The store is already cleared (or could not be), and
+   * the call that met it still rejects. It runs once per ended session and never for logout(),
+   * not even for a call that hears a 401 while a logout is out. Sign out on this callback, not on
+   * a rejection: a call can reject `session_revoked` without it (the session was over already, or
+   * newer tokens were stored). The client does not notice closeAccount() or a revokeSession()
+   * that answers `current: true`: sign out after those yourself.
    */
   onSignedOut?: ((reason: SignedOutReason) => void) | undefined;
   /**
-   * An answer was 426: the platform no longer serves this app version. `minVersion` is the oldest
-   * it serves, or '' when the answer did not say.
+   * An answer was 426: this app version is no longer served. `minVersion` is the oldest that is,
+   * or '' when the answer did not say (an update is required all the same). It runs for every
+   * such answer, sign-in and refresh included, so it can run many times; the session is kept.
    */
   onUpgradeRequired?: ((minVersion: string) => void) | undefined;
   /**
-   * The token store failed to save a pair the platform had just issued (or to be read before the
-   * save): the calls carry on with the pair, but the next start may not find it.
+   * The store failed to save a pair the platform had just issued (or to be read just before): the
+   * calls carry on with the pair, but the store may still hold the refresh token it replaced,
+   * which the platform refuses, ending the session, if it is sent again after 30 seconds.
    */
   onStorageError?: ((error: unknown) => void) | undefined;
 };
 
-/** What createLiveApi returns: the interface, and in test mode a way to put tokens in the store. */
+/** What createLiveApi returns: the interface, and in test mode `_test_setTokens`, a store write. */
 export type LiveApi = PlatformApi & { _test_setTokens?: (tokens: MobileTokens) => Promise<void> };
 
 /** The name of a PlatformApi method (`mode` is not one). */
@@ -98,7 +98,7 @@ type VoidMethod = { [K in ApiMethod]: Answer<K> extends void ? K : never }[ApiMe
 type TextMethod = { [K in ApiMethod]: Answer<K> extends string ? K : never }[ApiMethod];
 type JsonMethod = Exclude<ApiMethod, VoidMethod | TextMethod>;
 
-/** The methods whose route never carries the bearer; every other route does. */
+/** The methods whose route never carries the bearer; every other route does, logout included. */
 export const PUBLIC_ROUTES = [
   'brand',
   'login',
@@ -109,11 +109,11 @@ const isPublic = (name: ApiMethod): boolean =>
   (PUBLIC_ROUTES as readonly ApiMethod[]).includes(name);
 
 /**
- * The route of every PlatformApi method: its HTTP method and its path under `baseUrl`, without the
- * query string. These methods add a query key to the path: investment (id), statements (kind),
- * statement and statementCsv (period), notifications (limit), supportTickets (page), ticket (id).
- * Exported for the e2e route checks. `push/subscribe` and `push/unsubscribe` are not in the
- * platform's docs yet; they are added to the platform with web push.
+ * The route of every PlatformApi method: its HTTP method and its path under `baseUrl`, without a
+ * query string. These methods add a query key: investment (id), statements (kind), statement and
+ * statementCsv (period), notifications (limit), supportTickets (page), ticket (id). Exported for
+ * the wire spec, which checks it against the platform's routes. `push/subscribe` and
+ * `push/unsubscribe` are the app's own: the platform has no such routes yet.
  */
 export const ROUTES = {
   login: { method: 'POST', path: '/auth/login' },
@@ -178,7 +178,10 @@ export const ROUTES = {
 
 /** How long a request may take before the client gives up on it (`timeout`). */
 const TIMEOUT_MS = 20_000;
-/** A refresh's: well under the 30 seconds in which the platform honours a lost answer's token. */
+/**
+ * A refresh's: short enough that the next try, with the same refresh token, still falls within the
+ * 30 seconds in which the platform honours a token whose answer was lost.
+ */
 const REFRESH_TIMEOUT_MS = 15_000;
 /** POST /kyc's: its body carries up to 4 MB of camera images. */
 const KYC_TIMEOUT_MS = 90_000;
@@ -210,8 +213,8 @@ type Reading =
 
 type RequestOptions = RequestParts & Reading;
 
-// The platform keys a ticket's fields `body` and `ticketId`; PlatformApi (and so the sample and the
-// forms) call them `message` and `id`.
+// openTicket and replyTicket: the platform keys their fields `body` and `ticketId`; PlatformApi
+// (and so the sample and the forms) calls them `message` and `id`.
 const OPEN_TICKET_FIELDS: ReadonlyMap<string, string> = new Map([['body', 'message']]);
 const REPLY_TICKET_FIELDS: ReadonlyMap<string, string> = new Map([
   ['body', 'message'],
@@ -227,7 +230,7 @@ const isStringEntry = (entry: [string, unknown]): entry is [string, string] =>
 const textOf = (value: unknown): string | undefined =>
   isString(value) && value !== '' ? value : undefined;
 
-/** A token pair a session can be stored from: Bearer tokens that are not empty, and their expiry. */
+/** A token pair to store a session from: Bearer tokens that are not empty, and their expiry. */
 const isTokenPair = (value: unknown): value is MobileTokens =>
   isRecord(value) &&
   value.tokenType === 'Bearer' &&
@@ -324,7 +327,7 @@ function jsonOf(raw: string): unknown {
   }
 }
 
-/** The JSON object of an error answer; empty when the body is not one, such as a host's HTML page. */
+/** An error answer's JSON object; empty when the body is not one, such as a host's HTML page. */
 function envelopeOf(raw: string): Record<string, unknown> {
   const parsed = jsonOf(raw);
   return isRecord(parsed) ? parsed : {};
@@ -431,6 +434,18 @@ const nameHeaderOf = (name: string | undefined): string | null =>
     ? null
     : encodeURIComponent(name.replace(LONE_SURROGATE, '\uFFFD'));
 
+/**
+ * The PlatformApi of a company's platform. It throws a TypeError at once for a config it cannot
+ * send, and every method rejects with a MobileApiError, with two codes of the client's own beside
+ * `network`: `timeout` (it gave up waiting; a money call may still have gone through) and
+ * `storage_error` (the store failed before the platform was asked). Beyond the interface:
+ *  - refresh() resolves the new pair and stores it; with nothing stored it rejects
+ *    `unauthorized` and sends nothing;
+ *  - logout() clears the store first, then sends at most one request, whose failure it ignores;
+ *    it never refreshes, retries or calls onSignedOut, and rejects only when the store fails;
+ *  - login() and loginTwoFactor() store nothing: the session layer stores the pair it signs in
+ *    with.
+ */
 export function createLiveApi(config: LiveApiConfig): LiveApi {
   const { tokenStore, onSignedOut, onUpgradeRequired, onStorageError } = config;
   const root = rootOf(config.baseUrl);
@@ -443,7 +458,13 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   // A request that began under an earlier count belongs to a session that is over.
   let generation = 0;
 
-  /** One HTTP exchange: the answer, or the MobileApiError it ended in. No refresh, no retry. */
+  /**
+   * One HTTP exchange and the only fetch: the app headers, the bearer when given, `credentials:
+   * 'omit'`, `cache: 'no-store'`, `redirect: 'error'` and a timeout. It resolves the 2xx answer as
+   * `options` reads it, or rejects with the error it ends in: the envelope of a non-2xx answer (a
+   * 426 also tells onUpgradeRequired), `server_error` for a 2xx that is not its route's answer or
+   * whose body was lost, `timeout` when the client gave up, else `network`. No refresh, no retry.
+   */
   async function send<T>(
     route: Route,
     options: RequestOptions,
@@ -492,8 +513,9 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     }
     if (!res.ok) {
       const envelope = envelopeOf(raw);
-      if (res.status === 426)
+      if (res.status === 426) {
         notify(onUpgradeRequired, textOf(envelope.minSupportedAppVersion) ?? '');
+      }
       throw errorFrom(res.status, envelope, res.headers.get('Retry-After'), options.fieldNames);
     }
     // A 2xx answer must be what the route answers; anything else (a host's page, a proxy's empty
@@ -513,7 +535,12 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     return answer as T;
   }
 
-  /** A call with the session's rules: refresh and retry on 401, end the session when it is revoked. */
+  /**
+   * A call with the session's rules. A public route goes out without the bearer. A signed-in one
+   * reads the store (and refreshes first while there is no access token), sends, and after a 401
+   * token problem retries once with what tokenAfter401 gives. A `session_revoked` on the retry
+   * goes to endSession; every other failure, a second `unauthorized` included, is the answer.
+   */
   async function request<T>(name: ApiMethod, options: RequestOptions = {}): Promise<T> {
     const route = ROUTES[name];
     const gen0 = generation;
@@ -546,8 +573,12 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   }
 
   /**
-   * The tokens to retry with after the platform answered `e` to a request that began under `gen0`
-   * and went out with `sent`, or the error the request ends in.
+   * After the platform answered `e` to a request that began under `gen0` and went out with
+   * `sent`: the tokens to retry with, or the error the request ends in. In this order: join a
+   * refresh under way; throw `e` untouched once the client has ended a session or the store is
+   * empty; retry with a newer access token this tab stored; refresh when another tab rotated the
+   * refresh token or the access token expired; end the session when it was revoked and the store
+   * holds the same tokens. A refreshed pair is not retried with if a session ended meanwhile.
    */
   async function tokenAfter401(e: TokenProblem, gen0: number, sent: Sent): Promise<Sent> {
     // A refresh under way is, or is about to be, what replaced `sent`: join it, and its failure.
@@ -567,7 +598,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     if (now.refreshToken !== sent.refreshToken || e.code === 'unauthorized') {
       return refreshed(e, gen0, refreshOnce());
     }
-    // session_revoked, and nothing moved: the session is over.
+    // session_revoked, and the store holds the very tokens it was said of: the session is over.
     return endSession(e, gen0, sent);
   }
 
@@ -583,10 +614,10 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   }
 
   /**
-   * The platform ended the session `sent` belongs to: clear the store, tell onSignedOut, throw `e`.
-   * Only while the client has ended no session since `gen0` and the store still holds both of
-   * `sent`'s tokens; otherwise `e` is thrown untouched. So the calls that hear one revocation
-   * together end it once: the first clears it, and the rest find the count moved on.
+   * The platform revoked the session `sent` belongs to: signOut, but only while the client has
+   * ended no session since `gen0` and the store still holds both of `sent`'s tokens; otherwise `e`
+   * is thrown untouched. Of the calls that hear one revocation together, the first ends the
+   * session and the rest find the count changed.
    */
   async function endSession(e: MobileApiError, gen0: number, sent: Sent): Promise<never> {
     const now = await read(e);
@@ -624,7 +655,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     }
   }
 
-  /** One refresh at a time: the refresh token works once, so concurrent callers share the request. */
+  /** One refresh at a time: a refresh token works once, so concurrent calls share the request. */
   function refreshOnce(): Promise<MobileTokens> {
     refreshing ??= renew().finally(() => {
       refreshing = null;
@@ -632,12 +663,16 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     return refreshing;
   }
 
+  /**
+   * Sends the stored refresh token. A token pair is stored and resolved; a refusal (isRefusal)
+   * signs out with `refresh_failed`; any other failure is thrown and keeps the session. When the
+   * store has stopped holding the token sent meanwhile (a logout, a new sign-in, another tab's
+   * refresh), the answer touches nothing stored, and its callers still get it. With nothing
+   * stored: 401 `unauthorized`, and nothing is sent.
+   */
   async function renew(): Promise<MobileTokens> {
     const stored = await read();
     if (stored === null) throw new MobileApiError('unauthorized', 401);
-    // The store can change while the platform answers: the investor signs out, or signs in again.
-    // The answer then belongs to a session that is over, and must touch nothing of what the store
-    // holds now. Its callers still get what it says: the fresh pair, or the refusal.
     const unchanged = (now: StoredSession | null) => now?.refreshToken === stored.refreshToken;
     let fresh: MobileTokens;
     try {
@@ -684,6 +719,11 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     loginTwoFactor: async (body) =>
       pairOf(await call('loginTwoFactor', { body, check: isTokenPair })),
     refresh: () => refreshOnce(),
+    /**
+     * Ends the session on this device first, then tells the platform once with the tokens it read,
+     * whatever that request meets. A store that could not be read or cleared makes it reject
+     * `storage_error` after that.
+     */
     logout: async () => {
       let stored: StoredSession | null = null;
       let broken: { cause: unknown } | undefined;
