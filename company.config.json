@@ -1,0 +1,9 @@
+{
+  "platformUrl": "",
+  "productName": "Investor App",
+  "shortName": "Invest",
+  "identifier": "app.investor.template",
+  "icon": "branding/icon.png",
+  "accentFallback": "#6EA8FF",
+  "backgroundColor": "#05070F"
+}

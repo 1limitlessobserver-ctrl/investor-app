@@ -1,0 +1,21 @@
+<!-- Source of branding/icon.png: the template's neutral orbit mark, 1024x1024, no text.
+     Re-render it with: node -e "require('sharp')('branding/icon.svg').png().toFile('branding/icon.png')" -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" fill="#05070F"/>
+  <g fill="none" stroke="#6EA8FF">
+    <!-- tilted orbit, drawn first so the main ring passes in front of its far side -->
+    <ellipse cx="512" cy="512" rx="410" ry="150" stroke-width="20" transform="rotate(-28 512 512)"/>
+    <!-- main orbit ring -->
+    <circle cx="512" cy="512" r="300" stroke-width="44"/>
+    <!-- near side of the tilted orbit, in front of the main ring; the dark stroke cuts a gap in the ring -->
+    <g transform="rotate(-28 512 512)">
+      <path d="M908 551A410 150 0 0 1 116 551" stroke="#05070F" stroke-width="52"/>
+      <path d="M922 512A410 150 0 0 1 102 512" stroke-width="20"/>
+    </g>
+  </g>
+  <!-- planet on the tilted orbit -->
+  <g transform="rotate(-28 512 512)">
+    <circle cx="922" cy="512" r="66" fill="#05070F"/>
+    <circle cx="922" cy="512" r="50" fill="#6EA8FF"/>
+  </g>
+</svg>
