@@ -226,7 +226,11 @@ const fallbackCode = (status: number): string =>
  */
 function secondsOf(header: string | null): number | null {
   const text = header?.trim() ?? '';
-  if (/^\d+$/.test(text)) return Number(text);
+  if (/^\d+$/.test(text)) {
+    // Enough digits overflow to Infinity, which is no wait.
+    const seconds = Number(text);
+    return Number.isFinite(seconds) ? seconds : null;
+  }
   // A date starts with its day name ("Wed, 21 Oct 2026 ..."); Date.parse alone would also take
   // digits such as "-5" for a year.
   if (!/^[A-Za-z]{3,9},/.test(text)) return null;

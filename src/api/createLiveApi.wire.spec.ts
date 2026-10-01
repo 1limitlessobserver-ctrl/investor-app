@@ -522,7 +522,8 @@ describe('the error envelope', () => {
     // below 0 once it has passed.
     expect(await wait(limited, { 'Retry-After': 'Thu, 01 Oct 2026 12:01:30 GMT' })).toBe(90);
     expect(await wait(limited, { 'Retry-After': 'Thu, 01 Oct 2026 11:59:00 GMT' })).toBe(0);
-    for (const unusable of ['soon', '-5', '1.5', '', 'Thu, soon']) {
+    // 309 digits overflow to Infinity, which is no wait either.
+    for (const unusable of ['soon', '-5', '1.5', '', 'Thu, soon', '9'.repeat(309)]) {
       expect(await wait(limited, { 'Retry-After': unusable })).toBeNull();
     }
     expect(await wait(limited)).toBeNull();
