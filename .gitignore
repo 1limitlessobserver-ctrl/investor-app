@@ -1,0 +1,10 @@
+.reference/
+node_modules/
+dist/
+dev-dist/
+.env.local
+.env.production
+playwright-report/
+test-results/
+.lighthouseci/
+coverage/
