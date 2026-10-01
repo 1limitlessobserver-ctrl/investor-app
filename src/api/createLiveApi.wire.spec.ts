@@ -941,14 +941,16 @@ describe('the refresh and its edges', () => {
   });
 
   // The platform answers a refresh some time after it was asked, and the store can change in
-  // between: the investor signs out, or signs in again. The answer then belongs to a session that
-  // is over, so it must change nothing of what the store holds now.
-  const changes: [string, 'logout' | 'sign-in'][] = [
-    ['a logout', 'logout'],
-    ['a new sign-in', 'sign-in'],
+  // between: the investor signs out, signs in again, or another tab refreshes (the refresh token
+  // is shared, the access token is not). The answer then belongs to a session that is over, so it
+  // must change nothing of what the store holds now.
+  const changes: [string, MobileTokens | null][] = [
+    ['a logout', null],
+    ['a new sign-in', pair(5)],
+    ["another tab's refresh", { ...pair(1), refreshToken: 'r9' }],
   ];
-  describe.each(changes)('a refresh answered after %s', (_name, change) => {
-    /** Asks for a refresh, makes `change` while it is out, then lets the platform answer it. */
+  describe.each(changes)('a refresh answered after %s', (_name, now) => {
+    /** Asks for a refresh, makes the change while it is out, then lets the platform answer it. */
     async function overlap(answer: () => Response) {
       const started = gate();
       const landed = gate();
@@ -963,23 +965,23 @@ describe('the refresh and its edges', () => {
         (error: unknown) => ({ error }),
       );
       await started.open;
-      if (change === 'logout') await t.api.logout();
-      else t.store(pair(5));
+      if (now === null) await t.api.logout();
+      else t.store(now);
       landed.release();
-      return { t, outcome: await refreshing, stored: change === 'logout' ? null : pair(5) };
+      return { t, outcome: await refreshing };
     }
 
     it('stores nothing, and still gives its callers the pair', async () => {
-      const { t, outcome, stored } = await overlap(() => json(200, pair(2)));
+      const { t, outcome } = await overlap(() => json(200, pair(2)));
       expect(outcome).toEqual({ tokens: pair(2) });
-      expect(t.tokens()).toEqual(stored);
+      expect(t.tokens()).toEqual(now);
       expect(t.signedOut).toEqual([]);
     });
 
     it('signs nothing out, and still throws the refusal', async () => {
-      const { t, outcome, stored } = await overlap(() => json(401, { error: 'session_revoked' }));
+      const { t, outcome } = await overlap(() => json(401, { error: 'session_revoked' }));
       expect(outcome).toMatchObject({ error: { code: 'session_revoked', status: 401 } });
-      expect(t.tokens()).toEqual(stored);
+      expect(t.tokens()).toEqual(now);
       expect(t.signedOut).toEqual([]);
     });
   });
