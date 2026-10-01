@@ -1,7 +1,7 @@
 // Every failure of a PlatformApi call is a MobileApiError, built from the platform's error envelope
 //   { error: '<code>', message?: '<text to show>', fields?, detail?, ... }
-// or by the app itself (`network`). Screens show `message`, map `fields` onto form fields and never
-// show `code`.
+// or by the app itself (`network`, `timeout`, `storage_error`). Screens show `message`, map
+// `fields` onto form fields and never show `code`.
 
 /**
  * What an error says when the platform sent no `message`. Calm, short and free of codes. A code
@@ -16,6 +16,8 @@ const DEFAULT_MESSAGES: ReadonlyMap<string, string> = new Map([
   ['network', 'You appear to be offline.'],
   ['upgrade_required', 'Please update the app to continue.'],
   ['feature_disabled', 'This feature is not available right now.'],
+  ['timeout', 'The platform did not answer in time. Check your connection and try again.'],
+  ['storage_error', 'This device could not read or save the session. Sign in again.'],
 ]);
 
 const GENERIC_MESSAGE = 'Something went wrong. Please try again.';
@@ -28,10 +30,18 @@ export interface MobileApiErrorExtra {
   detail?: string[] | undefined;
   /** `rate_limited`: seconds to wait, from the body or the Retry-After header. */
   retryAfterSeconds?: number | null | undefined;
+  /**
+   * What went wrong underneath, such as the fetch that failed or the token store that could not be
+   * read: the standard `Error.cause`, for logs, never shown.
+   */
+  cause?: unknown;
 }
 
 export class MobileApiError extends Error {
-  /** The platform's error code (`invalid_input`, `pin_required`, ...), or `network` for the app's own. */
+  /**
+   * The platform's error code (`invalid_input`, `pin_required`, ...), or the app's own: `network`,
+   * `timeout` or `storage_error`.
+   */
   readonly code: string;
   /** The HTTP status; 0 when no response arrived. */
   readonly status: number;
@@ -45,6 +55,7 @@ export class MobileApiError extends Error {
       message !== undefined && message.trim() !== ''
         ? message
         : (DEFAULT_MESSAGES.get(code) ?? GENERIC_MESSAGE),
+      extra.cause === undefined ? undefined : { cause: extra.cause },
     );
     // A subclass of Error keeps its own prototype only when built natively; this makes that certain.
     Object.setPrototypeOf(this, new.target.prototype);
@@ -57,8 +68,8 @@ export class MobileApiError extends Error {
   }
 
   /** The request never got an answer: no connection, a dropped one or a blocked one. */
-  static network(): MobileApiError {
-    return new MobileApiError('network', 0);
+  static network(extra: Pick<MobileApiErrorExtra, 'cause'> = {}): MobileApiError {
+    return new MobileApiError('network', 0, undefined, extra);
   }
 
   /**
