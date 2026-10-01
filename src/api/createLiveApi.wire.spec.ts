@@ -401,10 +401,14 @@ describe('the routes', () => {
   const everyMethod = Object.keys(wire) as ApiMethod[];
   // The routes that never send the bearer; every other one sends it when a token is stored.
   const publicRoutes: ApiMethod[] = ['brand', 'login', 'loginTwoFactor', 'refresh'];
-  // One answer that suits every method: a token pair for the sign-in and refresh routes, a list
-  // for sessions().
-  const anything = () =>
-    json(200, { ...pair(9), requiresTwoFactor: false, ok: true, current: false, sessions: [] });
+  // One answer that suits every method: the statement as CSV, and for the rest one JSON body with
+  // a token pair (sign-in, refresh), `ok: true` (the void methods) and a list for sessions().
+  const body = { ...pair(9), requiresTwoFactor: false, ok: true, current: false, sessions: [] };
+  const csv = 'date,description\n';
+  const anything: Script = (c) =>
+    path(c).startsWith('/statements/file?')
+      ? new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8' } })
+      : json(200, body);
 
   it.each(everyMethod)(
     '%s sends one request, to its route, as the platform reads it',
@@ -634,14 +638,44 @@ describe('the error envelope', () => {
     },
   );
 
-  it('lets a method that answers nothing ignore the body, whatever it is', async () => {
+  // Every route that answers nothing the interface keeps answers `{ ok: true, ...}`; anything else
+  // did not come from the route, so the action may not have happened.
+  it('turns an answer to a void method that is not { ok: true } into a server error', async () => {
+    const closing = (answer: () => Response) =>
+      setup(answer).api.closeAccount({ currentPassword: 'old' });
+    expect(await closing(() => json(200, { ok: true, sessionsRevoked: 2 }))).toBeUndefined();
     for (const answer of [
-      new Response(null, { status: 204 }),
-      new Response('', { status: 200 }),
-      new Response('<html>OK</html>', { status: 200 }),
+      () => new Response(null, { status: 204 }),
+      () => new Response('', { status: 200 }),
+      () => new Response('<html>OK</html>', { status: 200 }),
+      () => json(200, {}),
+      () => json(200, { ok: false }),
+      () => json(200, { ok: 'true' }),
+      () => json(200, null),
     ]) {
-      const t = setup(() => answer);
-      expect(await t.api.closeAccount({ currentPassword: 'old' })).toBeUndefined();
+      const e = await failure(closing(answer));
+      expect([e.code, e.status]).toEqual(['server_error', answer().status]);
+    }
+  });
+
+  it('takes the statement only as CSV or plain text', async () => {
+    const statement = (type: string) =>
+      setup(() => new Response('a,b\n', { headers: { 'Content-Type': type } })).api.statementCsv(
+        '2026-09',
+      );
+    for (const type of ['text/csv; charset=utf-8', 'TEXT/PLAIN', 'text/csv ; charset=utf-8']) {
+      expect(await statement(type)).toBe('a,b\n');
+    }
+    for (const type of ['text/html', 'application/json', 'text/csvx', '']) {
+      const e = await failure(statement(type));
+      expect([e.code, e.status], type).toEqual(['server_error', 200]);
+    }
+  });
+
+  it('turns a sessions answer without its list into a server error', async () => {
+    for (const body of [{ ok: true }, { sessions: 's1' }]) {
+      const e = await failure(setup(() => json(200, body)).api.sessions());
+      expect([e.code, e.status]).toEqual(['server_error', 200]);
     }
   });
 

@@ -191,10 +191,10 @@ type RequestParts = {
 };
 
 /**
- * How a 2xx answer is read: JSON (the default), which fails as a server error unless `check`
- * passes (by default it must be an object, as every answer of the platform is); text (the
- * statement CSV); or nothing the interface keeps (`{ ok: true }` and the like), which is read but
- * not parsed.
+ * How a 2xx answer is read, each a server error when the answer is not of its kind: JSON (the
+ * default) that passes `check` (an object unless said otherwise, as every answer of the platform
+ * is); text, as CSV or plain text (the statement); or `none`, a `{ ok: true, ...}` the interface
+ * drops.
  */
 type Reading =
   { as?: 'json'; check?: (answer: unknown) => boolean } | { as: 'text' | 'none'; check?: never };
@@ -286,15 +286,26 @@ function queryString(query: RequestOptions['query']): string {
   return text === '' ? '' : `?${text}`;
 }
 
-/** The JSON object of an error answer; empty when the body is not one, such as a host's HTML page. */
-function envelopeOf(raw: string): Record<string, unknown> {
+/** The JSON value of a body, or undefined when it is not JSON (which JSON.parse never answers). */
+function jsonOf(raw: string): unknown {
   try {
-    const parsed: unknown = JSON.parse(raw);
-    return isRecord(parsed) ? parsed : {};
+    return JSON.parse(raw) as unknown;
   } catch {
-    return {};
+    return undefined;
   }
 }
+
+/** The JSON object of an error answer; empty when the body is not one, such as a host's HTML page. */
+function envelopeOf(raw: string): Record<string, unknown> {
+  const parsed = jsonOf(raw);
+  return isRecord(parsed) ? parsed : {};
+}
+
+/** The media types the statement may come as, parameters such as a charset aside. */
+const STATEMENT_TYPE = /^text\/(?:csv|plain)\s*(?:;|$)/i;
+
+const hasSessions = (value: unknown): value is { sessions: SessionView[] } =>
+  isRecord(value) && Array.isArray(value.sessions);
 
 /** What an answer without a usable `error` is called: the platform's own fallback, or what a 426 is. */
 const fallbackCode = (status: number): string =>
@@ -402,17 +413,20 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
         notify(onUpgradeRequired, textOf(envelope.minSupportedAppVersion) ?? '');
       throw errorFrom(res.status, envelope, res.headers.get('Retry-After'), options.fieldNames);
     }
-    if (options.as === 'none') return undefined as T;
-    if (options.as === 'text') return raw as T;
-    let answer: unknown;
-    try {
-      answer = JSON.parse(raw);
-    } catch {
-      throw new MobileApiError('server_error', res.status);
+    // A 2xx answer must be what the route answers; anything else (a host's page, a proxy's empty
+    // answer) did not come from it, so the action may not have happened.
+    const unlike = () => new MobileApiError('server_error', res.status);
+    if (options.as === 'text') {
+      if (!STATEMENT_TYPE.test(res.headers.get('Content-Type') ?? '')) throw unlike();
+      return raw as T;
     }
-    if (!(options.check ?? isRecord)(answer)) {
-      throw new MobileApiError('server_error', res.status);
+    const answer = jsonOf(raw);
+    if (options.as === 'none') {
+      // Every route whose answer the interface drops answers `{ ok: true, ...}`.
+      if (!isRecord(answer) || answer.ok !== true) throw unlike();
+      return undefined as T;
     }
+    if (!(options.check ?? isRecord)(answer)) throw unlike();
     return answer as T;
   }
 
@@ -621,7 +635,8 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     changePassword: (body) => callVoid('changePassword', { body }),
     setPin: (body) => callVoid('setPin', { body }),
     // The platform wraps the list.
-    sessions: async () => (await request<{ sessions: SessionView[] }>('sessions')).sessions,
+    sessions: async () =>
+      (await request<{ sessions: SessionView[] }>('sessions', { check: hasSessions })).sessions,
     revokeSession: (sessionId) => call('revokeSession', { body: { sessionId } }),
     enrollTwoFactor: (body) => call('enrollTwoFactor', { body }),
     enableTwoFactor: (body) => call('enableTwoFactor', { body }),
