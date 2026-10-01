@@ -274,14 +274,12 @@ describe('portfolioMath parity with the platform', () => {
       last: series[series.length - 1],
     }).toEqual(expected.series);
     expect(
-      portfolioMath
-        .buildLiveKpis(aggregates, state.rank)
-        .map((k) => ({
-          label: k.label,
-          value: k.value,
-          hint: k.hint,
-          basis: k.basis ?? 'projection',
-        })),
+      portfolioMath.buildLiveKpis(aggregates, state.rank).map((k) => ({
+        label: k.label,
+        value: k.value,
+        hint: k.hint,
+        basis: k.basis ?? 'projection',
+      })),
     ).toEqual(expected.kpis);
     const steps = portfolioMath.nextSteps({
       kycRequired: state.brand.features.kyc,
