@@ -76,6 +76,11 @@ export type LiveApiConfig = {
    * it serves, or '' when the answer did not say.
    */
   onUpgradeRequired?: ((minVersion: string) => void) | undefined;
+  /**
+   * The token store failed to save a pair the platform had just issued (or to be read before the
+   * save): the calls carry on with the pair, but the next start may not find it.
+   */
+  onStorageError?: ((error: unknown) => void) | undefined;
 };
 
 /** What createLiveApi returns: the interface, and in test mode a way to put tokens in the store. */
@@ -242,8 +247,35 @@ const isTokenProblem = (e: unknown): e is TokenProblem =>
  * The platform refused the refresh token itself (revoked, replayed, expired): any 4xx but a 426
  * (the app must update first) and a 429 (slow down), which say nothing about the token.
  */
-const isRefusal = (e: unknown): boolean =>
+const isRefusal = (e: unknown): e is MobileApiError =>
   MobileApiError.is(e) && e.status >= 400 && e.status < 500 && e.status !== 426 && e.status !== 429;
+
+/** The token store failed before the platform was asked anything. */
+const storageError = (cause: unknown): MobileApiError =>
+  new MobileApiError('storage_error', 0, undefined, { cause });
+
+/** The platform's verdict `e` again, with `cause` as what went wrong on this side besides. */
+const withCause = (e: MobileApiError, cause: unknown): MobileApiError =>
+  new MobileApiError(e.code, e.status, e.message, {
+    fields: e.fields,
+    detail: e.detail,
+    retryAfterSeconds: e.retryAfterSeconds,
+    cause,
+  });
+
+/**
+ * Runs a config callback. One that throws is reported on its own, as an uncaught error in a
+ * microtask, and never replaces what the call that ran it answers.
+ */
+function notify<A extends unknown[]>(callback: ((...args: A) => void) | undefined, ...args: A) {
+  try {
+    callback?.(...args);
+  } catch (error) {
+    queueMicrotask(() => {
+      throw error;
+    });
+  }
+}
 
 function queryString(query: RequestOptions['query']): string {
   const params = new URLSearchParams();
@@ -314,7 +346,7 @@ function errorFrom(
 }
 
 export function createLiveApi(config: LiveApiConfig): LiveApi {
-  const { tokenStore, app, onSignedOut, onUpgradeRequired } = config;
+  const { tokenStore, app, onSignedOut, onUpgradeRequired, onStorageError } = config;
   const root = config.baseUrl.replace(/\/+$/, '');
   const fetchImpl: typeof fetch =
     config.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
@@ -358,7 +390,8 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     }
     if (!res.ok) {
       const envelope = envelopeOf(raw);
-      if (res.status === 426) onUpgradeRequired?.(textOf(envelope.minSupportedAppVersion) ?? '');
+      if (res.status === 426)
+        notify(onUpgradeRequired, textOf(envelope.minSupportedAppVersion) ?? '');
       throw errorFrom(res.status, envelope, res.headers.get('Retry-After'), options.fieldNames);
     }
     if (options.as === 'none') return undefined as T;
@@ -379,7 +412,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   async function request<T>(name: ApiMethod, options: RequestOptions = {}): Promise<T> {
     const route = ROUTES[name];
     const gen0 = generation;
-    const stored = isPublic(name) ? null : await tokenStore.get();
+    const stored = isPublic(name) ? null : await read();
     let sent: Sent | null = null;
     if (stored !== null) {
       const access = textOf(stored.accessToken);
@@ -414,7 +447,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   async function tokenAfter401(e: TokenProblem, gen0: number, sent: Sent): Promise<Sent> {
     // A refresh under way is, or is about to be, what replaced `sent`: join it, and its failure.
     if (refreshing !== null) return refreshed(e, gen0, refreshing);
-    const now = await tokenStore.get();
+    const now = await read(e);
     // The request's session is over: the client ended one since (logout(), a revocation, a
     // refused refresh), or the store is empty. Nothing to refresh, and no one left to tell.
     if (generation !== gen0 || now === null) throw e;
@@ -451,13 +484,39 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
    * together end it once: the first clears it, and the rest find the count moved on.
    */
   async function endSession(e: MobileApiError, gen0: number, sent: Sent): Promise<never> {
-    const now = await tokenStore.get();
+    const now = await read(e);
     const held = now?.accessToken === sent.accessToken && now.refreshToken === sent.refreshToken;
     if (generation !== gen0 || !held) throw e;
+    return signOut(e, 'session_revoked');
+  }
+
+  /**
+   * The client ends the session itself: the count moves, the store is cleared and onSignedOut is
+   * told, even when the store cannot be cleared. Then `e`, the platform's verdict, is thrown, with
+   * the store's failure as its cause if it had one.
+   */
+  async function signOut(e: MobileApiError, reason: SignedOutReason): Promise<never> {
     generation += 1;
-    await tokenStore.set(null);
-    onSignedOut?.('session_revoked');
+    try {
+      await tokenStore.set(null);
+    } catch (cause) {
+      throw withCause(e, cause);
+    } finally {
+      notify(onSignedOut, reason);
+    }
     throw e;
+  }
+
+  /**
+   * What the store holds. A store that fails is a `storage_error`; once the platform has answered
+   * (`verdict`), that answer stands instead, with the store's failure as its cause.
+   */
+  async function read(verdict?: MobileApiError): Promise<StoredSession | null> {
+    try {
+      return await tokenStore.get();
+    } catch (cause) {
+      throw verdict === undefined ? storageError(cause) : withCause(verdict, cause);
+    }
   }
 
   /** One refresh at a time: the refresh token works once, so concurrent callers share the request. */
@@ -469,12 +528,12 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   }
 
   async function renew(): Promise<MobileTokens> {
-    const stored = await tokenStore.get();
+    const stored = await read();
     if (stored === null) throw new MobileApiError('unauthorized', 401);
     // The store can change while the platform answers: the investor signs out, or signs in again.
     // The answer then belongs to a session that is over, and must touch nothing of what the store
     // holds now. Its callers still get what it says: the fresh pair, or the refusal.
-    const unchanged = async () => (await tokenStore.get())?.refreshToken === stored.refreshToken;
+    const unchanged = (now: StoredSession | null) => now?.refreshToken === stored.refreshToken;
     let fresh: MobileTokens;
     try {
       const answer = await send<MobileTokens>(
@@ -484,14 +543,16 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       );
       fresh = pairOf(answer);
     } catch (e) {
-      if (isRefusal(e) && (await unchanged())) {
-        generation += 1;
-        await tokenStore.set(null);
-        onSignedOut?.('refresh_failed');
-      }
+      if (isRefusal(e) && unchanged(await read(e))) await signOut(e, 'refresh_failed');
       throw e;
     }
-    if (await unchanged()) await tokenStore.set(fresh);
+    try {
+      if (unchanged(await tokenStore.get())) await tokenStore.set(fresh);
+    } catch (error) {
+      // The platform has rotated the token, so dropping the pair would strand this device: its
+      // callers get it all the same, and the store's failure is reported.
+      notify(onStorageError, error);
+    }
     return fresh;
   }
 
@@ -543,7 +604,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
           // or the tokens run out by themselves.
         }
       }
-      if (broken) throw new MobileApiError('storage_error', 0, undefined, broken);
+      if (broken) throw storageError(broken.cause);
     },
     brand: () => call('brand'),
 

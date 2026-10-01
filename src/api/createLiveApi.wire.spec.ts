@@ -9,6 +9,7 @@ import {
   type ApiMethod,
   type AppIdentity,
   type LiveApi,
+  type LiveApiConfig,
   type StoredSession,
 } from './createLiveApi';
 import { MobileApiError } from './MobileApiError';
@@ -51,7 +52,13 @@ type Faults = {
 function setup(
   script: Script,
   initial: StoredSession | null = pair(1),
-  options: { baseUrl?: string; app?: AppIdentity; faults?: Faults } = {},
+  options: {
+    baseUrl?: string;
+    app?: AppIdentity;
+    faults?: Faults;
+    /** Replaces what setup passes, such as a callback. */
+    config?: Partial<LiveApiConfig>;
+  } = {},
 ) {
   const calls: Call[] = [];
   let tokens = initial;
@@ -59,6 +66,7 @@ function setup(
   const writes: (MobileTokens | null)[] = [];
   const signedOut: string[] = [];
   const upgrades: string[] = [];
+  const storageErrors: unknown[] = [];
   const api = createLiveApi({
     baseUrl: options.baseUrl ?? BASE,
     tokenStore: {
@@ -85,6 +93,8 @@ function setup(
     }) as unknown as typeof fetch,
     onSignedOut: (reason) => signedOut.push(reason),
     onUpgradeRequired: (version) => upgrades.push(version),
+    onStorageError: (error) => storageErrors.push(error),
+    ...options.config,
   });
   return {
     api,
@@ -92,6 +102,7 @@ function setup(
     writes,
     signedOut,
     upgrades,
+    storageErrors,
     tokens: () => tokens,
     /** Changes the store behind the api's back, as another request or a sign-out would. */
     store: (t: StoredSession | null) => {
@@ -128,6 +139,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('the request as it goes out', () => {
@@ -1181,5 +1193,110 @@ describe('the session a request belongs to', () => {
       'session_revoked',
     ]);
     expect([t.signedOut, t.writes]).toEqual([['session_revoked'], [null]]);
+  });
+});
+
+// The platform's verdict is what the caller gets: a token store that fails and a callback that
+// throws are reported beside it, never instead of it.
+describe('when the token store or a callback fails', () => {
+  const unreadable = new DOMException('Decryption failed', 'OperationError');
+  const closed = new DOMException('The database is closed', 'InvalidStateError');
+  const full = new DOMException('The quota has been exceeded', 'QuotaExceededError');
+
+  it('rejects storage_error, and asks the platform nothing, when the store cannot be read', async () => {
+    const t = setup(() => json(200, { id: 'u1' }), pair(1), { faults: { get: () => unreadable } });
+    for (const ask of [() => t.api.me(), () => t.api.refresh()]) {
+      const e = await failure(ask());
+      expect([e.code, e.status, e.cause]).toEqual(['storage_error', 0, unreadable]);
+    }
+    expect(t.calls).toEqual([]);
+  });
+
+  it.each(['unauthorized', 'session_revoked'])(
+    'keeps a %s as the answer, with the store failure as its cause, when the store fails after it',
+    async (code) => {
+      let reads = 0;
+      const t = setup(() => json(401, { error: code }), pair(1), {
+        faults: { get: () => (++reads > 1 ? unreadable : undefined) },
+      });
+      const e = await failure(t.api.me());
+      expect([e.code, e.status, e.cause]).toEqual([code, 401, unreadable]);
+      expect([t.calls.length, t.signedOut, t.writes]).toEqual([1, [], []]);
+    },
+  );
+
+  it.each([
+    ['a revoked session', () => json(401, { error: 'session_revoked' }), 'session_revoked'],
+    [
+      'a refused refresh',
+      (c: Call) =>
+        isRefresh(c)
+          ? json(401, { error: 'session_revoked' })
+          : json(401, { error: 'unauthorized' }),
+      'refresh_failed',
+    ],
+  ])(
+    "still signs out on %s when the store cannot be cleared, and throws the platform's error",
+    async (_what, script: Script, reason) => {
+      const t = setup(script, pair(1), { faults: { set: () => closed } });
+      const e = await failure(t.api.me());
+      expect([e.code, e.status, e.cause]).toEqual(['session_revoked', 401, closed]);
+      expect([t.signedOut, t.writes]).toEqual([[reason], [null]]);
+    },
+  );
+
+  it('still answers with a refreshed pair it cannot save, retries with it, and reports why', async () => {
+    const t = setup(
+      (c) =>
+        isRefresh(c)
+          ? json(200, pair(2))
+          : bearer(c) === 'Bearer a1'
+            ? json(401, { error: 'unauthorized' })
+            : json(200, { id: 'u1' }),
+      pair(1),
+      { faults: { set: (tokens) => (tokens === null ? undefined : full) } },
+    );
+    expect((await t.api.me()).id).toBe('u1');
+    expect(t.calls.map(bearer)).toEqual(['Bearer a1', null, 'Bearer a2']);
+    expect([t.storageErrors, t.tokens()]).toEqual([[full], pair(1)]);
+  });
+
+  it('reports a callback that throws on its own, and still answers the call', async () => {
+    // Every microtask still runs (the test runner needs them); what one throws is kept here
+    // instead of reaching the runner as an uncaught error.
+    const reported: unknown[] = [];
+    const queue = globalThis.queueMicrotask;
+    vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((task) => {
+      queue(() => {
+        try {
+          task();
+        } catch (error) {
+          reported.push(error);
+        }
+      });
+    });
+    const bug = new Error('a handler bug');
+    const thrower = () => {
+      throw bug;
+    };
+    const revoked = setup(() => json(401, { error: 'session_revoked' }), pair(1), {
+      config: { onSignedOut: thrower },
+    });
+    expect((await failure(revoked.api.me())).code).toBe('session_revoked');
+    expect(revoked.tokens()).toBeNull();
+    const outdated = setup(() => json(426, { error: 'upgrade_required' }), pair(1), {
+      config: { onUpgradeRequired: thrower },
+    });
+    expect((await failure(outdated.api.me())).code).toBe('upgrade_required');
+    const unsaved = setup(
+      (c) => (isRefresh(c) ? json(200, pair(2)) : json(200, {})),
+      restarted(1),
+      {
+        faults: { set: () => full },
+        config: { onStorageError: thrower },
+      },
+    );
+    expect(await unsaved.api.me()).toEqual({});
+    expect(reported).toEqual([bug, bug, bug]);
   });
 });
