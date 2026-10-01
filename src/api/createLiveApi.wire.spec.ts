@@ -486,6 +486,30 @@ describe('the error envelope', () => {
     expect(e.message).toBe(new MobileApiError('forbidden', 403).message);
   });
 
+  // The platform keys a ticket's fields `body` and `ticketId`; the interface, the sample and the
+  // forms call them `message` and `id`, so a screen maps `fields` onto the form fields it owns.
+  it("names openTicket's field errors as the interface does, and no other call's", async () => {
+    const refused = () =>
+      json(400, { error: 'invalid_input', fields: { subject: 'Too long.', body: 'Say more.' } });
+    const opened = await failure(setup(refused).api.openTicket({ subject: 'Hello', message: '' }));
+    expect(opened.fields).toEqual({ subject: 'Too long.', message: 'Say more.' });
+    const other = await failure(
+      setup(refused).api.manualDeposit({ methodId: 'm1', amountCents: 1 }),
+    );
+    expect(other.fields).toEqual({ subject: 'Too long.', body: 'Say more.' });
+  });
+
+  it("names replyTicket's field errors as the interface does", async () => {
+    const t = setup(() =>
+      json(400, {
+        error: 'invalid_input',
+        fields: { ticketId: 'Required', body: 'Say more.', extra: 'As it is.' },
+      }),
+    );
+    const e = await failure(t.api.replyTicket({ id: '', message: '' }));
+    expect(e.fields).toEqual({ id: 'Required', message: 'Say more.', extra: 'As it is.' });
+  });
+
   it('takes Retry-After from the body, else from the header as seconds or as a date', async () => {
     vi.setSystemTime(new Date('2026-10-01T12:00:00.400Z'));
     const wait = async (body: object, headers: Record<string, string> = {}) =>

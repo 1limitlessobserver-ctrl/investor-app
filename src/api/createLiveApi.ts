@@ -8,7 +8,8 @@
 //   - any failure is a MobileApiError, built from the error envelope `{ error, message?, fields?,
 //     detail?, retryAfterSeconds? }` and the Retry-After header, each read only as far as it has the
 //     right type, so a host's HTML error page counts as an empty envelope; a lost connection is
-//     `MobileApiError.network()`; a 426 also tells onUpgradeRequired the oldest version served;
+//     `MobileApiError.network()`; a 426 also tells onUpgradeRequired the oldest version served; the
+//     two ticket calls key `fields` by the interface's names (`message`, `id`), not the platform's;
 //   - 401 `unauthorized` (the access token expired) refreshes once, shared by every call that meets
 //     it at the same time, and retries once with the token that is then stored;
 //   - 401 `session_revoked` retries once with a newer token if another call has stored one since (the
@@ -142,7 +143,21 @@ type RequestOptions = {
   as?: 'json' | 'text' | 'none';
   /** A JSON answer that fails this is a server error: the refresh answer must be a token pair. */
   check?: (answer: unknown) => boolean;
+  /**
+   * The interface's name for each field the platform names differently, by the platform's name: an
+   * error's `fields` come back under the interface's names, so a screen can map them onto the form
+   * fields it owns.
+   */
+  fieldNames?: ReadonlyMap<string, string>;
 };
+
+// The platform keys a ticket's fields `body` and `ticketId`; PlatformApi (and so the sample and the
+// forms) call them `message` and `id`.
+const OPEN_TICKET_FIELDS: ReadonlyMap<string, string> = new Map([['body', 'message']]);
+const REPLY_TICKET_FIELDS: ReadonlyMap<string, string> = new Map([
+  ['body', 'message'],
+  ['ticketId', 'id'],
+]);
 
 const isString = (value: unknown): value is string => typeof value === 'string';
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -218,16 +233,24 @@ function secondsOf(header: string | null): number | null {
   return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }
 
-/** The error an answer that is not 2xx ends in, taking from its envelope only what has the right type. */
+/**
+ * The error an answer that is not 2xx ends in, taking from its envelope only what has the right
+ * type. A field the call has another name for (`fieldNames`) is keyed by that name.
+ */
 function errorFrom(
   status: number,
   envelope: Record<string, unknown>,
   retryAfter: string | null,
+  fieldNames: ReadonlyMap<string, string> | undefined,
 ): MobileApiError {
   const { error, message, fields, detail, retryAfterSeconds } = envelope;
   return new MobileApiError(textOf(error) ?? fallbackCode(status), status, textOf(message), {
     fields: isRecord(fields)
-      ? Object.fromEntries(Object.entries(fields).filter(isStringEntry))
+      ? Object.fromEntries(
+          Object.entries(fields)
+            .filter(isStringEntry)
+            .map(([key, text]): [string, string] => [fieldNames?.get(key) ?? key, text]),
+        )
       : undefined,
     detail: Array.isArray(detail) && detail.every(isString) ? detail : undefined,
     retryAfterSeconds:
@@ -280,7 +303,7 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
     if (!res.ok) {
       const envelope = envelopeOf(raw);
       if (res.status === 426) onUpgradeRequired?.(textOf(envelope.minSupportedAppVersion) ?? '');
-      throw errorFrom(res.status, envelope, res.headers.get('Retry-After'));
+      throw errorFrom(res.status, envelope, res.headers.get('Retry-After'), options.fieldNames);
     }
     if (options.as === 'none') return undefined as T;
     if (options.as === 'text') return raw as T;
@@ -434,10 +457,14 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
     pushUnsubscribe: (endpoint) => callVoid('pushUnsubscribe', { body: { endpoint } }),
 
     supportTickets: (page) => call('supportTickets', { query: { page } }),
-    openTicket: ({ subject, message }) => call('openTicket', { body: { subject, body: message } }),
+    openTicket: ({ subject, message }) =>
+      call('openTicket', { body: { subject, body: message }, fieldNames: OPEN_TICKET_FIELDS }),
     ticket: (id) => call('ticket', { query: { id } }),
     replyTicket: ({ id, message }) =>
-      callVoid('replyTicket', { body: { ticketId: id, body: message } }),
+      callVoid('replyTicket', {
+        body: { ticketId: id, body: message },
+        fieldNames: REPLY_TICKET_FIELDS,
+      }),
 
     depositMethods: () => call('depositMethods'),
     manualDeposit: (body) => call('manualDeposit', { body }),
