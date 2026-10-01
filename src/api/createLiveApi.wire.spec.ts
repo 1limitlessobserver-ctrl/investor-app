@@ -2,14 +2,22 @@
 // platform reads it, the error envelope read defensively, sign-in and sign-out, and the edges of
 // the refresh rules. All of it runs through a fake fetchImpl; nothing inside the client is mocked.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLiveApi, ROUTES, type LiveApiConfig, type StoredSession } from './createLiveApi';
+import {
+  createLiveApi,
+  PUBLIC_ROUTES,
+  ROUTES,
+  type ApiMethod,
+  type AppIdentity,
+  type LiveApi,
+  type StoredSession,
+} from './createLiveApi';
 import { MobileApiError } from './MobileApiError';
 import type { PlatformApi } from './PlatformApi';
 import type { KycSubmission, LegacyPlan, MobileTokens } from './types';
 
 const BASE = 'https://platform.test/api/mobile/v1';
 const RUNAWAY = 20;
-const APP: LiveApiConfig['app'] = {
+const APP: AppIdentity = {
   version: '1.2.0',
   platform: 'web',
   deviceId: 'device-0001',
@@ -18,7 +26,6 @@ const APP: LiveApiConfig['app'] = {
 
 type Call = { url: string; init: RequestInit };
 type Script = (call: Call) => Response | Promise<Response>;
-type ApiMethod = keyof typeof ROUTES;
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -38,7 +45,7 @@ const restarted = (n: number): StoredSession => ({ refreshToken: `r${n}`, access
 function setup(
   script: Script,
   initial: StoredSession | null = pair(1),
-  options: { baseUrl?: string; app?: LiveApiConfig['app'] } = {},
+  options: { baseUrl?: string; app?: AppIdentity } = {},
 ) {
   const calls: Call[] = [];
   let tokens = initial;
@@ -122,7 +129,7 @@ describe('the request as it goes out', () => {
   });
 
   it.each([undefined, ''])('leaves X-Device-Name out when the device name is %j', async (name) => {
-    const app: LiveApiConfig['app'] = { ...APP, deviceName: name };
+    const app: AppIdentity = { ...APP, deviceName: name };
     const t = setup(() => json(200, {}), pair(1), { app });
     await t.api.me();
     expect(header(t.calls[0]!, 'X-Device-Name')).toBeNull();
@@ -152,10 +159,13 @@ describe('the request as it goes out', () => {
     expect(stub.mock.calls[0]?.[1]?.method).toBe('GET');
   });
 
-  it('offers _test_setTokens in test mode only', () => {
-    expect(setup(() => json(200, {})).api).toHaveProperty('_test_setTokens');
+  it('offers _test_setTokens, which writes to the store, in test mode only', async () => {
+    const t = setup(() => json(200, {}));
+    await t.api._test_setTokens?.(pair(2));
+    expect(t.tokens()).toEqual(pair(2));
     vi.stubEnv('MODE', 'production');
-    expect(setup(() => json(200, {})).api).not.toHaveProperty('_test_setTokens');
+    const built: LiveApi = setup(() => json(200, {})).api;
+    expect(built).not.toHaveProperty('_test_setTokens');
   });
 });
 
@@ -393,6 +403,10 @@ describe('the routes', () => {
       expect(ROUTES[name]).toEqual({ method: verb, path: target.split('?')[0] });
     },
   );
+
+  it('names the same public routes as the client', () => {
+    expect([...PUBLIC_ROUTES].sort()).toEqual([...publicRoutes].sort());
+  });
 
   it('leaves out the query key and the body field that were not given', async () => {
     const t = setup(() => json(200, {}));

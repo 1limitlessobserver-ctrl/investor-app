@@ -48,18 +48,29 @@ export type TokenStore = {
 /** The tokens a request went out with: an access token, and the refresh token stored beside it. */
 type Sent = { readonly accessToken: string; readonly refreshToken: string };
 
+/** How the app names itself on every request (X-App-Version, X-App-Platform, X-Device-*). */
+export type AppIdentity = {
+  version: string;
+  platform: 'web';
+  deviceId: string;
+  deviceName?: string | undefined;
+};
+
+/** Why the client signed the investor out on its own. */
+export type SignedOutReason = 'session_revoked' | 'refresh_failed';
+
 export type LiveApiConfig = {
   /** The platform's API root, such as "https://platform.example.com/api/mobile/v1". */
   baseUrl: string;
   tokenStore: TokenStore;
-  app: { version: string; platform: 'web'; deviceId: string; deviceName?: string | undefined };
+  app: AppIdentity;
   /** Tests pass their own. The default calls the global fetch at the moment of each call. */
   fetchImpl?: typeof fetch | undefined;
   /**
    * The platform ended the session without the investor asking: it revoked the session, or it
    * refused the refresh. The tokens are already cleared. logout() never calls this.
    */
-  onSignedOut?: ((reason: 'session_revoked' | 'refresh_failed') => void) | undefined;
+  onSignedOut?: ((reason: SignedOutReason) => void) | undefined;
   /**
    * An answer was 426: the platform no longer serves this app version. `minVersion` is the oldest
    * it serves, or '' when the answer did not say.
@@ -67,9 +78,30 @@ export type LiveApiConfig = {
   onUpgradeRequired?: ((minVersion: string) => void) | undefined;
 };
 
+/** What createLiveApi returns: the interface, and in test mode a way to put tokens in the store. */
+export type LiveApi = PlatformApi & { _test_setTokens?: (tokens: MobileTokens) => Promise<void> };
+
 /** The name of a PlatformApi method (`mode` is not one). */
-type ApiMethod = Exclude<keyof PlatformApi, 'mode'>;
-type Route = { readonly method: 'GET' | 'POST'; readonly path: string };
+export type ApiMethod = Exclude<keyof PlatformApi, 'mode'>;
+/** A method's HTTP method, and its path under `baseUrl` without a query string. */
+export type Route = { readonly method: 'GET' | 'POST'; readonly path: `/${string}` };
+
+/** What a method resolves. */
+type Answer<K extends ApiMethod> = Awaited<ReturnType<PlatformApi[K]>>;
+/** The methods that resolve nothing, the one that resolves text, and the rest, which read JSON. */
+type VoidMethod = { [K in ApiMethod]: Answer<K> extends void ? K : never }[ApiMethod];
+type TextMethod = { [K in ApiMethod]: Answer<K> extends string ? K : never }[ApiMethod];
+type JsonMethod = Exclude<ApiMethod, VoidMethod | TextMethod>;
+
+/** The methods whose route never carries the bearer; every other route does. */
+export const PUBLIC_ROUTES = [
+  'brand',
+  'login',
+  'loginTwoFactor',
+  'refresh',
+] as const satisfies readonly ApiMethod[];
+const isPublic = (name: ApiMethod): boolean =>
+  (PUBLIC_ROUTES as readonly ApiMethod[]).includes(name);
 
 /**
  * The route of every PlatformApi method: its HTTP method and its path under `baseUrl`, without the
@@ -78,7 +110,7 @@ type Route = { readonly method: 'GET' | 'POST'; readonly path: string };
  * Exported for the e2e route checks. `push/subscribe` and `push/unsubscribe` are not in the
  * platform's docs yet; they are added to the platform with web push.
  */
-export const ROUTES: Readonly<Record<ApiMethod, Route>> = {
+export const ROUTES = {
   login: { method: 'POST', path: '/auth/login' },
   loginTwoFactor: { method: 'POST', path: '/auth/login/2fa' },
   refresh: { method: 'POST', path: '/auth/refresh' },
@@ -137,25 +169,14 @@ export const ROUTES: Readonly<Record<ApiMethod, Route>> = {
   removeBeneficiary: { method: 'POST', path: '/beneficiaries/remove' },
 
   oracleAsk: { method: 'POST', path: '/oracle/ask' },
-};
+} as const satisfies Readonly<Record<ApiMethod, Route>>;
 
-type RequestOptions = {
+/** What a method puts into its request. */
+type RequestParts = {
   /** What a POST sends as JSON; `{}` when left out. */
-  body?: unknown;
+  body?: object;
   /** Added to the path as a query string; a key whose value is undefined is left out. */
   query?: Readonly<Record<string, string | number | undefined>>;
-  /** A signed-in route sends the bearer (the default); `false` is a public one (sign-in, brand). */
-  auth?: boolean;
-  /**
-   * What a 2xx answer is: JSON (the default), text (the statement CSV), or nothing the interface
-   * keeps (`{ ok: true }` and the like), which is read but not parsed.
-   */
-  as?: 'json' | 'text' | 'none';
-  /**
-   * A JSON answer that fails this is a server error. By default it must be an object, as every
-   * answer of the platform is; the refresh answer must be a token pair.
-   */
-  check?: (answer: unknown) => boolean;
   /**
    * The interface's name for each field the platform names differently, by the platform's name: an
    * error's `fields` come back under the interface's names, so a screen can map them onto the form
@@ -163,6 +184,17 @@ type RequestOptions = {
    */
   fieldNames?: ReadonlyMap<string, string>;
 };
+
+/**
+ * How a 2xx answer is read: JSON (the default), which fails as a server error unless `check`
+ * passes (by default it must be an object, as every answer of the platform is); text (the
+ * statement CSV); or nothing the interface keeps (`{ ok: true }` and the like), which is read but
+ * not parsed.
+ */
+type Reading =
+  { as?: 'json'; check?: (answer: unknown) => boolean } | { as: 'text' | 'none'; check?: never };
+
+type RequestOptions = RequestParts & Reading;
 
 // The platform keys a ticket's fields `body` and `ticketId`; PlatformApi (and so the sample and the
 // forms) call them `message` and `id`.
@@ -197,7 +229,11 @@ const pairOf = (t: MobileTokens): MobileTokens => ({
 });
 
 /** A 401 about the token that was sent: it expired (`unauthorized`) or its session ended. */
-const isTokenProblem = (e: unknown): e is MobileApiError =>
+type TokenProblem = MobileApiError & {
+  readonly status: 401;
+  readonly code: 'unauthorized' | 'session_revoked';
+};
+const isTokenProblem = (e: unknown): e is TokenProblem =>
   MobileApiError.is(e) &&
   e.status === 401 &&
   (e.code === 'unauthorized' || e.code === 'session_revoked');
@@ -277,7 +313,7 @@ function errorFrom(
   });
 }
 
-export function createLiveApi(config: LiveApiConfig): PlatformApi {
+export function createLiveApi(config: LiveApiConfig): LiveApi {
   const { tokenStore, app, onSignedOut, onUpgradeRequired } = config;
   const root = config.baseUrl.replace(/\/+$/, '');
   const fetchImpl: typeof fetch =
@@ -337,8 +373,9 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
   }
 
   /** A call with the session's rules: refresh and retry on 401, end the session when it is revoked. */
-  async function request<T>(route: Route, options: RequestOptions = {}): Promise<T> {
-    const stored = options.auth === false ? null : await tokenStore.get();
+  async function request<T>(name: ApiMethod, options: RequestOptions = {}): Promise<T> {
+    const route = ROUTES[name];
+    const stored = isPublic(name) ? null : await tokenStore.get();
     let sent: Sent | null = null;
     if (stored !== null) {
       const access = textOf(stored.accessToken);
@@ -365,7 +402,7 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
   }
 
   /** The access token to retry with after a 401 for `sent`, or the error that says there is none. */
-  async function tokenAfter401(sent: string, e: MobileApiError): Promise<string> {
+  async function tokenAfter401(sent: string, e: TokenProblem): Promise<string> {
     // A refresh under way is, or is about to be, what replaced `sent`: join it, and its failure.
     if (refreshing !== null) return (await refreshing).accessToken;
     const now = await tokenStore.get();
@@ -427,18 +464,23 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
     return fresh;
   }
 
-  const call = <T>(name: ApiMethod, options?: RequestOptions): Promise<T> =>
-    request<T>(ROUTES[name], options);
+  /** For a method that resolves the JSON the platform answers. */
+  const call = <K extends JsonMethod>(
+    name: K,
+    parts: RequestParts & { check?: (answer: unknown) => boolean } = {},
+  ): Promise<Answer<K>> => request<Answer<K>>(name, parts);
   /** For a method whose answer (`{ ok: true }` and the like) the interface drops. */
-  const callVoid = (name: ApiMethod, options?: RequestOptions): Promise<void> =>
-    request<void>(ROUTES[name], { ...options, as: 'none' });
+  const callVoid = (name: VoidMethod, parts: RequestParts = {}): Promise<void> =>
+    request<void>(name, { ...parts, as: 'none' });
+  /** For the method that resolves text (the statement CSV). */
+  const callText = (name: TextMethod, parts: RequestParts = {}): Promise<string> =>
+    request<string>(name, { ...parts, as: 'text' });
 
-  const api: PlatformApi = {
+  const api: LiveApi = {
     mode: 'live',
 
-    login: (body) => call('login', { body, auth: false }),
-    loginTwoFactor: async (body) =>
-      pairOf(await call<MobileTokens>('loginTwoFactor', { body, auth: false })),
+    login: (body) => call('login', { body }),
+    loginTwoFactor: async (body) => pairOf(await call('loginTwoFactor', { body })),
     refresh: () => refreshOnce(),
     logout: async () => {
       try {
@@ -459,13 +501,14 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
         await tokenStore.set(null);
       }
     },
-    brand: () => call('brand', { auth: false }),
+    brand: () => call('brand'),
 
     me: () => call('me'),
     setNotificationPrefs: (prefs) => call('setNotificationPrefs', { body: prefs }),
     changePassword: (body) => callVoid('changePassword', { body }),
     setPin: (body) => callVoid('setPin', { body }),
-    sessions: async () => (await call<{ sessions: SessionView[] }>('sessions')).sessions,
+    // The platform wraps the list.
+    sessions: async () => (await request<{ sessions: SessionView[] }>('sessions')).sessions,
     revokeSession: (sessionId) => call('revokeSession', { body: { sessionId } }),
     enrollTwoFactor: (body) => call('enrollTwoFactor', { body }),
     enableTwoFactor: (body) => call('enableTwoFactor', { body }),
@@ -479,7 +522,7 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
     history: () => call('history'),
     statements: (kind) => call('statements', { query: { kind } }),
     statement: (period) => call('statement', { query: { period } }),
-    statementCsv: (period) => call('statementCsv', { query: { period }, as: 'text' }),
+    statementCsv: (period) => callText('statementCsv', { query: { period } }),
 
     notifications: (limit) => call('notifications', { query: { limit } }),
     markRead: (id) => call('markRead', { body: id === undefined ? {} : { id } }),
@@ -521,8 +564,6 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
   };
 
   // Tests put a session in the store without signing in.
-  if (import.meta.env.MODE === 'test') {
-    Object.assign(api, { _test_setTokens: (tokens: MobileTokens) => tokenStore.set(tokens) });
-  }
+  if (import.meta.env.MODE === 'test') api._test_setTokens = (tokens) => tokenStore.set(tokens);
   return api;
 }

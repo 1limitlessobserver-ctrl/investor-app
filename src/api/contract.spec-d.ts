@@ -6,6 +6,7 @@
 import { expectTypeOf } from 'vitest';
 import type { z } from 'zod';
 import type { LegacyPlanSchema } from '../lib/legacyPlanModel';
+import type { ROUTES } from './createLiveApi';
 import type { PlatformApi } from './PlatformApi';
 import type {
   BeneficiaryInput,
@@ -86,3 +87,9 @@ expectTypeOf<Parameters<PlatformApi['updateBeneficiary']>[0]>().toEqualTypeOf<
 
 // The Legacy plan DTO is exactly what the platform's strict schema (ported as is) accepts.
 expectTypeOf<z.infer<typeof LegacyPlanSchema>>().toEqualTypeOf<LegacyPlan>();
+
+// No path in the live client's route table carries a query string: a method adds its own keys.
+// The paths are literal types (an unknown path is none of them), so the second check sees each.
+type RoutePath = (typeof ROUTES)[keyof typeof ROUTES]['path'];
+expectTypeOf<'/not-a-route'>().not.toExtend<RoutePath>();
+expectTypeOf<Extract<RoutePath, `${string}?${string}`>>().toBeNever();
