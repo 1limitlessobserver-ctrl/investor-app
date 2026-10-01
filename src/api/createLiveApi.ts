@@ -346,19 +346,20 @@ const fallbackCode = (status: number): string =>
         ? 'server_error'
         : 'request_failed';
 
+/** A wait in whole seconds: a finite number not below 0, rounded up so a retry is never early. */
+const waitOf = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.ceil(value) : null;
+
 /**
- * A Retry-After header as seconds: whole seconds, or an HTTP date as the whole seconds until then
- * (rounded up, so a retry is never early, and not below 0). Anything else is null.
+ * A Retry-After header as a wait: digits are seconds (so many that they overflow are no wait), and
+ * an HTTP date is the seconds until then, rounded up and not below 0. Anything else is null.
  */
 function secondsOf(header: string | null): number | null {
   const text = header?.trim() ?? '';
-  if (/^\d+$/.test(text)) {
-    // Enough digits overflow to Infinity, which is no wait.
-    const seconds = Number(text);
-    return Number.isFinite(seconds) ? seconds : null;
-  }
-  // A date starts with its day name ("Wed, 21 Oct 2026 ..."); Date.parse alone would also take
-  // digits such as "-5" for a year.
+  if (/^\d+$/.test(text)) return waitOf(Number(text));
+  // Read as a date only in the forms that open with a day name and a comma (IMF-fixdate, "Wed, 21
+  // Oct 2026 07:28:00 GMT", and RFC 850): Date.parse alone takes "-5" or "1.5" for a year. The
+  // asctime form has no comma and reads as no wait.
   if (!/^[A-Za-z]{3,9},/.test(text)) return null;
   const at = Date.parse(text);
   return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - Date.now()) / 1000));
@@ -385,10 +386,7 @@ function errorFrom(
         )
       : undefined,
     detail: Array.isArray(detail) && detail.every(isString) ? detail : undefined,
-    retryAfterSeconds:
-      typeof retryAfterSeconds === 'number' && Number.isFinite(retryAfterSeconds)
-        ? retryAfterSeconds
-        : secondsOf(retryAfter),
+    retryAfterSeconds: waitOf(retryAfterSeconds) ?? secondsOf(retryAfter),
   });
   if (code !== undefined) namedByPlatform.add(e);
   return e;

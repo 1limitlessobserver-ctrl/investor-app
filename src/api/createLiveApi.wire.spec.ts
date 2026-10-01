@@ -621,6 +621,9 @@ describe('the error envelope', () => {
     const limited = { error: 'rate_limited' };
     expect(await wait({ ...limited, retryAfterSeconds: 12 }, { 'Retry-After': '30' })).toBe(12);
     expect(await wait({ ...limited, retryAfterSeconds: 'soon' }, { 'Retry-After': '7' })).toBe(7);
+    // The body's value is read as the header's: whole seconds rounded up, never below 0.
+    expect(await wait({ ...limited, retryAfterSeconds: -5 }, { 'Retry-After': '30' })).toBe(30);
+    expect(await wait({ ...limited, retryAfterSeconds: 1.5 }, { 'Retry-After': '30' })).toBe(2);
     expect(await wait(limited, { 'Retry-After': '45' })).toBe(45);
     // A date counts the whole seconds until then, rounded up so a retry is never early, and not
     // below 0 once it has passed.
