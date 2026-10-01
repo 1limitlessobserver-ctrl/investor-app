@@ -17,8 +17,9 @@
 //     the retry is the answer; only a `session_revoked` there still ends the session.
 //
 // A refresh the platform refuses with a 4xx ends the session too (`refresh_failed`); one that fails
-// any other way (5xx, 429, 426, no connection) leaves it for the next try. logout() is one plain
-// request that refreshes and retries nothing. login and loginTwoFactor answer the tokens and store
+// any other way (5xx, 429, 426, no connection) leaves it for the next try. A refresh answered after
+// the investor has signed out or signed in again stores nothing and signs no one out. logout() is
+// one plain request that refreshes and retries nothing. login and loginTwoFactor answer the tokens and store
 // nothing: the session stores the pair it signs in with.
 //
 // The access token lives in memory only, so after a restart the store holds just the refresh token
@@ -378,6 +379,10 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
   async function renew(): Promise<MobileTokens> {
     const stored = await tokenStore.get();
     if (stored === null) throw new MobileApiError('unauthorized', 401);
+    // The store can change while the platform answers: the investor signs out, or signs in again.
+    // The answer then belongs to a session that is over, and must touch nothing of what the store
+    // holds now. Its callers still get what it says: the fresh pair, or the refusal.
+    const unchanged = async () => (await tokenStore.get())?.refreshToken === stored.refreshToken;
     let fresh: MobileTokens;
     try {
       const answer = await send<MobileTokens>(
@@ -387,13 +392,13 @@ export function createLiveApi(config: LiveApiConfig): PlatformApi {
       );
       fresh = pairOf(answer);
     } catch (e) {
-      if (isRefusal(e)) {
+      if (isRefusal(e) && (await unchanged())) {
         await tokenStore.set(null);
         onSignedOut?.('refresh_failed');
       }
       throw e;
     }
-    await tokenStore.set(fresh);
+    if (await unchanged()) await tokenStore.set(fresh);
     return fresh;
   }
 

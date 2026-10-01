@@ -902,6 +902,50 @@ describe('the refresh and its edges', () => {
     expect(t.tokens()).toBeNull();
   });
 
+  // The platform answers a refresh some time after it was asked, and the store can change meanwhile:
+  // the investor signs out, or signs in again. The answer then belongs to a session that is over,
+  // so it must change nothing of what the store holds now.
+  const changes: [string, 'logout' | 'sign-in'][] = [
+    ['a logout', 'logout'],
+    ['a new sign-in', 'sign-in'],
+  ];
+  describe.each(changes)('a refresh answered after %s', (_name, change) => {
+    /** Asks for a refresh, makes `change` while it is out, then lets the platform answer it. */
+    async function overlap(answer: () => Response) {
+      const started = gate();
+      const landed = gate();
+      const t = setup(async (c) => {
+        if (!isRefresh(c)) return json(200, { ok: true }); // the logout request
+        started.release();
+        await landed.open;
+        return answer();
+      });
+      const refreshing = t.api.refresh().then(
+        (tokens) => ({ tokens }),
+        (error: unknown) => ({ error }),
+      );
+      await started.open;
+      if (change === 'logout') await t.api.logout();
+      else t.store(pair(5));
+      landed.release();
+      return { t, outcome: await refreshing, stored: change === 'logout' ? null : pair(5) };
+    }
+
+    it('stores nothing, and still gives its callers the pair', async () => {
+      const { t, outcome, stored } = await overlap(() => json(200, pair(2)));
+      expect(outcome).toEqual({ tokens: pair(2) });
+      expect(t.tokens()).toEqual(stored);
+      expect(t.signedOut).toEqual([]);
+    });
+
+    it('signs nothing out, and still throws the refusal', async () => {
+      const { t, outcome, stored } = await overlap(() => json(401, { error: 'session_revoked' }));
+      expect(outcome).toMatchObject({ error: { code: 'session_revoked', status: 401 } });
+      expect(t.tokens()).toEqual(stored);
+      expect(t.signedOut).toEqual([]);
+    });
+  });
+
   it('refreshes first when only the refresh token survived, once for concurrent calls', async () => {
     const t = setup((c) => (isRefresh(c) ? json(200, pair(2)) : json(200, { id: 'u1' })), {
       ...pair(1),
