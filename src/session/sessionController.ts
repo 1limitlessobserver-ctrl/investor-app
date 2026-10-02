@@ -433,7 +433,8 @@ export function createSessionController(deps: SessionDeps) {
       try {
         await settled(api.logout(key), LOGOUT_WAIT_MS);
       } catch (error) {
-        // Only a store that fails makes logout reject; ending the session here clears it anyway.
+        // Only a store that fails makes logout reject; the end that follows clears the session
+        // here, or keeps its lock and says the session couldn't be fully removed.
         reportProblem('signing out: telling the platform', error);
       }
       if (gen === generation) await endHere('investor');
