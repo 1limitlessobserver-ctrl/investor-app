@@ -54,6 +54,10 @@ export async function applyCompany(
             }),
           },
           { source: '/sw.js', headers: [{ key: 'Cache-Control', value: 'no-cache' }] },
+          {
+            source: '/manifest.webmanifest',
+            headers: [{ key: 'Content-Type', value: 'application/manifest+json' }],
+          },
         ],
       },
       null,

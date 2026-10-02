@@ -63,6 +63,23 @@ describe('company config', () => {
       ]),
     );
   });
+
+  it('lists the screenshots of scripts/screenshots.ts, a phone and a desktop one', () => {
+    expect(buildManifest(northwind).screenshots).toEqual([
+      expect.objectContaining({
+        src: '/screenshots/phone-home.png',
+        sizes: '1080x1920',
+        type: 'image/png',
+        form_factor: 'narrow',
+      }),
+      expect.objectContaining({
+        src: '/screenshots/desktop-home.png',
+        sizes: '1920x1080',
+        type: 'image/png',
+        form_factor: 'wide',
+      }),
+    ]);
+  });
 });
 
 describe('applyCompany', () => {
@@ -114,6 +131,27 @@ describe('applyCompany', () => {
     expect(html).toContain('content="#1F9E76"');
     expect(html).not.toContain('__PRODUCT_NAME__');
     expect(result.written.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('lets the service worker run and serves it and the manifest right, on both hosts', async () => {
+    await applyCompany(northwind, { root });
+    const headers = await readFile(path.join(root, 'public/_headers'), 'utf8');
+    expect(headers).toContain("worker-src 'self'");
+    expect(headers).toContain("manifest-src 'self'");
+    expect(headers).toContain('/sw.js\n  Cache-Control: no-cache\n');
+    expect(headers).toContain('/manifest.webmanifest\n  Content-Type: application/manifest+json\n');
+    const vercel = JSON.parse(await readFile(path.join(root, 'vercel.json'), 'utf8')) as {
+      headers: { source: string; headers: { key: string; value: string }[] }[];
+    };
+    const rule = (source: string) => vercel.headers.find((r) => r.source === source)?.headers;
+    expect(rule('/(.*)')).toContainEqual({
+      key: 'Content-Security-Policy',
+      value: expect.stringContaining("worker-src 'self'") as string,
+    });
+    expect(rule('/sw.js')).toEqual([{ key: 'Cache-Control', value: 'no-cache' }]);
+    expect(rule('/manifest.webmanifest')).toEqual([
+      { key: 'Content-Type', value: 'application/manifest+json' },
+    ]);
   });
 
   it('keeps sample mode when platformUrl is empty', async () => {
