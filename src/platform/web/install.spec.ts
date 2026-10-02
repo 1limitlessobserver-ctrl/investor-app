@@ -107,10 +107,32 @@ describe('install adapter: prompts, installation and hints', () => {
     expect(prompt).toHaveBeenCalledTimes(1);
   });
 
-  it('answers unavailable when the browser refuses to show its prompt, and drops it', async () => {
+  it('keeps a prompt refused for want of a user gesture, for a later tap', async () => {
+    const install = createWebInstall(chromeOnWindows);
+    const listener = vi.fn();
+    const leave = install.subscribe(listener);
+    const prompt = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new DOMException('No user gesture.', 'NotAllowedError'))
+      .mockResolvedValueOnce(undefined);
+    const event = Object.assign(new Event('beforeinstallprompt', { cancelable: true }), {
+      prompt,
+      userChoice: Promise.resolve({ outcome: 'accepted', platform: 'web' }),
+    });
+    window.dispatchEvent(event);
+    expect(await install.prompt()).toBe('unavailable');
+    expect(install.canPrompt()).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(3); // offered, taken for the prompt, offered again
+    expect(await install.prompt()).toBe('accepted');
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(install.canPrompt()).toBe(false);
+    leave();
+  });
+
+  it('drops a prompt that fails for any other reason, such as one already used', async () => {
     const install = createWebInstall(chromeOnWindows);
     const prompt = vi.fn(() =>
-      Promise.reject(new DOMException('No user gesture.', 'NotAllowedError')),
+      Promise.reject(new DOMException('The prompt can only be used once.', 'InvalidStateError')),
     );
     const event = Object.assign(new Event('beforeinstallprompt', { cancelable: true }), {
       prompt,
@@ -120,6 +142,17 @@ describe('install adapter: prompts, installation and hints', () => {
     expect(await install.prompt()).toBe('unavailable');
     expect(install.canPrompt()).toBe(false);
     expect(await install.prompt()).toBe('unavailable');
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('prompts once for a double tap: the second answers unavailable', async () => {
+    const install = createWebInstall(chromeOnWindows);
+    const { event, prompt } = promptEvent('accepted');
+    window.dispatchEvent(event);
+    expect(await Promise.all([install.prompt(), install.prompt()])).toEqual([
+      'accepted',
+      'unavailable',
+    ]);
     expect(prompt).toHaveBeenCalledTimes(1);
   });
 

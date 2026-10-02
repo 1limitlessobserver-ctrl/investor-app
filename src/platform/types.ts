@@ -93,7 +93,10 @@ export interface ShareAdapter {
 export interface InstallAdapter {
   /** True while the browser has offered an install prompt that has not been used. */
   canPrompt(): boolean;
-  /** Shows the browser's install prompt once; 'unavailable' when there is none to show. */
+  /**
+   * Shows the browser's install prompt once; 'unavailable' when there is none to show, a prompt is
+   * already showing, or the browser refuses (refused for want of a user gesture, it is kept).
+   */
   prompt(): Promise<'accepted' | 'dismissed' | 'unavailable'>;
   /** True when the app runs installed (standalone), or was installed during this visit. */
   isInstalled(): boolean;

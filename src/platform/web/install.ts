@@ -71,12 +71,18 @@ export function createWebInstall(
     async prompt() {
       const event = held;
       if (!event) return 'unavailable';
-      held = null; // an event prompts once
+      held = null; // an event prompts once, and a second tap meanwhile finds none
       notify();
       try {
         await event.prompt();
-      } catch {
-        return 'unavailable'; // the browser would not show it (no user gesture, for one)
+      } catch (error) {
+        // Refused for want of a user gesture, the event is still unused: keep it for a later tap.
+        // Any other failure (a prompt already shown, for one) spends it.
+        if (error instanceof DOMException && error.name === 'NotAllowedError') {
+          held ??= event;
+          notify();
+        }
+        return 'unavailable';
       }
       const { outcome } = await event.userChoice;
       return outcome === 'accepted' ? 'accepted' : 'dismissed';
