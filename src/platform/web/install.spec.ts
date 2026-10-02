@@ -107,6 +107,22 @@ describe('install adapter: prompts, installation and hints', () => {
     expect(prompt).toHaveBeenCalledTimes(1);
   });
 
+  it('answers unavailable when the browser refuses to show its prompt, and drops it', async () => {
+    const install = createWebInstall(chromeOnWindows);
+    const prompt = vi.fn(() =>
+      Promise.reject(new DOMException('No user gesture.', 'NotAllowedError')),
+    );
+    const event = Object.assign(new Event('beforeinstallprompt', { cancelable: true }), {
+      prompt,
+      userChoice: new Promise(() => {}), // never answered: no prompt was shown
+    });
+    window.dispatchEvent(event);
+    expect(await install.prompt()).toBe('unavailable');
+    expect(install.canPrompt()).toBe(false);
+    expect(await install.prompt()).toBe('unavailable');
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
   it('tells listeners of a prompt, its use and an installation until they leave', async () => {
     const install = createWebInstall(chromeOnWindows);
     const listener = vi.fn();

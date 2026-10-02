@@ -59,7 +59,11 @@ export function createWebInstall(
       if (!event) return 'unavailable';
       held = null; // an event prompts once
       notify();
-      await event.prompt();
+      try {
+        await event.prompt();
+      } catch {
+        return 'unavailable'; // the browser would not show it (no user gesture, for one)
+      }
       const { outcome } = await event.userChoice;
       return outcome === 'accepted' ? 'accepted' : 'dismissed';
     },
