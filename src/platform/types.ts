@@ -77,7 +77,8 @@ export interface NotificationsAdapter {
   subscribe(vapidPublicKey: string): Promise<PushSubscriptionInput>;
   /**
    * Ends the push subscription and answers the endpoint it had, for /push/unsubscribe; null when
-   * there is none, or no service worker with push to hold one.
+   * there is none, or no service worker with push to hold one. Rejects when the lookup of the
+   * worker fails.
    */
   unsubscribe(): Promise<string | null>;
   /** Shows a notification with the app's icon and badge; rejects where no worker is registered. */

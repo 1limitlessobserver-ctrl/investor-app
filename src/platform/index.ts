@@ -16,13 +16,10 @@ export const platform: Platform = {
   storage,
   lock: createLock({ storage, rpId: location.hostname, origin: location.origin }),
   notifications: createWebNotifications({
-    // No service worker container outside a secure context, so no push. getRegistration(), not
-    // `ready`, which never settles while no worker is registered.
+    // No service worker container outside a secure context, so no push. getRegistration()
+    // answers undefined while no worker is registered, where `ready` would never settle.
     registration: navigator.serviceWorker
-      ? () =>
-          navigator.serviceWorker
-            .getRegistration()
-            .then((r) => r ?? Promise.reject(new Error('No service worker is registered.')))
+      ? () => navigator.serviceWorker.getRegistration()
       : undefined,
   }),
   share: createWebShare(),

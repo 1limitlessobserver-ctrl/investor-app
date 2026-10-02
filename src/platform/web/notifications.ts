@@ -15,12 +15,16 @@ const BADGE = '/icons/badge-96.png';
 /** The parts of the Notification API used here; absent where the browser has none. */
 type NotificationApi = Pick<typeof Notification, 'permission' | 'requestPermission'>;
 
+/** Resolves the app's service worker registration, or undefined when none is registered. */
+export type RegistrationSource = () => Promise<ServiceWorkerRegistration | undefined>;
+
 /**
- * `registration` resolves the app's service worker registration, or rejects when there is none:
- * then unsubscribe() answers null, and subscribe() and show() reject with its error.
+ * Without a registered worker, unsubscribe() answers null, and subscribe() and show() reject with
+ * `Error('No service worker is registered.')`. A lookup that fails rejects all three with its
+ * error. Without `registration` there is no push at all.
  */
 export function createWebNotifications(
-  opts: { registration?: (() => Promise<ServiceWorkerRegistration>) | undefined } = {},
+  opts: { registration?: RegistrationSource | undefined } = {},
 ): NotificationsAdapter {
   const { registration } = opts;
   /** The subscription subscribe() last handed over, for unsubscribe() to end. */
@@ -32,9 +36,11 @@ export function createWebNotifications(
     return registration && 'PushManager' in globalThis ? api : undefined;
   }
 
-  function serviceWorker(): Promise<ServiceWorkerRegistration> {
+  async function serviceWorker(): Promise<ServiceWorkerRegistration> {
     if (!registration) throw new Error(UNSUPPORTED);
-    return registration();
+    const worker = await registration();
+    if (!worker) throw new Error('No service worker is registered.');
+    return worker;
   }
 
   return {
@@ -70,8 +76,8 @@ export function createWebNotifications(
 
     async unsubscribe() {
       if (!registration) return null;
-      // Without a service worker there is no subscription to end.
-      const worker = await registration().catch(() => null);
+      // No worker, or one without push, holds no subscription to end.
+      const worker = await registration();
       if (!worker?.pushManager) return null;
       // The browser's own answer covers a subscription made before this page loaded.
       const subscription = (await worker.pushManager.getSubscription()) ?? made;

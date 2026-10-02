@@ -253,15 +253,23 @@ describe('web notifications: permission, subscriptions and local notifications',
     }
   });
 
-  it('answers null from unsubscribe, and passes the error on, without a worker', async () => {
+  it('answers null from unsubscribe, and rejects the rest, with no worker registered', async () => {
     notificationApi('granted');
-    const noWorker = () => Promise.reject(new Error('No service worker is registered.'));
-    const n = createWebNotifications({ registration: noWorker });
+    const n = createWebNotifications({ registration: () => Promise.resolve(undefined) });
     expect(await n.unsubscribe()).toBeNull();
     await expect(n.subscribe(vapidKey)).rejects.toThrow('No service worker is registered.');
     await expect(n.show({ title: 'Deposit received' })).rejects.toThrow(
       'No service worker is registered.',
     );
+  });
+
+  it('passes on a failure to look the worker up, from every call', async () => {
+    notificationApi('granted');
+    const failure = new DOMException('The document is in an invalid state.', 'InvalidStateError');
+    const n = createWebNotifications({ registration: () => Promise.reject(failure) });
+    await expect(n.unsubscribe()).rejects.toBe(failure);
+    await expect(n.subscribe(vapidKey)).rejects.toBe(failure);
+    await expect(n.show({ title: 'Deposit received' })).rejects.toBe(failure);
   });
 
   it('answers null when there is no subscription to end', async () => {

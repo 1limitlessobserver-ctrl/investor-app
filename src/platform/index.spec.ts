@@ -10,13 +10,10 @@ async function freshPlatform() {
 }
 
 /** A service worker container; `ready` never settles, as without a worker it never does. */
-function serviceWorkerContainer(registration: unknown) {
+function serviceWorkerContainer(getRegistration: () => Promise<unknown>) {
   Object.defineProperty(navigator, 'serviceWorker', {
     configurable: true,
-    value: {
-      getRegistration: () => Promise.resolve(registration),
-      ready: new Promise(() => {}),
-    },
+    value: { getRegistration, ready: new Promise(() => {}) },
   });
 }
 
@@ -36,7 +33,7 @@ describe('the web platform', () => {
   it('never waits for a service worker that is not registered', async () => {
     vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
     vi.stubGlobal('PushManager', class PushManager {});
-    serviceWorkerContainer(undefined);
+    serviceWorkerContainer(() => Promise.resolve(undefined));
     const { notifications } = await freshPlatform();
     expect(notifications.permission()).toBe('granted');
     await expect(notifications.subscribe(vapidKey)).rejects.toThrow(
@@ -48,10 +45,21 @@ describe('the web platform', () => {
     expect(await notifications.unsubscribe()).toBeNull();
   });
 
+  it('passes on a failure to look the service worker up', async () => {
+    vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
+    vi.stubGlobal('PushManager', class PushManager {});
+    const failure = new DOMException('The document is in an invalid state.', 'InvalidStateError');
+    serviceWorkerContainer(() => Promise.reject(failure));
+    const { notifications } = await freshPlatform();
+    await expect(notifications.unsubscribe()).rejects.toBe(failure);
+    await expect(notifications.subscribe(vapidKey)).rejects.toBe(failure);
+    await expect(notifications.show({ title: 'Deposit received' })).rejects.toBe(failure);
+  });
+
   it('shows notifications through the registered service worker', async () => {
     vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
     const showNotification = vi.fn(() => Promise.resolve());
-    serviceWorkerContainer({ showNotification });
+    serviceWorkerContainer(() => Promise.resolve({ showNotification }));
     const { notifications } = await freshPlatform();
     await notifications.show({ title: 'Deposit received' });
     expect(showNotification).toHaveBeenCalledWith('Deposit received', {
