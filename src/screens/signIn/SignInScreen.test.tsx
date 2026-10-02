@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MobileApiError } from '../../api/MobileApiError';
 import { appConfig } from '../../session/appConfig';
@@ -48,6 +48,61 @@ describe('SignInScreen', () => {
     expect(router.state.location.search).toBe('?from=link');
   });
 
+  it('signs in with an email and password alone, where no second step is asked', async () => {
+    const user = userEvent.setup();
+    const { api } = renderWithApp({ route: '/sign-in' });
+    const login = vi.spyOn(api, 'login');
+    await user.type(await screen.findByLabelText('Email'), '  investor@sample.app ');
+    await user.type(screen.getByLabelText('Password'), 'anything');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await user.click(await screen.findByRole('button', { name: 'Not now' })); // the lock offer
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    // The email goes without the spaces around it (an email field drops them), the password as is.
+    expect(login).toHaveBeenCalledWith({ email: 'investor@sample.app', password: 'anything' });
+  });
+
+  it.each([
+    ['an email', '', 'anything', 'Enter your email.'],
+    ['a password', 'investor@sample.app', '', 'Enter your password.'],
+  ])('asks for %s before asking the platform', async (_, email, password, asked) => {
+    const user = userEvent.setup();
+    const { api } = renderWithApp({ route: '/sign-in' });
+    const login = vi.spyOn(api, 'login');
+    if (email !== '') await user.type(await screen.findByLabelText('Email'), email);
+    if (password !== '') await user.type(await screen.findByLabelText('Password'), password);
+    await user.click(await screen.findByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(asked);
+    expect(login).not.toHaveBeenCalled();
+  });
+
+  it('puts focus in the code box, and sends the six digits without spaces', async () => {
+    const user = userEvent.setup();
+    const { api } = renderWithApp({ route: '/sign-in' });
+    const twoFactor = vi.spyOn(api, 'loginTwoFactor');
+    await user.type(await screen.findByLabelText('Email'), 'investor+2fa@sample.app');
+    await user.type(screen.getByLabelText('Password'), 'anything');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    const code = await screen.findByLabelText('Six-digit code');
+    expect(code).toHaveFocus();
+    fireEvent.change(code, { target: { value: '123 456' } }); // pasted with a space
+    await user.click(screen.getByRole('button', { name: 'Verify' }));
+    await waitFor(() =>
+      expect(twoFactor).toHaveBeenCalledWith(expect.objectContaining({ code: '123456' })),
+    );
+  });
+
+  it('goes back from the code to the password', async () => {
+    const user = userEvent.setup();
+    renderWithApp({ route: '/sign-in' });
+    await user.type(await screen.findByLabelText('Email'), 'investor+2fa@sample.app');
+    await user.type(screen.getByLabelText('Password'), 'anything');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByLabelText('Six-digit code');
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Six-digit code')).toBeNull();
+  });
+
   it('takes a backup code instead of the six digits', async () => {
     const user = userEvent.setup();
     const { api } = renderWithApp({ route: '/sign-in' });
@@ -56,7 +111,7 @@ describe('SignInScreen', () => {
     await user.type(screen.getByLabelText('Password'), 'anything');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     await user.click(await screen.findByRole('button', { name: 'Use a backup code' }));
-    await user.type(screen.getByLabelText('Backup code'), 'SMPL-0001');
+    await user.type(screen.getByLabelText('Backup code'), '  SMPL-0001 '); // spaces around it
     await user.click(screen.getByRole('button', { name: 'Verify' }));
     await waitFor(() =>
       expect(twoFactor).toHaveBeenCalledWith(
@@ -200,10 +255,10 @@ describe('SignInScreen', () => {
     const forgot = await screen.findByRole('link', { name: 'Forgot password?' });
     expect(forgot).toHaveAttribute('href', 'https://example.com/forgot-password');
     expect(forgot).toHaveAttribute('target', '_blank');
+    expect(forgot).toHaveAttribute('rel', 'noopener noreferrer');
     expect(forgot).toHaveAccessibleDescription('Opens in a new tab');
-    expect(screen.getByRole('link', { name: 'Create account' })).toHaveAttribute(
-      'href',
-      'https://example.com/register',
-    );
+    const register = screen.getByRole('link', { name: 'Create account' });
+    expect(register).toHaveAttribute('href', 'https://example.com/register');
+    expect(register).toHaveAttribute('rel', 'noopener noreferrer');
   });
 });
