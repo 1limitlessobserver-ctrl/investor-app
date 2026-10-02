@@ -86,7 +86,12 @@ export interface NotificationsAdapter {
 }
 
 export interface ShareAdapter {
-  /** Offers the files to the system share sheet where it takes files, else downloads them. */
+  /**
+   * Offers the files to the system share sheet where it takes files, else downloads them. Call it
+   * inside the investor's tap with the files already built: the browser shares only during that
+   * tap's activation, and once it has lapsed the share rejects (NotAllowedError) and the files are
+   * downloaded instead. 'cancelled' when the investor closes the sheet, or one is already open.
+   */
   files(files: File[], title: string): Promise<'shared' | 'downloaded' | 'cancelled'>;
 }
 

@@ -76,6 +76,16 @@ describe('web share: the download fallback', () => {
     expect(seen).toEqual([]);
   });
 
+  it('downloads nothing while a share sheet is already open: a cancel too', async () => {
+    const share = vi.fn(() =>
+      Promise.reject(new DOMException('A share is already in progress.', 'InvalidStateError')),
+    );
+    shareApi({ canShare: () => true, share });
+    const { seen } = downloads();
+    expect(await createWebShare().files([pdf], 'Statement')).toBe('cancelled');
+    expect(seen).toEqual([]);
+  });
+
   it('downloads each file under its own name, and revokes its URL afterwards', async () => {
     vi.useFakeTimers();
     const canShare = vi.fn(() => false);

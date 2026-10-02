@@ -1,6 +1,6 @@
 // Sharing files from the app, such as a statement PDF or a CSV export: the system share sheet
 // where the browser can share files, and a download of each file everywhere else, or when the
-// sheet fails for any reason other than the investor closing it.
+// sheet fails for any reason other than the investor closing it or a sheet already being open.
 
 import type { ShareAdapter } from '../types';
 
@@ -15,8 +15,10 @@ export function createWebShare(): ShareAdapter {
           await navigator.share({ files, title });
           return 'shared';
         } catch (error) {
-          // Closing the sheet is an AbortError; any other failure falls back to a download.
-          if (error instanceof DOMException && error.name === 'AbortError') return 'cancelled';
+          // Closing the sheet is an AbortError, and a sheet already open (a second tap) an
+          // InvalidStateError; any other failure falls back to a download.
+          const cancelled = ['AbortError', 'InvalidStateError'];
+          if (error instanceof DOMException && cancelled.includes(error.name)) return 'cancelled';
         }
       }
       files.forEach(download);
