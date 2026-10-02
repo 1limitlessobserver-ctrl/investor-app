@@ -9,12 +9,22 @@ export function signInPath(location: { pathname: string; search: string; hash: s
   return `${SIGN_IN}?next=${encodeURIComponent(next)}`;
 }
 
-/** Where to go after signing in: `next` when it is a path in the app, else home. */
-export function nextPathFrom(next: string | null): string {
-  if (next === null || !next.startsWith('/') || next.startsWith('//') || next.includes('\\')) {
+/**
+ * Where to go after signing in: `next` when it is an address in the app, else home. It is read as
+ * the browser reads an address (which drops tabs and line breaks and takes `\` for `/`), against
+ * the page's own origin, and kept only when it stays there. Sign-in itself leads home: routes
+ * match without regard to case.
+ */
+export function nextPathFrom(next: string | null, origin = window.location.origin): string {
+  if (next === null || next === '') return '/';
+  let url: URL;
+  try {
+    url = new URL(next, origin);
+  } catch {
     return '/';
   }
-  return next === SIGN_IN || next.startsWith(`${SIGN_IN}?`) || next.startsWith(`${SIGN_IN}/`)
-    ? '/'
-    : next;
+  if (url.origin !== origin) return '/';
+  const path = url.pathname.toLowerCase();
+  if (path === SIGN_IN || path.startsWith(`${SIGN_IN}/`)) return '/';
+  return `${url.pathname}${url.search}${url.hash}`;
 }
