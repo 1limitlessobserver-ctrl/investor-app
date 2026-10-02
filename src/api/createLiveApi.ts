@@ -93,15 +93,19 @@ type Sent = {
   readonly refreshToken: string;
 };
 
-/** What a refresh gives: the new pair, and the key of the sign-in whose session it renewed. */
-type Renewed = { readonly sessionKey: string; readonly tokens: MobileTokens };
+/** What a refresh gives: the new pair, under the key of the sign-in whose session it renewed. */
+type Renewed = MobileTokens & { readonly sessionKey: string };
 
-/** The tokens of a refreshed session, to send a request with. */
-const sentOf = ({ sessionKey, tokens }: Renewed): Sent => ({
-  sessionKey,
-  accessToken: tokens.accessToken,
-  refreshToken: tokens.refreshToken,
-});
+/**
+ * The tokens a request goes out with from a session, a stored one or one a refresh renewed: null
+ * while it has no access token to send.
+ */
+const sentOf = (session: StoredSession): Sent | null => {
+  const accessToken = textOf(session.accessToken);
+  return accessToken === undefined
+    ? null
+    : { sessionKey: session.sessionKey, accessToken, refreshToken: session.refreshToken };
+};
 
 /** How the app names itself on every request. createLiveApi refuses one it cannot send. */
 export type AppIdentity = {
@@ -345,18 +349,18 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     }
     // A 2xx answer must be what the route answers; anything else (a host's page, a proxy's empty
     // answer) did not come from it, so the action may not have happened.
-    const unlike = () => new MobileApiError('server_error', res.status);
+    const notTheRouteAnswer = () => new MobileApiError('server_error', res.status);
     if (options.as === 'text') {
-      if (!STATEMENT_TYPE.test(res.headers.get('Content-Type') ?? '')) throw unlike();
+      if (!STATEMENT_TYPE.test(res.headers.get('Content-Type') ?? '')) throw notTheRouteAnswer();
       return raw as T;
     }
     const answer = jsonOf(raw);
     if (options.as === 'none') {
       // Every route whose answer the interface drops answers `{ ok: true, ...}`.
-      if (!isRecord(answer) || answer.ok !== true) throw unlike();
+      if (!isRecord(answer) || answer.ok !== true) throw notTheRouteAnswer();
       return undefined as T;
     }
-    if (!(options.check ?? isRecord)(answer)) throw unlike();
+    if (!(options.check ?? isRecord)(answer)) throw notTheRouteAnswer();
     return answer as T;
   }
 
@@ -370,19 +374,8 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     const route = ROUTES[name];
     const gen0 = generation;
     const stored = isPublic(name) ? null : await read();
-    let sent: Sent | null = null;
-    if (stored !== null) {
-      const access = textOf(stored.accessToken);
-      // Only the refresh token survives a restart: there is no access token to send yet.
-      sent =
-        access === undefined
-          ? await refreshedFirst(stored, gen0)
-          : {
-              sessionKey: stored.sessionKey,
-              accessToken: access,
-              refreshToken: stored.refreshToken,
-            };
-    }
+    // Only the refresh token survives a restart: with no access token to send yet, refresh first.
+    const sent = stored === null ? null : (sentOf(stored) ?? (await refreshedFirst(stored, gen0)));
     try {
       return await send<T>(route, options, sent?.accessToken);
     } catch (e) {
@@ -420,10 +413,8 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     if (generation !== gen0 || now === null || now.sessionKey !== sent.sessionKey) throw e;
     // This tab stored a newer pair since the request went out. A refresh token alone (no access
     // token) is not a token to send, so it falls through to refreshing with it.
-    const newer = textOf(now.accessToken);
-    if (newer !== undefined && newer !== sent.accessToken) {
-      return { sessionKey: now.sessionKey, accessToken: newer, refreshToken: now.refreshToken };
-    }
+    const newer = sentOf(now);
+    if (newer !== null && newer.accessToken !== sent.accessToken) return newer;
     // Another tab refreshed this same sign-in, so this tab's access token is stale whatever the
     // code says; or the access token expired. Either way: refresh with the stored token.
     if (now.refreshToken !== sent.refreshToken || e.code === 'unauthorized') {
@@ -446,9 +437,10 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     refresh: Promise<Renewed>,
   ): Promise<Sent> {
     const renewed = await refresh;
-    if (renewed.sessionKey === sent.sessionKey) {
+    const retry = sentOf(renewed);
+    if (retry !== null && renewed.sessionKey === sent.sessionKey) {
       const now = await read(e);
-      if (generation === gen0 && now?.sessionKey === sent.sessionKey) return sentOf(renewed);
+      if (generation === gen0 && now?.sessionKey === sent.sessionKey) return retry;
     }
     throw e;
   }
@@ -461,10 +453,11 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
    */
   async function refreshedFirst(stored: StoredSession, gen0: number): Promise<Sent> {
     const renewed = await refreshOnce();
-    if (generation !== gen0 || renewed.sessionKey !== stored.sessionKey) {
+    const first = sentOf(renewed);
+    if (first === null || generation !== gen0 || renewed.sessionKey !== stored.sessionKey) {
       throw new MobileApiError('unauthorized', 401);
     }
-    return sentOf(renewed);
+    return first;
   }
 
   /**
@@ -566,7 +559,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       // callers get it all the same, and the store's failure is reported.
       notify(onStorageError, error);
     }
-    return { sessionKey: stored.sessionKey, tokens: fresh };
+    return { ...fresh, sessionKey: stored.sessionKey };
   }
 
   /** For a method that resolves the JSON the platform answers. */
@@ -587,7 +580,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     login: (body) => call('login', { body, check: isLoginResult }),
     loginTwoFactor: async (body) =>
       pairOf(await call('loginTwoFactor', { body, check: isTokenPair })),
-    refresh: async () => (await refreshOnce()).tokens,
+    refresh: async () => pairOf(await refreshOnce()),
     /**
      * Ends the session on this device first, then tells the platform once with the tokens it read,
      * whatever that request meets. A store that could not be read or cleared makes it reject
