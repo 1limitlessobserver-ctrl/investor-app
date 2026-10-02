@@ -57,8 +57,9 @@ function isBrand(value: unknown): value is Brand {
 }
 
 /**
- * The last brand the platform sent, kept with the app version that kept it: another version may
- * read a brand differently, so it starts afresh.
+ * The last brand the platform sent, kept with the app version and the platform that kept it:
+ * another version may read a brand differently, and another platform is another company (or the
+ * sample), so either starts afresh.
  */
 export const brandCache = {
   read(): Brand | null {
@@ -66,14 +67,21 @@ export const brandCache = {
     if (raw === null) return null;
     try {
       const kept: unknown = JSON.parse(raw);
-      if (!isRecord(kept) || kept.appVersion !== appConfig.appVersion) return null;
+      if (
+        !isRecord(kept) ||
+        kept.appVersion !== appConfig.appVersion ||
+        kept.platformUrl !== appConfig.platformUrl
+      ) {
+        return null;
+      }
       return isBrand(kept.brand) ? kept.brand : null;
     } catch {
       return null;
     }
   },
   write(brand: Brand): void {
-    writeItem(BRAND_KEY, JSON.stringify({ appVersion: appConfig.appVersion, brand }));
+    const { appVersion, platformUrl } = appConfig;
+    writeItem(BRAND_KEY, JSON.stringify({ appVersion, platformUrl, brand }));
   },
 };
 

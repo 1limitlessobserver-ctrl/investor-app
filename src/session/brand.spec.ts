@@ -20,7 +20,22 @@ describe('brandCache', () => {
   });
 
   it('forgets a brand cached by another version of the app', () => {
-    localStorage.setItem('app.brand', JSON.stringify({ appVersion: '0.0.0-old', brand: brand() }));
+    localStorage.setItem(
+      'app.brand',
+      JSON.stringify({ appVersion: '0.0.0-old', platformUrl: '', brand: brand() }),
+    );
+    expect(brandCache.read()).toBeNull();
+  });
+
+  it('forgets a brand cached from another platform', () => {
+    localStorage.setItem(
+      'app.brand',
+      JSON.stringify({
+        appVersion: appConfig.appVersion,
+        platformUrl: 'https://other.example.com',
+        brand: brand(),
+      }),
+    );
     expect(brandCache.read()).toBeNull();
   });
 
@@ -28,7 +43,7 @@ describe('brandCache', () => {
     const cached = (value: unknown) =>
       localStorage.setItem(
         'app.brand',
-        JSON.stringify({ appVersion: appConfig.appVersion, brand: value }),
+        JSON.stringify({ appVersion: appConfig.appVersion, platformUrl: '', brand: value }),
       );
     for (const broken of [
       null,
