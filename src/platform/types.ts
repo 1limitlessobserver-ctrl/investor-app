@@ -4,7 +4,10 @@
 
 import type { PushSubscriptionInput } from '../api/types';
 
-/** Secret-grade key-value storage: every value is encrypted at rest on this device. */
+/**
+ * Key-value storage for secrets, sealed on this device. On the web that protects a value copied
+ * out of storage, not a copy of the whole browser profile (web/storage.ts says how).
+ */
 export interface SecureStorage {
   /** The value, or null when there is none or it can no longer be decrypted. */
   get(key: string): Promise<string | null>;

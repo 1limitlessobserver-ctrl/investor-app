@@ -50,8 +50,9 @@ export function createLock(opts: {
   // Absent outside a secure context, and in test environments.
   const credentials: CredentialsContainer | undefined = opts.credentials ?? navigator.credentials;
 
-  // Changes to the stored enrolments run one at a time, so that two checks of the passcode made
-  // together each count, and none writes back a count over a newer passcode.
+  // Within this page, changes to the stored enrolments run one at a time, so that two checks of
+  // the passcode made together each count, and none writes back a count over a newer passcode.
+  // Another tab has its own queue.
   let queue: Promise<unknown> = Promise.resolve();
   function exclusive<T>(task: () => Promise<T>): Promise<T> {
     const run = queue.then(task);

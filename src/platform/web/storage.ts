@@ -1,10 +1,15 @@
 // Secure storage for the web. Each value is sealed with AES-GCM under one 256-bit key generated on
-// this device as non-extractable: the page can use it, but no script can read or export its bytes,
-// so a copied value cannot be decrypted anywhere else. The key is kept in IndexedDB (idb-keyval:
-// database `investor-app`, store `secure`) under `secure:key`, and each value under
-// `secure:<name>` as { iv, data }: a fresh random 12-byte IV and the ciphertext, sealed with its
-// name as additional data so it cannot be moved to another name. A value that no longer decrypts
-// (its key was lost, or it was changed) reads as null and is removed.
+// this device as non-extractable: scripts can use the key but cannot read or export its bytes. The
+// browser still keeps those bytes in this profile (Chromium and Firefox persist them with the
+// IndexedDB entry), so the sealing protects a value copied out of storage and stops a script from
+// carrying the key away; it does not protect against a copy of the whole browser profile.
+//
+// The key is kept in IndexedDB (idb-keyval: database `investor-app`, store `secure`) under
+// `secure:key`, committed in one transaction so that instances starting together keep one key.
+// Each value is kept under `secure:<name>` as { iv, data }: a fresh random 12-byte IV and the
+// ciphertext, sealed with its name as additional data so it cannot be moved to another name. An
+// instance runs its calls one at a time, in call order. A value that no longer decrypts (its key
+// was lost, or it was changed) reads as null and is removed.
 
 import { createStore, del, get, keys, set, update } from 'idb-keyval';
 import type { SecureStorage } from '../types';
