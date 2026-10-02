@@ -1,5 +1,5 @@
 import type { ManifestOptions } from 'vite-plugin-pwa';
-import type { CompanyConfig } from './company-config';
+import type { CompanyConfig } from './company-config.ts';
 
 export function buildManifest(config: CompanyConfig): Partial<ManifestOptions> {
   return {

@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
-import { loadCompanyConfig } from './scripts/company-config';
-import { buildManifest } from './scripts/manifest';
+import { loadCompanyConfig } from './scripts/company-config.ts';
+import { buildManifest } from './scripts/manifest.ts';
 
 /** The package.json version: X-App-Version on every request, and the update screen's check. */
 const appVersion = (
@@ -51,6 +51,9 @@ export default defineConfig({
           'manifest.webmanifest',
         ],
         maximumFileSizeToCacheInBytes: 4_000_000,
+        // A classic script, as the worker is registered (and Vite 8 takes this build without the
+        // deprecated option the plugin's ES build sets).
+        rollupFormat: 'iife',
       },
       devOptions: { enabled: false },
     }),
