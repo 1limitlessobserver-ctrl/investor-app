@@ -154,6 +154,17 @@ describe('web notifications: permission, subscriptions and local notifications',
     }
   });
 
+  it('answers null from unsubscribe, and passes the error on, without a worker', async () => {
+    notificationApi('granted');
+    const noWorker = () => Promise.reject(new Error('No service worker is registered.'));
+    const n = createWebNotifications({ registration: noWorker });
+    expect(await n.unsubscribe()).toBeNull();
+    await expect(n.subscribe(vapidKey)).rejects.toThrow('No service worker is registered.');
+    await expect(n.show({ title: 'Deposit received' })).rejects.toThrow(
+      'No service worker is registered.',
+    );
+  });
+
   it('answers null when there is no subscription to end', async () => {
     const { registration } = fakeRegistration(null);
     expect(await createWebNotifications({ registration }).unsubscribe()).toBeNull();

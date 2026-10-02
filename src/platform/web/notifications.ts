@@ -13,7 +13,10 @@ const BADGE = '/icons/badge-96.png';
 /** The parts of the Notification API used here; absent where the browser has none. */
 type NotificationApi = Pick<typeof Notification, 'permission' | 'requestPermission'>;
 
-/** `registration` resolves the app's service worker registration: navigator.serviceWorker.ready. */
+/**
+ * `registration` resolves the app's service worker registration, or rejects when there is none:
+ * then unsubscribe() answers null, and subscribe() and show() reject with its error.
+ */
 export function createWebNotifications(
   opts: { registration?: (() => Promise<ServiceWorkerRegistration>) | undefined } = {},
 ): NotificationsAdapter {
@@ -57,8 +60,11 @@ export function createWebNotifications(
 
     async unsubscribe() {
       if (!registration) return null;
+      // Without a service worker there is no subscription to end.
+      const worker = await registration().catch(() => null);
+      if (!worker) return null;
       // The browser's own answer covers a subscription made before this page loaded.
-      const subscription = (await (await registration()).pushManager.getSubscription()) ?? made;
+      const subscription = (await worker.pushManager.getSubscription()) ?? made;
       if (!subscription) return null;
       await subscription.unsubscribe();
       made = null;
