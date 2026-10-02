@@ -606,14 +606,41 @@ export function createSessionController(deps: SessionDeps) {
       try {
         await queryClient.cancelQueries({ queryKey: me.queryKey });
         await queryClient.fetchQuery({ ...me, staleTime: 0, retry: false, networkMode: 'always' });
-      } catch {
-        // The platform failed: the app opens on what it has. A revoked session has signed out
-        // through onSignedOut meanwhile.
+      } catch (error) {
+        // A session this device cannot read never opens: the cache's failure handler has already
+        // ended it. Any other failure opens on what the app has (a revoked session has ended
+        // through onSignedOut).
+        if (MobileApiError.is(error) && error.code === 'storage_error') return false;
+        reportProblem('unlocking: asking the platform', error);
       }
     }
     if (gen !== generation || state.status !== 'locked') return false;
+    // The store, as it is now: emptied or replaced by another tab unheard, it is followed instead.
+    if (live && !(await stillStored(gen))) return false;
     set({ status: 'signed-in', unlocking: IDLE });
     return true;
+  }
+
+  /**
+   * Whether the store still holds this tab's sign-in, read afresh before the app opens. Emptied or
+   * replaced, the store is followed; unreadable, the app stays locked (or, its key lost, signs in
+   * again). Also false once the session moved on.
+   */
+  async function stillStored(gen: number): Promise<boolean> {
+    let stored: string | null;
+    try {
+      stored = (await tokenStore.get())?.sessionKey ?? null;
+    } catch (error) {
+      if (gen !== generation) return false;
+      reportProblem('unlocking: reading the store', error);
+      if (isUnreadableKey(error)) await storageFailed(error);
+      else set({ unlocking: { busy: false, error: SESSION_COPY.checkFailed } });
+      return false;
+    }
+    if (gen !== generation || state.status !== 'locked') return false;
+    if (stored === sessionKey) return true;
+    follow();
+    return false;
   }
 
   // ---- Confirmations -----------------------------------------------------------------------

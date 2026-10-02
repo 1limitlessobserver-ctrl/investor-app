@@ -2396,3 +2396,161 @@ describe('AppSession: a look at the lock that fails', () => {
     expect(a.session.getSnapshot().notice).toBeNull();
   });
 });
+
+describe('AppSession: unlocking a live session', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A live tab, signed in with the device's own lock set up, then locked. */
+  async function lockedLiveTab(device: Platform) {
+    const a = openTab(device, liveOver(), createTokenStore(device.storage, { channel: null }));
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    await waitFor(() => expect(a.session.getSnapshot().lockSetup).not.toBeNull());
+    a.session.enrolDevice();
+    await waitFor(() => expect(a.session.getSnapshot().lockMethod).toBe('webauthn'));
+    a.session.lock();
+    expect(a.status()).toBe('locked');
+    const seen: string[] = [];
+    a.session.subscribe(() => seen.push(a.status()));
+    return { ...a, seen };
+  }
+
+  it.each([
+    ['signed out', 'signed-out'],
+    ['signed in again', 'locked'],
+  ] as const)('follows the store, never opening, when another tab %s unheard', async (_, then) => {
+    const device = fakePlatform();
+    const a = await lockedLiveTab(device);
+    await device.storage.remove('session'); // another tab signed out; this one never heard
+    if (then === 'locked')
+      await createTokenStore(device.storage, { channel: null }).start(pairOf(2));
+    a.queryClient.setQueryData(['live', 'dashboard'], { of: 'the first sign-in' });
+    expect(await a.session.unlock()).toBe(false);
+    await waitFor(() => expect(a.status()).toBe(then));
+    expect(a.seen).not.toContain('signed-in');
+    expect(a.queryClient.getQueryData(['live', 'dashboard'])).toBeUndefined();
+  });
+
+  /**
+   * The device's storage, with the store's reads from `armed()` on answered by `answer(n)` (n
+   * counts them from 1): a rejection, a promise to wait on, or undefined to read as usual.
+   */
+  function storeReads(device: Platform, answer: (n: number) => Promise<void> | undefined) {
+    let armed = false;
+    let n = 0;
+    const storage = {
+      ...device.storage,
+      get: async (key: string) => {
+        if (armed && key === 'session') await answer(++n);
+        return device.storage.get(key);
+      },
+    };
+    return { storage, arm: () => (armed = true), disarm: () => (armed = false) };
+  }
+
+  it('opens when the store still holds its sign-in', async () => {
+    const a = await lockedLiveTab(fakePlatform());
+    expect(await a.session.unlock()).toBe(true);
+    expect(a.status()).toBe('signed-in');
+  });
+
+  it.each([
+    ['its key is lost', () => Promise.reject(new Error(UNREADABLE)), true],
+    [
+      'a read fails once',
+      (n: number) => (n === 1 ? Promise.reject(new Error('disk error')) : undefined),
+      false,
+    ],
+  ])('never opens on a check that cannot read the session because %s', async (_, answer, lost) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    const reads = storeReads(device, answer);
+    const reset = vi.fn(() => {
+      reads.disarm(); // a new key: the store can be read again, empty
+      return device.storage.reset();
+    });
+    const a = await lockedLiveTab({ ...device, storage: { ...reads.storage, reset } });
+    reads.arm();
+    expect(await a.session.unlock()).toBe(false);
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    expect(a.seen).not.toContain('signed-in');
+    expect(reset).toHaveBeenCalledTimes(lost ? 1 : 0);
+  });
+
+  it.each([
+    ['cannot be read', new Error('disk error'), 'locked'],
+    ['has lost its key', new Error(UNREADABLE), 'signed-out'],
+  ] as const)('never opens when the store it reads again %s', async (_, failure, then) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    // The platform's check reads the store first (read 1); the second look fails.
+    const reads = storeReads(device, (n) => (n === 2 ? Promise.reject(failure) : undefined));
+    const reset = vi.fn(() => {
+      reads.disarm();
+      return device.storage.reset();
+    });
+    const a = await lockedLiveTab({ ...device, storage: { ...reads.storage, reset } });
+    reads.arm();
+    expect(await a.session.unlock()).toBe(false);
+    await waitFor(() => expect(a.status()).toBe(then));
+    expect(a.seen).not.toContain('signed-in');
+    if (then === 'locked') {
+      expect(a.session.getSnapshot().unlocking.error).toBe(
+        "The lock couldn't be checked. Try again.",
+      );
+    }
+  });
+
+  it.each([
+    ['the platform’s check fails', 1],
+    ['the store is read again', 2],
+  ])('never opens, nor complains, when %s during a sign-out', async (_, at) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    const held = gate();
+    const reads = storeReads(device, (n) =>
+      n === at ? held.opened.then(() => Promise.reject(new Error('disk error'))) : undefined,
+    );
+    const a = await lockedLiveTab({ ...device, storage: reads.storage });
+    reads.arm();
+    const unlocking = a.session.unlock();
+    await vi.advanceTimersByTimeAsync(20);
+    reads.disarm();
+    void a.session.signOut(); // the investor signs out meanwhile; the platform is slow to hear
+    held.release();
+    expect(await unlocking).toBe(false);
+    expect(a.session.getSnapshot().unlocking.error).toBeUndefined();
+  });
+
+  it('never opens when its second look at the store answers during a sign-out', async () => {
+    const device = fakePlatform();
+    const held = gate();
+    const reads = storeReads(device, (n) => (n === 2 ? held.opened : undefined));
+    const a = openTab(
+      { ...device, storage: reads.storage },
+      liveOver({ slowLogout: true }),
+      createTokenStore(reads.storage, { channel: null }),
+    );
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    await waitFor(() => expect(a.session.getSnapshot().lockSetup).not.toBeNull());
+    a.session.enrolDevice();
+    await waitFor(() => expect(a.session.getSnapshot().lockMethod).toBe('webauthn'));
+    a.session.lock();
+    reads.arm();
+    const unlocking = a.session.unlock();
+    await vi.advanceTimersByTimeAsync(20);
+    reads.disarm();
+    void a.session.signOut();
+    held.release();
+    expect(await unlocking).toBe(false);
+    expect(a.status()).toBe('locked');
+  });
+});
