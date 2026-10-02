@@ -140,6 +140,7 @@ export function SignInScreen() {
   }
 
   const name = brand?.name ?? (appConfig.productName || 'Sign in');
+  const brandFailed = brand === null && brandQuery.isError;
   const links = linksFor(brand);
   const onPasswordStep = step.name === 'password';
   // Signing in: a message the platform tied to neither field is the form's one alert. The code
@@ -184,16 +185,17 @@ export function SignInScreen() {
             {name}
           </h1>
           {brand?.tagline && <p className={styles.tagline}>{brand.tagline}</p>}
-          {brand === null && brandQuery.isError && (
-            <div className={styles.unbranded}>
-              <p role="status" className={styles.lead}>
-                The company&apos;s details couldn&apos;t be loaded.
-              </p>
+          <div className={styles.unbranded} data-shown={brandFailed || undefined}>
+            <StatusLine
+              className={styles.lead}
+              text={brandFailed ? "The company's details couldn't be loaded." : null}
+            />
+            {brandFailed && (
               <Button variant="outline" size="sm" onClick={() => void brandQuery.refetch()}>
                 Try again
               </Button>
-            </div>
-          )}
+            )}
+          </div>
         </header>
 
         <Panel className={styles.panel} padding="lg" aria-labelledby={formTitleId}>
@@ -327,4 +329,16 @@ export function SignInScreen() {
       </span>
     </main>
   );
+}
+
+/**
+ * A status line that is always in the page, so what fills it is announced: the text goes in after
+ * the line does (a live region that arrives with its text is not read out).
+ */
+function StatusLine({ text, className }: { text: string | null; className?: string | undefined }) {
+  const line = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (line.current) line.current.textContent = text ?? '';
+  }, [text]);
+  return <p ref={line} role="status" className={className} />;
 }

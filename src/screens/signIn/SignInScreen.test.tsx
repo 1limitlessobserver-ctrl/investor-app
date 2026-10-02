@@ -165,6 +165,44 @@ describe('SignInScreen', () => {
     expect(within(screen.getByRole('region', { name: 'Sign in' })).queryByRole('alert')).toBeNull();
   });
 
+  /** The sign-in screen's header: its title's. */
+  async function header() {
+    const title = await screen.findByRole('heading', { level: 1 });
+    const found = title.closest('header');
+    if (found === null) throw new Error('The title is not in a header.');
+    return found;
+  }
+
+  it('keeps a status line in its header, empty while the company’s details are in', async () => {
+    renderWithApp({ route: '/sign-in' });
+    expect(within(await header()).getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('fills its status line once the line is in the page, so it is announced', async () => {
+    const filled: string[] = []; // text put into a status line already in the page
+    const watch = new MutationObserver((records) => {
+      for (const { target, addedNodes } of records) {
+        const line = target instanceof Element && target.getAttribute('role') === 'status';
+        if (line && addedNodes.length > 0) filled.push(target.textContent ?? '');
+      }
+    });
+    watch.observe(document.body, { childList: true, subtree: true, characterData: true });
+    renderWithApp({
+      route: '/sign-in',
+      mode: 'live',
+      live: {
+        answer: (path) =>
+          path === '/brand' ? Promise.reject(new TypeError('Failed to fetch')) : undefined,
+      },
+    });
+    const line = within(await header()).getByRole('status');
+    await waitFor(() =>
+      expect(line).toHaveTextContent("The company's details couldn't be loaded."),
+    );
+    await waitFor(() => expect(filled).toContain("The company's details couldn't be loaded."));
+    watch.disconnect();
+  });
+
   it('says the company’s details did not load, and tries again', async () => {
     const user = userEvent.setup();
     let reachable = false;
@@ -186,6 +224,8 @@ describe('SignInScreen', () => {
       await screen.findByRole('heading', { level: 1, name: 'Everest Reserve' }),
     ).toBeInTheDocument();
     expect(screen.queryByText("The company's details couldn't be loaded.")).toBeNull();
+    expect(within(await header()).getByRole('status')).toBeEmptyDOMElement();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
   });
 
   it('links to the platform’s own pages while the company’s details are missing', async () => {
