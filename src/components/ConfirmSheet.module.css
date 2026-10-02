@@ -23,6 +23,7 @@
 }
 
 .reason {
+  margin: 0;
   font-size: var(--text-lg);
   line-height: 1.45;
   color: var(--foreground);

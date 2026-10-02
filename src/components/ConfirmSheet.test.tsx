@@ -23,9 +23,39 @@ describe('ConfirmSheet', () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it('shows the amount formatted in its currency', () => {
+  it('shows the amount formatted in its currency, and reads it before the reason', () => {
     renderConfirm({ reason: 'Invest in Solar Yield', amountCents: 123456, currency: 'EUR' });
-    expect(screen.getByRole('dialog', { name: 'Confirm' })).toHaveTextContent('€1,234.56');
+    const dialog = screen.getByRole('dialog', { name: 'Confirm' });
+    expect(dialog).toHaveTextContent('€1,234.56');
+    expect(dialog).toHaveAccessibleDescription('€1,234.56 Invest in Solar Yield');
+  });
+
+  it.each([
+    ['no lock', {}],
+    ['the device prompt', { method: 'webauthn' as const }],
+    ['an offer to set up a lock', { needsSetup: true, onSetUpLock: () => {} }],
+  ])('starts on Cancel with %s, so a held Enter never confirms', async (_, props) => {
+    const { onConfirm, onCancel } = renderConfirm({ amountCents: 100000, ...props });
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await userEvent.setup().keyboard('{Enter}');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('starts in the code boxes when the lock is a passcode', () => {
+    renderConfirm({ method: 'passcode' });
+    expect(screen.getByLabelText('Passcode')).toHaveFocus();
+  });
+
+  it('resolves with Cancel on a press outside the sheet', async () => {
+    const { onCancel, onConfirm } = renderConfirm();
+    const overlay = document.querySelector('.overlay');
+    if (!(overlay instanceof HTMLElement)) throw new Error('The sheet has no overlay.');
+    // Radix starts listening for presses outside on the next task after opening.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await userEvent.setup().click(overlay);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it('resolves with Cancel, Escape, and never while closed', async () => {

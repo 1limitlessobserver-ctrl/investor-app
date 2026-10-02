@@ -1,7 +1,8 @@
+import { useId, useRef } from 'react';
 import { format } from '../lib/format';
 import type { LockMethod } from '../platform/types';
 import { Button } from './form/Button';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from './form/Sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from './form/Sheet';
 import { attemptsLeftMessage } from './lockMessages';
 import { PasscodeForm } from './PasscodeForm';
 import styles from './ConfirmSheet.module.css';
@@ -39,8 +40,10 @@ export interface ConfirmSheetProps {
 
 /**
  * The confirmation before every money action and account closure: a sheet (a dialog named
- * "Confirm") with the amount, the reason, the way to prove it is the investor, and "Confirm" and
- * "Cancel". The app shows it from `confirm()` and settles that promise from the callbacks.
+ * "Confirm", described by the amount and then the reason) with the way to prove it is the
+ * investor, and "Confirm" and "Cancel". It opens with focus on Cancel, so a held Enter never
+ * confirms, or in the code boxes when the lock is a passcode. The app shows it from `confirm()`
+ * and settles that promise from the callbacks.
  */
 export function ConfirmSheet({
   open,
@@ -56,13 +59,16 @@ export function ConfirmSheet({
   onConfirm,
   onCancel,
 }: ConfirmSheetProps) {
+  const amountId = useId();
+  const reasonId = useId();
+  const cancelButton = useRef<HTMLButtonElement>(null);
   const message =
     error ??
     (attemptsLeft !== undefined && attemptsLeft > 0
       ? attemptsLeftMessage(attemptsLeft)
       : undefined);
   const cancel = (
-    <Button variant="ghost" size="lg" onClick={onCancel}>
+    <Button ref={cancelButton} variant="ghost" size="lg" onClick={onCancel}>
       Cancel
     </Button>
   );
@@ -74,14 +80,27 @@ export function ConfirmSheet({
         if (!next) onCancel();
       }}
     >
-      <SheetContent closeButton={false} className={styles.sheet}>
+      <SheetContent
+        closeButton={false}
+        className={styles.sheet}
+        aria-describedby={amountCents === undefined ? reasonId : `${amountId} ${reasonId}`}
+        onOpenAutoFocus={(event) => {
+          if (method === 'passcode') return;
+          event.preventDefault();
+          cancelButton.current?.focus();
+        }}
+      >
         <SheetHeader>
           <SheetTitle className={styles.title}>Confirm</SheetTitle>
         </SheetHeader>
         {amountCents !== undefined && (
-          <p className={styles.amount}>{format.money(amountCents, currency)}</p>
+          <p id={amountId} className={styles.amount}>
+            {format.money(amountCents, currency)}
+          </p>
         )}
-        <SheetDescription className={styles.reason}>{reason}</SheetDescription>
+        <p id={reasonId} className={styles.reason}>
+          {reason}
+        </p>
         {needsSetup && (
           <div className={styles.setup}>
             <p className={styles.note}>
