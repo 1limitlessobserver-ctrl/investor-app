@@ -1146,3 +1146,28 @@ describe('RS256 credentials', () => {
     expect(await lock.verify()).toBe(true);
   });
 });
+
+describe('device lock: the browser defaults', () => {
+  afterEach(() => {
+    delete (navigator as { credentials?: unknown }).credentials;
+  });
+
+  it("uses navigator.credentials, the page's host name as rpId and its origin", async () => {
+    // jsdom serves http://localhost:3000/: its host and href differ from its hostname and origin.
+    expect([location.host, location.href]).toEqual(['localhost:3000', 'http://localhost:3000/']);
+    const auth = await fakeAuthenticator(); // signs for http://localhost:3000, rpId localhost
+    Object.defineProperty(navigator, 'credentials', {
+      configurable: true,
+      value: auth.credentials,
+    });
+    vi.stubGlobal('PublicKeyCredential', {
+      isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.resolve(true),
+    });
+    const lock = createLock({ storage: secureStorage() });
+    expect(await lock.available()).toBe('webauthn');
+    await lock.enrollWebAuthn(ada);
+    expect(auth.create.mock.calls[0]![0].publicKey.rp.id).toBe('localhost');
+    expect(await lock.verify()).toBe(true);
+    expect(auth.get.mock.calls[0]![0].publicKey.rpId).toBe('localhost');
+  });
+});
