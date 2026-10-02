@@ -50,25 +50,25 @@ export interface AppSession {
   /** The investor, while signed in. */
   me: Me | null;
   theme: ThemeId;
-  setTheme(id: ThemeId): void;
+  setTheme: (id: ThemeId) => void;
   online: boolean;
   /** The background lock and the lock at launch are on. */
   lockEnabled: boolean;
   /** The lock set up on this device: what unlock() and confirm() ask for. */
   lockMethod: LockMethod | null;
   /** Off asks for a confirmation first; on with no lock set up offers to set one up. */
-  setLockEnabled(on: boolean): Promise<boolean>;
-  signIn(tokens: MobileTokens): Promise<void>;
+  setLockEnabled: (on: boolean) => Promise<boolean>;
+  signIn: (tokens: MobileTokens) => Promise<void>;
   /** Sample mode: signs in to the sample world. */
-  enterSample(): Promise<void>;
-  signOut(): Promise<void>;
+  enterSample: () => Promise<void>;
+  signOut: () => Promise<void>;
   /** "Lock now": locks whenever a lock is set up, whatever lockEnabled says. */
-  lock(): void;
+  lock: () => void;
   /** The lock screen's check: the device prompt (call it inside the tap) or the passcode. */
-  unlock(passcode?: string): Promise<boolean>;
+  unlock: (passcode?: string) => Promise<boolean>;
   unlocking: Unlocking;
   /** Asks before a money action or an account closure: the reason, the amount, the lock. */
-  confirm(reason: string, options?: ConfirmOptions): Promise<boolean>;
+  confirm: (reason: string, options?: ConfirmOptions) => Promise<boolean>;
   /** The version the platform needs ('' when it did not say); null when this one will do. */
   updateRequired: string | null;
 }
