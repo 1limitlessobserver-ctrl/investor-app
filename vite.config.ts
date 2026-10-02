@@ -46,7 +46,7 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,woff2,png,svg,webmanifest}'],
         globIgnores: [
           ...UNSHOWN_FONT_SUBSETS.map((subset) => `**/*-${subset}-*.woff2`),
-          // The manifest's screenshots are for the install dialog, fetched when it shows: not shell.
+          // The manifest's screenshots are for the install dialog, which fetches them: not shell.
           'screenshots/**',
           'manifest.webmanifest',
         ],

@@ -15,7 +15,7 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(appVersion) },
   resolve: {
     alias: {
-      // vite-plugin-pwa makes this module in the build (vite.config.ts); specs get a quiet stand-in.
+      // vite-plugin-pwa makes this module for the build (vite.config.ts); specs get a stand-in.
       'virtual:pwa-register/react': fileURLToPath(
         new URL('./src/test/pwaRegister.ts', import.meta.url),
       ),

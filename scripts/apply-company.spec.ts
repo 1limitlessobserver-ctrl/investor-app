@@ -133,7 +133,7 @@ describe('applyCompany', () => {
     expect(result.written.length).toBeGreaterThanOrEqual(8);
   });
 
-  it('lets the service worker run and serves it and the manifest right, on both hosts', async () => {
+  it('lets the worker run and serves it and the manifest right, on both hosts', async () => {
     await applyCompany(northwind, { root });
     const headers = await readFile(path.join(root, 'public/_headers'), 'utf8');
     expect(headers).toContain("worker-src 'self'");
