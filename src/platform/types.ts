@@ -50,16 +50,19 @@ export interface LockAdapter {
   enrolled(): Promise<LockMethod | null>;
   /**
    * Creates a platform credential through the operating system's prompt (in the investor's tap),
-   * stores it, and only then removes any passcode: a cancelled or failed enrolment leaves the lock
-   * as it was. `user.email` names the credential in that prompt; `user.id` is not used (the
-   * credential gets a random handle). Throws `Error('This browser cannot enrol a device lock.')`
-   * where the browser has no WebAuthn or hands over no public key this lock can use; the caller
-   * then offers the passcode. A cancelled prompt rejects with the browser's own error.
+   * stores it, and only then removes any passcode: a cancelled enrolment, or one whose credential
+   * cannot be stored, leaves the lock as it was. When only that removal fails, the call rejects
+   * with the credential enrolled; it outranks the passcode, which no longer unlocks. `user.email`
+   * names the credential in the prompt; `user.id` is not used (the credential gets a random
+   * handle). Throws `Error('This browser cannot enrol a device lock.')` where the browser has no
+   * WebAuthn or hands over no public key this lock can use; the caller then offers the passcode. A
+   * cancelled prompt rejects with the browser's own error.
    */
   enrollWebAuthn(user: { id: string; email: string }): Promise<void>;
   /**
    * Stores a six-digit passcode (anything else throws), and only then removes any WebAuthn
-   * credential: until the passcode is stored, the lock stays as it was.
+   * credential. Until both are done the lock stays as it was: when that removal fails, the call
+   * rejects, the credential stays enrolled, and the next verifyPasscode() removes the passcode.
    */
   enrollPasscode(code: string): Promise<void>;
   /**
@@ -71,7 +74,9 @@ export interface LockAdapter {
   /**
    * Checks the passcode. The fifth wrong attempt in a row wipes the passcode and answers
    * `attemptsLeft: 0`, and so does a check with no passcode enrolled, or with a record that cannot
-   * be read (which is then removed): the caller then signs out.
+   * be read (which is then removed): the caller then signs out. While a WebAuthn credential record
+   * exists, which outranks the passcode as in enrolled(), it answers `attemptsLeft: 0` too and
+   * removes the passcode, checking nothing.
    * Each attempt is counted before it is checked, so when storage cannot count it the call
    * rejects and nothing is checked.
    */

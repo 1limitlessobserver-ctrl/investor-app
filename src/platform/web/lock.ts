@@ -196,6 +196,12 @@ export function createLock(opts: {
 
     verifyPasscode(code) {
       return exclusive(async () => {
+        // As in enrolled(), a credential record outranks the passcode: one left beside it by a
+        // swap whose removal failed must not unlock, so remove it, checking nothing.
+        if ((await storage.get(WEBAUTHN)) !== null) {
+          await storage.remove(PASSCODE);
+          return { ok: false, attemptsLeft: 0 };
+        }
         const passcode = await readPasscode();
         if (!passcode) return { ok: false, attemptsLeft: 0 };
         if (passcode.attempts >= MAX_ATTEMPTS) {

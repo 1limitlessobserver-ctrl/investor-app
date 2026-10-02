@@ -921,6 +921,63 @@ describe('device lock: replacing one method with the other', () => {
     expect(await lock.verify()).toBe(true);
   });
 
+  /** Storage whose remove() fails while `stuck.now` is true. */
+  function stuckRemoval(secure: SecureStorage) {
+    const stuck = { now: false };
+    const storage: SecureStorage = {
+      ...secure,
+      remove: (key) => (stuck.now ? Promise.reject(new Error('disk error')) : secure.remove(key)),
+    };
+    return { stuck, storage };
+  }
+
+  it('lets no passcode in beside the credential that could not replace it', async () => {
+    const auth = await fakeAuthenticator();
+    const secure = secureStorage();
+    const { stuck, storage } = stuckRemoval(secure);
+    const lock = lockOver(auth.credentials, storage);
+    await lock.enrollPasscode('246810');
+    stuck.now = true;
+    await expect(lock.enrollWebAuthn(ada)).rejects.toThrow('disk error');
+    stuck.now = false;
+    expect(await lock.enrolled()).toBe('webauthn');
+    const deriveBits = vi.spyOn(crypto.subtle, 'deriveBits');
+    try {
+      expect(await lock.verifyPasscode('246810')).toEqual({ ok: false, attemptsLeft: 0 });
+      expect(deriveBits).not.toHaveBeenCalled();
+    } finally {
+      deriveBits.mockRestore();
+    }
+    expect(await secure.get('lock:passcode')).toBeNull();
+    expect(await lock.verify()).toBe(true); // the credential still unlocks
+  });
+
+  it('keeps the credential when the passcode meant to replace it could not', async () => {
+    const auth = await fakeAuthenticator();
+    const secure = secureStorage();
+    const { stuck, storage } = stuckRemoval(secure);
+    const lock = lockOver(auth.credentials, storage);
+    await lock.enrollWebAuthn(ada);
+    stuck.now = true;
+    await expect(lock.enrollPasscode('135790')).rejects.toThrow('disk error');
+    stuck.now = false;
+    expect(await lock.enrolled()).toBe('webauthn');
+    expect(await lock.verifyPasscode('135790')).toEqual({ ok: false, attemptsLeft: 0 });
+    expect(await secure.get('lock:passcode')).toBeNull(); // the stray passcode, removed
+    expect(await lock.enrolled()).toBe('webauthn');
+    expect(await lock.verify()).toBe(true);
+  });
+
+  it('ranks any credential record above the passcode, as enrolled() does', async () => {
+    const secure = secureStorage();
+    const lock = createLock({ storage: secure, credentials: undefined });
+    await lock.enrollPasscode('246810');
+    await secure.set('lock:webauthn', 'not json'); // stored, but it cannot be parsed
+    expect(await lock.enrolled()).toBe('webauthn');
+    expect(await lock.verifyPasscode('246810')).toEqual({ ok: false, attemptsLeft: 0 });
+    expect(await secure.get('lock:passcode')).toBeNull();
+  });
+
   it('never keeps both records once a swap is done', async () => {
     const auth = await fakeAuthenticator();
     const secure = secureStorage();
