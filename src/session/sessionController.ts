@@ -837,7 +837,7 @@ export function createSessionController(deps: SessionDeps) {
     const gen = generation;
     enrolling.then(
       () => setupDone(offer, 'webauthn', gen),
-      (error: unknown) => setupFailed(offer, error),
+      (error: unknown) => setupFailed(offer, 'webauthn', error),
     );
   }
 
@@ -848,11 +848,12 @@ export function createSessionController(deps: SessionDeps) {
     const gen = generation;
     platform.lock.enrollPasscode(code).then(
       () => setupDone(offer, 'passcode', gen),
-      (error: unknown) => setupFailed(offer, error),
+      (error: unknown) => setupFailed(offer, 'passcode', error),
     );
   }
 
-  function setupFailed(offer: LockSetupOffer, error: unknown): void {
+  /** A setup of `tried` failed: the offer says so, in words for what was tried. */
+  function setupFailed(offer: LockSetupOffer, tried: LockMethod, error: unknown): void {
     reportProblem('setting up the lock', error);
     if (state.lockSetup?.id !== offer.id) return;
     if (isUnreadableKey(error)) {
@@ -861,18 +862,17 @@ export function createSessionController(deps: SessionDeps) {
     }
     // A browser that cannot hold a device credential is offered the passcode instead.
     const noDevice = error instanceof Error && error.message === NO_DEVICE_LOCK;
-    const tried = state.lockSetup.available;
     set({
       lockSetup: {
         ...offer,
-        available: noDevice ? 'passcode' : tried,
+        available: noDevice ? 'passcode' : offer.available,
         busy: false,
         error:
-          tried === 'webauthn'
-            ? noDevice
+          tried === 'passcode'
+            ? SESSION_COPY.passcodeFailed
+            : noDevice
               ? SESSION_COPY.deviceUnavailable
-              : SESSION_COPY.deviceFailed
-            : SESSION_COPY.passcodeFailed,
+              : SESSION_COPY.deviceFailed,
       },
     });
   }

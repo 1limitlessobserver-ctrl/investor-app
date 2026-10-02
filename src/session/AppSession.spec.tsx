@@ -1327,6 +1327,50 @@ describe('AppSession: setting up the lock', () => {
     expect(warn).toHaveBeenCalledWith('[investor-app] setting up the lock:', expect.any(Error));
   });
 
+  it('says the passcode could not be saved, on a device that offers its own lock', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const user = await launch(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({
+        lock: {
+          enrolled: () => Promise.resolve(null),
+          enrollPasscode: () => Promise.reject(new Error('disk error')),
+        },
+      }),
+    );
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Set a passcode' }));
+    await user.type(screen.getByLabelText('Passcode'), '246810');
+    await user.type(await screen.findByLabelText('Repeat passcode'), '246810');
+    await user.click(screen.getByRole('button', { name: 'Save passcode' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "The passcode couldn't be saved on this device. Try again.",
+    );
+  });
+
+  it('says the device’s own lock did not go through, and offers it again', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const user = await launch(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({
+        lock: {
+          enrolled: () => Promise.resolve(null),
+          enrollWebAuthn: () => Promise.reject(new DOMException('Cancelled.', 'NotAllowedError')),
+        },
+      }),
+    );
+    await user.click(screen.getByText('enter'));
+    await user.click(
+      await screen.findByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "That didn't go through. Try again, or set a passcode.",
+    );
+    expect(
+      screen.getByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
+    ).toBeInTheDocument();
+  });
+
   it('turns the lock back on without asking, while one is set up', async () => {
     const user = await launch(createSampleApi({ latencyMs: 0 }));
     await user.click(screen.getByText('enter'));
