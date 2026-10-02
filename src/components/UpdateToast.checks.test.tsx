@@ -128,7 +128,7 @@ describe('UpdateToast, while no version waits', () => {
   });
 });
 
-/** Watches the page's reloads: jsdom's location.reload cannot be spied on, so location is stubbed. */
+/** Watches the page's reloads (jsdom's location.reload cannot be spied on: location is stubbed). */
 function watchReloads() {
   const reload = vi.fn();
   vi.stubGlobal('location', { ...window.location, reload });
