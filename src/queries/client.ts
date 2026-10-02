@@ -1,8 +1,11 @@
 // The app's query client: the memory cache every screen reads the platform through (nothing is
-// kept beyond the session: sign-out clears it). Queries and mutations wait while the device is
-// offline (networkMode 'online', fed by the session's online state). A failed query is tried
-// again only where another try could answer differently; a mutation is never sent twice by the
-// cache, since a money action that timed out may still have gone through.
+// kept beyond the session: sign-out clears it). Queries wait while the device is offline
+// (networkMode 'online', fed by the session's online state) and fetch once it is back. Mutations
+// are sent at once ('always'): offline, one fails there with `network` rather than wait to go out
+// on the reconnect, perhaps with the app locked and the screen gone; screens disable them offline
+// (useAppSession().online). A failed query is tried again only where another try could answer
+// differently; a mutation is never sent twice by the cache, since a money action that timed out
+// may still have gone through.
 
 import { QueryClient } from '@tanstack/react-query';
 import { MobileApiError } from '../api/MobileApiError';
@@ -27,7 +30,7 @@ export function createQueryClient(): QueryClient {
         gcTime: 5 * 60_000,
         retry: retryQuery,
       },
-      mutations: { retry: 0, networkMode: 'online' },
+      mutations: { retry: 0, networkMode: 'always' },
     },
   });
 }

@@ -1,4 +1,4 @@
-import { MutationObserver } from '@tanstack/react-query';
+import { MutationObserver, onlineManager, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { MobileApiError } from '../api/MobileApiError';
 import { createQueryClient, retryQuery } from './client';
@@ -41,6 +41,35 @@ describe('createQueryClient', () => {
       client.fetchQuery({ queryKey: ['sample', 'y'], queryFn: timesOut, retryDelay: 0 }),
     ).rejects.toMatchObject({ code: 'timeout' });
     expect(timesOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends a mutation at once even offline, where it fails: never later', async () => {
+    const client = createQueryClient();
+    onlineManager.setOnline(false);
+    // Offline, the request fails at once: a money action is never queued for the reconnect.
+    const send = vi.fn(() => Promise.reject(MobileApiError.network()));
+    const observer = new MutationObserver(client, { mutationFn: send });
+    await expect(observer.mutate()).rejects.toMatchObject({ code: 'network' });
+    expect(send).toHaveBeenCalledTimes(1);
+    onlineManager.setOnline(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a query while offline, and fetches it once back online', async () => {
+    const client = createQueryClient();
+    client.mount(); // as QueryClientProvider does: it hears the network come back
+    onlineManager.setOnline(false);
+    const fetch = vi.fn(() => Promise.resolve('fresh'));
+    const observer = new QueryObserver(client, { queryKey: ['sample', 'x'], queryFn: fetch });
+    const stop = observer.subscribe(() => {});
+    expect(observer.getCurrentResult().fetchStatus).toBe('paused');
+    expect(fetch).not.toHaveBeenCalled();
+    onlineManager.setOnline(true);
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toBe('fresh'));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    stop();
+    client.unmount();
   });
 
   it('never sends a mutation twice, not even after a server failure', async () => {

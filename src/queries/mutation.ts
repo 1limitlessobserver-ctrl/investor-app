@@ -1,7 +1,7 @@
 // How every mutation hook is made: it sends through the session's api and, once the platform has
 // answered, invalidates exactly the queries the action changed (the table is in each area's file),
-// so the screens that show them fetch them again. The cache never sends a mutation twice, and it
-// waits while the device is offline (src/queries/client.ts).
+// so the screens that show them fetch them again. The cache never sends a mutation twice, nor
+// holds one for later: offline, it fails at once with `network` (src/queries/client.ts).
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { PlatformApi } from '../api/PlatformApi';
