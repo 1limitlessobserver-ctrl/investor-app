@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
@@ -12,6 +13,14 @@ const appVersion = (
 export default defineConfig({
   plugins: [react()],
   define: { __APP_VERSION__: JSON.stringify(appVersion) },
+  resolve: {
+    alias: {
+      // vite-plugin-pwa makes this module in the build (vite.config.ts); specs get a quiet stand-in.
+      'virtual:pwa-register/react': fileURLToPath(
+        new URL('./src/test/pwaRegister.ts', import.meta.url),
+      ),
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: false,
