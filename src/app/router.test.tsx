@@ -52,6 +52,13 @@ describe('the routes', () => {
     expect(screen.getByRole('link', { name: /Alerts, \d+ unread/ })).toBeInTheDocument();
   });
 
+  it('shows a live build no sample ribbon and no sample world', async () => {
+    renderWithApp({ route: '/sign-in', mode: 'live' });
+    expect(await screen.findByLabelText('Email')).toBeInTheDocument();
+    expect(screen.queryByText('Sample', { exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Explore with sample data' })).toBeNull();
+  });
+
   it('marks a sample session with the ribbon, once, on every screen', async () => {
     renderWithApp({ route: '/sign-in' });
     await screen.findByRole('button', { name: 'Explore with sample data' });

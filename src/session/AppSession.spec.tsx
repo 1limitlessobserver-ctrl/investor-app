@@ -15,6 +15,7 @@ import { createSecureStorage } from '../platform/web/storage';
 import { createQueryClient } from '../queries/client';
 import { cssRule } from '../test/cssRules';
 import { fakePlatform } from '../test/fakePlatform';
+import { liveApi as liveOver } from '../test/liveApi';
 import { memoryKvStore } from '../test/memoryKvStore';
 import { brandCache } from './brand';
 import { createSessionController, SESSION_COPY, updateRequiredFor } from './sessionController';
@@ -1652,29 +1653,6 @@ const pairOf = (n: number) => ({
   accessExpiresAt: '2026-10-01T12:15:00.000Z',
   refreshExpiresAt: '2026-10-31T12:00:00.000Z',
 });
-const json = (body: unknown) =>
-  new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
-
-/** The live client over a platform that answers its brand and /me; `slowLogout` never answers. */
-function liveOver({ slowLogout = false } = {}) {
-  return ({ events, tokenStore }: ApiWiring) => {
-    const sample = createSampleApi({ latencyMs: 0 });
-    return createLiveApi({
-      baseUrl: 'https://platform.test/api/mobile/v1',
-      tokenStore,
-      app: { version: '1.0.0', platform: 'web', deviceId: 'device-test-1' },
-      fetchImpl: async (input) => {
-        const url = urlOf(input);
-        if (url.endsWith('/auth/logout')) {
-          return slowLogout ? new Promise<Response>(() => {}) : json({ ok: true });
-        }
-        return json(url.endsWith('/brand') ? await sample.brand() : await sample.me());
-      },
-      ...events,
-    });
-  };
-}
-
 // The tabs a test opened, stopped after it.
 const stops: (() => void)[] = [];
 afterEach(() => {
