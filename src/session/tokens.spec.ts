@@ -267,6 +267,57 @@ describe('token store', () => {
     expect(await createTokenStore(shared.open()).get()).toBeNull();
   });
 
+  it('forgets the access token on a sign-out whose removal from storage fails', async () => {
+    const real = sharedStorage().open();
+    const failing: SecureStorage = {
+      ...real,
+      remove: () => Promise.reject(new Error('disk full')),
+    };
+    const store = createTokenStore(failing, { channel: null, randomKey: () => 'key-1' });
+    await store.start(pair);
+    await expect(store.clear()).rejects.toThrow('disk full');
+    expect(store.peekAccess()).toBeNull();
+    expect((await store.get())?.accessToken).toBeNull();
+  });
+
+  it('works on without the other tabs when their channel cannot be opened', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failure = new Error('no channel');
+    const store = createTokenStore(sharedStorage().open(), {
+      channel: () => {
+        throw failure;
+      },
+      randomKey: () => 'key-1',
+    });
+    const stop = store.subscribe(() => {});
+    expect(await store.start(pair)).toBe('key-1');
+    stop();
+    expect(warn).toHaveBeenCalledWith('[investor-app] opening the session channel:', failure);
+    warn.mockRestore();
+  });
+
+  it('keeps a sign-in whose news cannot be sent to the other tabs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failure = new DOMException('The channel is closed.', 'InvalidStateError');
+    const channel: SessionChannel = {
+      postMessage: () => {
+        throw failure;
+      },
+      addEventListener: () => {},
+      close: () => {},
+    };
+    const store = createTokenStore(sharedStorage().open(), {
+      channel: () => channel,
+      randomKey: () => 'key-1',
+    });
+    store.subscribe(() => {});
+    expect(await store.start(pair)).toBe('key-1');
+    expect(await store.rotate(next(2), 'key-1')).toBe(true);
+    expect(await store.clear('key-1')).toBe(true);
+    expect(warn).toHaveBeenCalledWith('[investor-app] telling the other tabs:', failure);
+    warn.mockRestore();
+  });
+
   it('passes a storage failure on, so the client can report it', async () => {
     const db = memoryKvStore();
     db.raw.set('secure:key', 'not a CryptoKey');
@@ -295,7 +346,7 @@ describe('token store across tabs', () => {
       await bus.settle();
       await Promise.all([tabA.get(), tabB.get()]);
     }
-    return { bus, tabA, tabB, heardA, heardB, stopA, stopB, settle };
+    return { shared, bus, tabA, tabB, heardA, heardB, stopA, stopB, settle };
   }
 
   it('hands another tab’s refreshed pair to this tab, so it need not refresh too', async () => {
@@ -347,6 +398,43 @@ describe('token store across tabs', () => {
     bus.post({ type: 'clear', sessionKey: 'key-2' }); // late news of a sign-out
     await settle();
     expect(heardA).toEqual([{ type: 'start', sessionKey: 'key-3' }]);
+  });
+
+  it('takes up the pair another tab refreshed, while it holds that session itself', async () => {
+    const { tabA, tabB, settle } = twoTabs();
+    await tabB.start(pair); // key-1: this tab holds its pair
+    await settle(); // the other tab hears of the sign-in, and holds no access token
+    await tabA.rotate(next(2), 'key-1'); // so it refreshes, and says so
+    await settle();
+    expect(tabB.peekAccess()).toBe('a2');
+    expect((await tabB.get())?.accessToken).toBe('a2');
+  });
+
+  it('hears another tab sign in or out though it cannot read storage to check', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { shared, bus, tabA, settle } = twoTabs();
+    const real = shared.open();
+    let broken = false;
+    const failing: SecureStorage = {
+      ...real,
+      get: (key) => (broken ? Promise.reject(new Error('unreadable')) : real.get(key)),
+    };
+    const tabC = createTokenStore(failing, { channel: () => bus.channel(), locks: null });
+    const heardC: TokenStoreEvent[] = [];
+    tabC.subscribe((event) => heardC.push(event));
+    await tabA.start(pair); // key-1
+    broken = true;
+    await settle();
+    await vi.waitFor(() => expect(heardC).toEqual([{ type: 'start', sessionKey: 'key-1' }]));
+    await tabA.clear('key-1');
+    await bus.settle();
+    await vi.waitFor(() => expect(heardC).toHaveLength(2));
+    expect(heardC[1]).toEqual({ type: 'clear', sessionKey: 'key-1' });
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] checking another tab’s news against storage:',
+      expect.any(Error),
+    );
+    warn.mockRestore();
   });
 
   it('keeps its own pair when another tab refreshes a session it no longer holds', async () => {

@@ -18,6 +18,7 @@
 import type { StoredSession, TokenStore } from '../api/createLiveApi';
 import type { MobileTokens } from '../api/types';
 import { base64url } from '../lib/base64url';
+import { reportProblem } from '../lib/report';
 import type { SecureStorage } from '../platform/types';
 
 /** The secure-storage entry, the Web Lock and the channel. */
@@ -125,8 +126,13 @@ export function createTokenStore(
     return shared(await storage.get(ENTRY));
   }
 
+  /** Tells the other tabs; news that cannot be sent is missed, as each reads storage itself. */
   function tell(message: Message) {
-    channel?.postMessage(message);
+    try {
+      channel?.postMessage(message);
+    } catch (error) {
+      reportProblem('telling the other tabs', error);
+    }
   }
 
   /**
@@ -149,7 +155,10 @@ export function createTokenStore(
     void read()
       .then(
         (stored) => (type === 'start' ? stored?.sessionKey === sessionKey : stored === null),
-        () => true,
+        (error: unknown) => {
+          reportProblem('checking another tab’s news against storage', error);
+          return true;
+        },
       )
       .then((current) => {
         if (!current) return;
@@ -208,7 +217,12 @@ export function createTokenStore(
     subscribe(listener) {
       listeners.add(listener);
       if (channel === null && openChannel !== null) {
-        channel = openChannel();
+        try {
+          channel = openChannel();
+        } catch (error) {
+          // This tab works on alone: it reads storage before every decision anyway.
+          reportProblem('opening the session channel', error);
+        }
         channel?.addEventListener('message', hear);
       }
       return () => {
