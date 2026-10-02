@@ -21,8 +21,6 @@ export interface PushDeps {
   workerReady: () => Promise<boolean>;
 }
 
-export type PushRegistration = ReturnType<typeof createPushRegistration>;
-
 export function createPushRegistration(deps: PushDeps) {
   const { api, notifications } = deps;
   // The endpoint the platform was handed for the session open now: what the sign-out takes back.
