@@ -1725,6 +1725,69 @@ describe('when the token store or a callback fails', () => {
     },
   );
 
+  // A store that cannot be read just as the client decides on ending a session does not keep that
+  // session alive: the client fails closed, clears under the key the session went out with, tells
+  // onSignedOut, and throws the platform's error with the store's failure as its cause.
+  const ended = { error: 'session_revoked', message: 'This session has ended.' };
+  it.each([
+    // The third read is endSession's: the call's own, then tokenAfter401's, then this one.
+    ['a revoked session', 3, () => json(401, ended), 'session_revoked'],
+    // The fourth is the refusal's: the call's, tokenAfter401's, the refresh's own, then this one.
+    [
+      'a refused refresh',
+      4,
+      (c: Call) => (isRefresh(c) ? json(401, ended) : json(401, { error: 'unauthorized' })),
+      'refresh_failed',
+    ],
+  ] as const)(
+    'signs out on %s when the store cannot be read to decide',
+    async (_what, failing, script: Script, reason) => {
+      let reads = 0;
+      const t = setup(script, session(1), {
+        faults: { get: () => (++reads === failing ? unreadable : undefined) },
+      });
+      const e = await failure(t.api.me());
+      expect([e.code, e.message, e.cause]).toEqual(['session_revoked', ended.message, unreadable]);
+      expect([t.signedOut, t.writes, t.tokens()]).toEqual([[reason], [null], null]);
+    },
+  );
+
+  it('still signs out when the store can be neither read nor cleared at that moment', async () => {
+    let reads = 0;
+    const t = setup(() => json(401, ended), session(1), {
+      faults: { get: () => (++reads === 3 ? unreadable : undefined), clear: () => closed },
+    });
+    const e = await failure(t.api.me());
+    // The read's failure, the first, stays the cause.
+    expect([e.code, e.cause]).toEqual(['session_revoked', unreadable]);
+    expect([t.signedOut, t.writes]).toEqual([['session_revoked'], [null]]);
+  });
+
+  it('does not fail closed for a session the client has ended already', async () => {
+    // A logout that could not clear comes while a refresh is out; the refusal that lands then meets
+    // a store it cannot read. The session is over by the client's own count: no one is told.
+    let reads = 0;
+    const started = gate();
+    const landed = gate();
+    const t = setup(
+      async (c) => {
+        if (path(c) === '/auth/logout') return json(200, { ok: true });
+        started.release();
+        await landed.open;
+        return json(401, ended);
+      },
+      session(1),
+      { faults: { get: () => (++reads === 3 ? unreadable : undefined), clear: () => closed } },
+    );
+    const refreshing = failure(t.api.refresh());
+    await started.open;
+    expect((await failure(t.api.logout())).code).toBe('storage_error');
+    landed.release();
+    const e = await refreshing;
+    expect([e.code, e.cause]).toEqual(['session_revoked', unreadable]);
+    expect([t.signedOut, t.writes]).toEqual([[], [null]]);
+  });
+
   it('still answers with a refreshed pair it cannot save, retries with it, and reports why', async () => {
     const t = setup(
       (c) =>

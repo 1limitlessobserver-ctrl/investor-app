@@ -466,11 +466,12 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   /**
    * The platform revoked the session `sent` belongs to: signOut, but only while the client has
    * ended no session since `gen0` and the store still holds `sent`'s sign-in and both its tokens;
-   * otherwise `e` is thrown untouched. Of the calls that hear one revocation together, the first
-   * ends the session and the rest find the count changed.
+   * otherwise `e` is thrown untouched. A store that cannot be read signs out all the same
+   * (readToEnd). Of the calls that hear one revocation together, the first ends the session and
+   * the rest find the count changed.
    */
   async function endSession(e: MobileApiError, gen0: number, sent: Sent): Promise<never> {
-    const now = await read(e);
+    const now = await readToEnd(e, gen0, 'session_revoked', sent.sessionKey);
     const held =
       now?.sessionKey === sent.sessionKey &&
       now.accessToken === sent.accessToken &&
@@ -484,7 +485,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
    * that session. onSignedOut is told when it did, and when the store failed (it may still hold
    * the session); a store that no longer held it had it ended already, by another tab, and no one
    * is told. Then `e`, the platform's verdict, is thrown, with the store's failure as its cause if
-   * it had one.
+   * it had one: the first, when `e` already carries one.
    */
   async function signOut(
     e: MobileApiError,
@@ -496,11 +497,31 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     try {
       cleared = await tokenStore.clear(sessionKey);
     } catch (cause) {
-      throw withCause(e, cause);
+      throw e.cause === undefined ? withCause(e, cause) : e;
     } finally {
       if (cleared !== false) notify(onSignedOut, reason);
     }
     throw e;
+  }
+
+  /**
+   * What the store holds, read to decide whether the platform's `e` ends the session `sessionKey`
+   * names. A store that cannot be read then does not keep the session alive: unless the client has
+   * ended one since `gen0`, it signs out (fails closed), with the store's failure as `e`'s cause.
+   */
+  async function readToEnd(
+    e: MobileApiError,
+    gen0: number,
+    reason: SignedOutReason,
+    sessionKey: string,
+  ): Promise<StoredSession | null> {
+    try {
+      return await tokenStore.get();
+    } catch (cause) {
+      const failed = withCause(e, cause);
+      if (generation !== gen0) throw failed;
+      return signOut(failed, reason, sessionKey);
+    }
   }
 
   /**
@@ -552,7 +573,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       fresh = pairOf(answer);
     } catch (e) {
       if (isRefusal(e)) {
-        const now = await read(e);
+        const now = await readToEnd(e, gen, 'refresh_failed', stored.sessionKey);
         if (generation === gen && unchanged(now)) {
           await signOut(e, 'refresh_failed', stored.sessionKey);
         }
