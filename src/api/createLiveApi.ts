@@ -523,12 +523,14 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   /**
    * Sends the stored refresh token. A token pair is rotated into the store and resolved, with the
    * key of the sign-in it renewed; a refusal (isRefusal) signs out with `refresh_failed`; any
-   * other failure is thrown and keeps the session. When the store has stopped holding that
-   * sign-in and its refresh token meanwhile (a logout, a new sign-in, another tab's refresh), the
-   * answer touches nothing stored, and its callers still get it. With nothing stored: 401
-   * `unauthorized`, and nothing is sent.
+   * other failure is thrown and keeps the session. When the client has ended a session since the
+   * refresh began, or the store has stopped holding that sign-in and its refresh token meanwhile
+   * (a logout, a new sign-in, another tab's refresh), the answer touches nothing stored and ends
+   * nothing, and its callers still get it. With nothing stored: 401 `unauthorized`, and nothing is
+   * sent.
    */
   async function renew(): Promise<Renewed> {
+    const gen = generation;
     const stored = await read();
     if (stored === null) throw new MobileApiError('unauthorized', 401);
     const unchanged = (now: StoredSession | null) =>
@@ -546,14 +548,18 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       );
       fresh = pairOf(answer);
     } catch (e) {
-      if (isRefusal(e) && unchanged(await read(e))) {
-        await signOut(e, 'refresh_failed', stored.sessionKey);
+      if (isRefusal(e)) {
+        const now = await read(e);
+        if (generation === gen && unchanged(now)) {
+          await signOut(e, 'refresh_failed', stored.sessionKey);
+        }
       }
       throw e;
     }
     try {
       // The store rotates only while it still holds this sign-in, whatever lands after this check.
-      if (unchanged(await tokenStore.get())) await tokenStore.rotate(fresh, stored.sessionKey);
+      const now = await tokenStore.get();
+      if (generation === gen && unchanged(now)) await tokenStore.rotate(fresh, stored.sessionKey);
     } catch (error) {
       // The platform has rotated the token, so dropping the pair would strand this device: its
       // callers get it all the same, and the store's failure is reported.
@@ -587,6 +593,9 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
      * `storage_error` after that.
      */
     logout: async () => {
+      // The session ends here, at once: the count moves before anything is read or cleared, so a
+      // call or a refresh that resumes from now on belongs to an ended session and changes nothing.
+      generation += 1;
       let stored: StoredSession | null = null;
       let broken: { cause: unknown } | undefined;
       try {
@@ -594,9 +603,6 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       } catch (cause) {
         broken = { cause };
       }
-      // The session ends here, at once: the count moves and the store is cleared in one step, so a
-      // call that hears a 401 from now on belongs to an ended session and changes nothing.
-      generation += 1;
       try {
         await tokenStore.clear();
       } catch (cause) {

@@ -71,12 +71,15 @@ function setup(
      * lands: the race that the store's own compare of the session's key closes.
      */
     cutIn?: StoredSession | null;
+    /** Holds the store's nth read (counting from 1) until `until` settles, as a slow store would. */
+    slowRead?: { n: number; until: Promise<void> };
     /** Replaces what setup passes, such as a callback. */
     config?: Partial<LiveApiConfig>;
   } = {},
 ) {
   const calls: Call[] = [];
   let tokens = initial;
+  let reads = 0;
   let cutIn = options.cutIn;
   const landCutIn = () => {
     if (cutIn !== undefined) tokens = cutIn;
@@ -91,8 +94,11 @@ function setup(
     baseUrl: options.baseUrl ?? BASE,
     tokenStore: {
       get: () => {
+        reads += 1;
         const fault = options.faults?.get?.();
-        return fault === undefined ? Promise.resolve(tokens) : Promise.reject(fault);
+        if (fault !== undefined) return Promise.reject(fault);
+        const slow = options.slowRead;
+        return slow?.n === reads ? slow.until.then(() => tokens) : Promise.resolve(tokens);
       },
       // Each write compares the key it names with the stored one, as one step, as the real
       // store does inside its transaction.
@@ -1511,6 +1517,73 @@ describe('the session a request belongs to', () => {
     expect([e.code, e.message]).toEqual(['unauthorized', 'Expired.']);
     expect(t.calls.map(path).sort()).toEqual(['/auth/logout', '/auth/refresh', '/me']);
     expect(t.signedOut).toEqual([]);
+  });
+
+  // A logout that could not clear leaves the session in the store, so only the client's count tells
+  // a refresh that was out that its session is over: it stores nothing back and ends nothing, and
+  // its callers still get what the platform answered.
+  it.each([
+    ['a pair', () => json(200, pair(2)), { tokens: pair(2) }],
+    [
+      'a refusal',
+      () => json(401, { error: 'session_revoked' }),
+      { error: expect.objectContaining({ code: 'session_revoked' }) as unknown },
+    ],
+  ])(
+    'rotates nothing back in, and signs no one out, when %s lands after a logout that could not clear',
+    async (_what, answer, outcome) => {
+      const started = gate();
+      const landed = gate();
+      const t = setup(
+        async (c) => {
+          if (path(c) === '/auth/logout') return json(200, { ok: true });
+          started.release();
+          await landed.open;
+          return answer();
+        },
+        session(1),
+        {
+          faults: { clear: () => new DOMException('The database is closed', 'InvalidStateError') },
+        },
+      );
+      const refreshing = t.api.refresh().then(
+        (tokens) => ({ tokens }),
+        (error: unknown) => ({ error }),
+      );
+      await started.open;
+      expect((await failure(t.api.logout())).code).toBe('storage_error');
+      landed.release();
+      expect(await refreshing).toEqual(outcome);
+      expect([t.writes, t.signedOut, t.tokens()]).toEqual([[null], [], session(1)]);
+    },
+  );
+
+  it('ends the session before it reads the store, so a refresh landing meanwhile is not retried with', async () => {
+    // The fourth read is logout()'s, held as a slow store would; the call's refresh lands during it.
+    const started = gate();
+    const landed = gate();
+    const slow = gate();
+    const t = setup(
+      async (c) => {
+        if (path(c) === '/auth/logout') return json(200, { ok: true });
+        if (!isRefresh(c)) return json(401, { error: 'unauthorized' });
+        started.release();
+        await landed.open;
+        return json(200, pair(2));
+      },
+      session(1),
+      { slowRead: { n: 4, until: slow.open } },
+    );
+    const call = failure(t.api.me());
+    await started.open;
+    const out = t.api.logout();
+    landed.release();
+    await settle();
+    slow.release();
+    await out;
+    expect((await call).code).toBe('unauthorized');
+    expect(t.calls.map(path)).toEqual(['/me', '/auth/refresh', '/auth/logout']);
+    expect([t.writes, t.signedOut, t.tokens()]).toEqual([[null], [], null]);
   });
 
   it('ends a revoked session once for every call that hears it at the same time', async () => {
