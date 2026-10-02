@@ -1468,6 +1468,52 @@ describe('the session a request belongs to', () => {
     expect([t.signedOut, t.tokens()]).toEqual([[], null]);
   });
 
+  it('sends nothing for a call that refreshed first when another tab signed in meanwhile', async () => {
+    // The refresh renewed k1, the sign-in the call read, but by the time its pair is in, the store
+    // holds k2: the call's session is over, so it does not go out as k1.
+    const started = gate();
+    const answer = gate();
+    const t = setup(async (c) => {
+      if (!isRefresh(c)) return json(200, { id: 'u1' });
+      started.release();
+      await answer.open;
+      return json(200, pair(2));
+    }, restarted(1));
+    const call = failure(t.api.me());
+    await started.open;
+    t.store(session(5, 'k2'));
+    answer.release();
+    const e = await call;
+    expect([e.code, e.status]).toEqual(['unauthorized', 401]);
+    expect(t.calls.map(path)).toEqual(['/auth/refresh']);
+    expect([t.signedOut, t.writes, t.tokens()]).toEqual([[], [], session(5, 'k2')]);
+  });
+
+  it('sends nothing for a call that refreshed first when a logout that could not clear came meanwhile', async () => {
+    // The store still holds the sign-in the call read, so only the client's count says no.
+    const started = gate();
+    const answer = gate();
+    const t = setup(
+      async (c) => {
+        if (path(c) === '/auth/logout') return json(200, { ok: true });
+        if (!isRefresh(c)) return json(200, { id: 'u1' });
+        started.release();
+        await answer.open;
+        return json(200, pair(2));
+      },
+      restarted(1),
+      { faults: { clear: () => new DOMException('The database is closed', 'InvalidStateError') } },
+    );
+    const call = failure(t.api.me());
+    await started.open;
+    expect((await failure(t.api.logout())).code).toBe('storage_error');
+    answer.release();
+    const e = await call;
+    expect([e.code, e.status]).toEqual(['unauthorized', 401]);
+    expect(t.calls.map(path)).toEqual(['/auth/refresh', '/auth/logout']);
+    expect([t.signedOut, t.tokens()]).toEqual([[], restarted(1)]);
+  });
+
   it.each(['joined', 'started'])(
     'throws the 401 untouched when the refresh it %s lands after a logout',
     async (how) => {

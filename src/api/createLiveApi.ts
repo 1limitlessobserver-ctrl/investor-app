@@ -446,18 +446,20 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   }
 
   /**
-   * The refresh a request makes first when the store has no access token for it: the pair, if the
-   * client has ended no session since `gen0` and it renewed the sign-in the request read. Otherwise
-   * (a logout, or a refresh of an earlier sign-in that was still out) nothing is sent, and the
-   * request rejects `unauthorized`.
+   * The refresh a request makes first when the store has no access token for it: the pair, only if
+   * it renewed the sign-in the request read, the store still holds that sign-in once the pair is
+   * in, and the client has ended no session since `gen0`. Otherwise (a logout, another sign-in, or
+   * a refresh of an earlier sign-in that was still out) nothing is sent, and the request rejects
+   * `unauthorized`.
    */
   async function refreshedFirst(stored: StoredSession, gen0: number): Promise<Sent> {
     const renewed = await refreshOnce();
     const first = sentOf(renewed);
-    if (first === null || generation !== gen0 || renewed.sessionKey !== stored.sessionKey) {
-      throw new MobileApiError('unauthorized', 401);
+    if (first !== null && renewed.sessionKey === stored.sessionKey) {
+      const now = await read();
+      if (generation === gen0 && now?.sessionKey === stored.sessionKey) return first;
     }
-    return first;
+    throw new MobileApiError('unauthorized', 401);
   }
 
   /**
