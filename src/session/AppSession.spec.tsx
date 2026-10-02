@@ -494,7 +494,7 @@ describe('AppSession: a lock another tab changes', () => {
     });
   }
 
-  it('hears a lock set up in another tab: confirming asks the device, and time away locks', async () => {
+  it('hears of a lock set up elsewhere: confirm asks the device, and time away locks', async () => {
     const verify = vi.fn(() => Promise.resolve(false));
     const platform = fakePlatform({ lock: { verify } });
     const user = await signInWithoutLock(platform);
@@ -553,7 +553,7 @@ describe('AppSession: a lock another tab changes', () => {
     await waitFor(() => expect(status()).toHaveTextContent('locked'));
   });
 
-  it('signs out, never opening, when another tab removes the lock it is locked behind', async () => {
+  it('signs out, never opening, when another tab removes the lock it is behind', async () => {
     sessionStorage.setItem('app.sample', '1');
     localStorage.setItem('app.lockEnabled', 'true');
     const platform = fakePlatform();

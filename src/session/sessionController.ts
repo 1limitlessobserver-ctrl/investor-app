@@ -439,8 +439,8 @@ export function createSessionController(deps: SessionDeps) {
   }
 
   /**
-   * After five minutes hidden: locks while the lock is on (signs out when nothing can unlock it), at
-   * once as the session knows it, then as the device says.
+   * After five minutes hidden: locks while the lock is on (signs out when nothing can unlock it),
+   * at once as the session knows it, then as the device says.
    */
   function lockAfterHidden(): void {
     if (state.status !== 'signed-in') return;

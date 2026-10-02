@@ -79,7 +79,7 @@ describe('the routes', () => {
     expect(router.state.location.pathname).toBe('/sign-in');
   });
 
-  it('never opens a locked app whose lock is gone: it signs out, showing nothing meanwhile', async () => {
+  it('signs out a locked app whose lock is gone, showing nothing of it meanwhile', async () => {
     sessionStorage.setItem('app.sample', '1'); // a session from before the reload
     let method: LockMethod | null = 'webauthn';
     renderWithApp({
