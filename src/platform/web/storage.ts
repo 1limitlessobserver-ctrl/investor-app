@@ -6,7 +6,7 @@
 // name as additional data so it cannot be moved to another name. A value that no longer decrypts
 // (its key was lost, or it was changed) reads as null and is removed.
 
-import { createStore, del, get, keys, set } from 'idb-keyval';
+import { createStore, del, get, keys, set, update } from 'idb-keyval';
 import type { SecureStorage } from '../types';
 
 /** The key-value store underneath: IndexedDB in the app, a Map in tests. */
@@ -15,6 +15,8 @@ export interface KvStore {
   set(key: string, value: unknown): Promise<void>;
   del(key: string): Promise<void>;
   keys(): Promise<string[]>;
+  /** Replaces the value with `updater(old)` in one transaction, and answers what it stored. */
+  update<T>(key: string, updater: (old: T | undefined) => T): Promise<T>;
 }
 
 const PREFIX = 'secure:';
@@ -55,6 +57,18 @@ export function createSecureStorage(
       try {
         return await open(cryptoKey, name, sealed);
       } catch {
+        // Another instance may have stored a different key since this one read it: adopt the
+        // stored key and try once more before calling the value stale. (IndexedDB answers a new
+        // object on every read, so there the second try always runs.)
+        const stored = await keyStore.get(KEY_ENTRY);
+        if (stored instanceof CryptoKey && stored !== cryptoKey) {
+          key = Promise.resolve(stored);
+          try {
+            return await open(stored, name, sealed);
+          } catch {
+            // Stale under the stored key too.
+          }
+        }
         await db.del(entry);
         return null;
       }
@@ -81,7 +95,10 @@ function entryName(name: string): string {
   return entry;
 }
 
-/** The stored key, or a new one, stored, when there is none (or what is stored is not a key). */
+/**
+ * The stored key; when there is none (or what is stored is not a key), a new one, committed in one
+ * transaction that keeps a key another instance stored first. Either way, the key that is stored.
+ */
 async function loadKey(store: KvStore): Promise<CryptoKey> {
   const stored = await store.get(KEY_ENTRY);
   if (stored instanceof CryptoKey) return stored;
@@ -89,8 +106,9 @@ async function loadKey(store: KvStore): Promise<CryptoKey> {
     'encrypt',
     'decrypt',
   ]);
-  await store.set(KEY_ENTRY, generated);
-  return generated;
+  return store.update<CryptoKey>(KEY_ENTRY, (current) =>
+    current instanceof CryptoKey ? current : generated,
+  );
 }
 
 async function seal(key: CryptoKey, name: string, value: string): Promise<Sealed> {
@@ -116,5 +134,10 @@ function indexedDbStore(): KvStore {
     set: (key, value) => set(key, value, store),
     del: (key) => del(key, store),
     keys: async () => (await keys(store)).filter((key) => typeof key === 'string'),
+    update: async <T>(key: string, updater: (old: T | undefined) => T) => {
+      const result: { stored?: T } = {};
+      await update<T>(key, (old) => (result.stored = updater(old)), store);
+      return result.stored as T;
+    },
   };
 }

@@ -17,6 +17,11 @@ function memoryStore(): KvStore {
       return Promise.resolve();
     },
     keys: () => Promise.resolve([...raw.keys()]),
+    update: <T>(k: string, updater: (old: T | undefined) => T) => {
+      const next = updater(raw.get(k) as T | undefined);
+      raw.set(k, next);
+      return Promise.resolve(next);
+    },
   };
 }
 const storage = () => createSecureStorage({ db: memoryStore() });

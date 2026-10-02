@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createStore, get } from 'idb-keyval';
+import { clear, createStore, get } from 'idb-keyval';
 import { createSecureStorage, type KvStore } from './storage';
 
 function memoryStore(): KvStore & { raw: Map<string, unknown> } {
@@ -16,6 +16,11 @@ function memoryStore(): KvStore & { raw: Map<string, unknown> } {
       return Promise.resolve();
     },
     keys: () => Promise.resolve([...raw.keys()]),
+    update: <T>(k: string, updater: (old: T | undefined) => T) => {
+      const next = updater(raw.get(k) as T | undefined);
+      raw.set(k, next);
+      return Promise.resolve(next);
+    },
   };
 }
 
@@ -125,6 +130,28 @@ describe('secure storage: the key and the sealed entries', () => {
     expect([await again.get('a'), await again.get('b')]).toEqual(['1', '2']);
   });
 
+  it('keeps one key when two instances first use the store at the same time', async () => {
+    const db = memoryStore();
+    const first = createSecureStorage({ db });
+    const second = createSecureStorage({ db });
+    await Promise.all([first.set('a', '1'), second.set('b', '2')]);
+    const again = createSecureStorage({ db });
+    expect([await again.get('a'), await again.get('b')]).toEqual(['1', '2']);
+    expect([await first.get('b'), await second.get('a')]).toEqual(['2', '1']);
+  });
+
+  it('adopts a key stored after its own instead of removing what that key sealed', async () => {
+    const db = memoryStore();
+    const first = createSecureStorage({ db });
+    await first.set('a', '1');
+    db.raw.delete('secure:key'); // the key is lost, and another instance stores a new one
+    await createSecureStorage({ db }).set('b', '2');
+    expect(await first.get('b')).toBe('2');
+    expect(db.raw.has('secure:b')).toBe(true);
+    await first.set('c', '3'); // sealed under the adopted key from now on
+    expect(await createSecureStorage({ db }).get('c')).toBe('3');
+  });
+
   it('clear keeps the key and entries that are not its own', async () => {
     const db = memoryStore();
     const storage = createSecureStorage({ db });
@@ -159,5 +186,13 @@ describe('secure storage: the key and the sealed entries', () => {
     const sealed = await get<Sealed>('secure:refreshToken', store);
     expect(sealed?.iv).toHaveLength(12);
     expect(await createSecureStorage().get('refreshToken')).toBe('r-1');
+  });
+
+  it('keeps one key in IndexedDB when two instances first use it at the same time', async () => {
+    await clear(createStore('investor-app', 'secure'));
+    const [first, second] = [createSecureStorage(), createSecureStorage()];
+    await Promise.all([first.set('a', '1'), second.set('b', '2')]);
+    const again = createSecureStorage();
+    expect([await again.get('a'), await again.get('b')]).toEqual(['1', '2']);
   });
 });
