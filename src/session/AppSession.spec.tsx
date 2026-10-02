@@ -3,16 +3,18 @@ import { cleanup, render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { join } from 'node:path';
-import { useEffect } from 'react';
-import { AppSessionProvider, useAppSession, type ApiWiring } from './AppSession';
+import { StrictMode, useEffect } from 'react';
+import { AppSessionProvider, useAppSession, type ApiWiring, type AppSession } from './AppSession';
 import { createSampleApi, type SampleApi } from '../api/createSampleApi';
 import { createLiveApi } from '../api/createLiveApi';
 import { MobileApiError } from '../api/MobileApiError';
 import type { PlatformApi } from '../api/PlatformApi';
+import { themes } from '../design/themes';
 import type { Platform } from '../platform/types';
 import { createLock } from '../platform/web/lock';
 import { createSecureStorage } from '../platform/web/storage';
 import { createQueryClient } from '../queries/client';
+import { meQuery } from '../queries/identity';
 import { cssRule } from '../test/cssRules';
 import { fakePlatform } from '../test/fakePlatform';
 import { liveApi as liveOver } from '../test/liveApi';
@@ -2311,6 +2313,30 @@ describe('AppSession: ending and starting sessions in one visit', () => {
     return { ...tab, api, onSignedOut: () => wired?.events.onSignedOut('session_revoked') };
   }
 
+  it('waits for push to end three seconds at most', async () => {
+    const unsubscribe = () => new Promise<null>(() => {}); // the service worker never answers
+    const tab = await signedInTab(fakePlatform({ notifications: { unsubscribe } }));
+    const leaving = tab.session.signOut();
+    await vi.advanceTimersByTimeAsync(2_900);
+    expect(tab.status()).toBe('signed-in');
+    await vi.advanceTimersByTimeAsync(600);
+    await leaving;
+    expect(tab.status()).toBe('signed-out');
+  });
+
+  it('signs out all the same when push cannot be ended', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failure = new Error('push service down');
+    const device = fakePlatform({ notifications: { unsubscribe: () => Promise.reject(failure) } });
+    const tab = await signedInTab(device);
+    tab.queryClient.setQueryData(['sample', 'dashboard'], { of: 'the investor' });
+    await tab.session.signOut();
+    expect(tab.status()).toBe('signed-out');
+    expect(tab.queryClient.getQueryData(['sample', 'dashboard'])).toBeUndefined();
+    expect(sessionStorage.getItem('app.sample')).toBeNull();
+    expect(warn).toHaveBeenCalledWith('[investor-app] ending the session: ending push:', failure);
+  });
+
   it('tells the platform once when the investor taps Sign out twice', async () => {
     const tab = await signedInTab();
     const logout = vi.spyOn(tab.api, 'logout');
@@ -2894,5 +2920,282 @@ describe('AppSession: a device that keeps nothing, or answers nothing', () => {
       error: "Your device's own lock couldn't be checked. You can set a passcode instead.",
     });
     expect(warn).toHaveBeenCalledWith('[investor-app] asking what the device offers:', failure);
+  });
+});
+
+describe('AppSession: unlocking', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    sessionStorage.setItem('app.sample', '1'); // a session from before the reload
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('asks the device once though Unlock is pressed twice', async () => {
+    const verify = vi.fn(() => new Promise<boolean>(() => {}));
+    const tab = openTab(fakePlatform({ lock: { verify } }), () =>
+      createSampleApi({ latencyMs: 0 }),
+    );
+    await waitFor(() => expect(tab.status()).toBe('locked'));
+    void tab.session.unlock();
+    expect(await tab.session.unlock()).toBe(false);
+    expect(verify).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves true only when it opened the app', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const verify = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockRejectedValueOnce(new Error('NotReadableError'))
+      .mockResolvedValue(true);
+    const tab = openTab(fakePlatform({ lock: { verify } }), () =>
+      createSampleApi({ latencyMs: 0 }),
+    );
+    await waitFor(() => expect(tab.status()).toBe('locked'));
+    expect(await tab.session.unlock()).toBe(false); // the device said no
+    expect(await tab.session.unlock()).toBe(false); // the check could not run
+    expect(tab.status()).toBe('locked');
+    expect(await tab.session.unlock()).toBe(true);
+    expect(tab.status()).toBe('signed-in');
+  });
+
+  it('asks the platform afresh, never taking a fetch begun before the lock', async () => {
+    sessionStorage.clear();
+    let wired: ApiWiring | undefined;
+    const api = createSampleApi({
+      latencyMs: 0,
+      onSignedOut: (reason) => wired?.events.onSignedOut(reason),
+    });
+    const tab = openTab(fakePlatform(), (wiring) => {
+      wired = wiring;
+      return api;
+    });
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    tab.session.enrolDevice(); // the device's own lock
+    await waitFor(() => expect(tab.session.getSnapshot().lockMethod).toBe('webauthn'));
+    const before = await createSampleApi({ latencyMs: 0 }).me();
+    let answerFirst: (() => void) | undefined;
+    vi.spyOn(api, 'me').mockImplementationOnce(
+      () => new Promise((resolve) => (answerFirst = () => resolve(before))),
+    );
+    void tab.queryClient.fetchQuery({ ...meQuery(api), staleTime: 0 }); // on its way
+    await waitFor(() => expect(answerFirst).toBeDefined());
+    tab.session.lock();
+    api._test_revoke(); // the platform ends the session while the app is locked
+    void tab.session.unlock();
+    await vi.advanceTimersByTimeAsync(10);
+    answerFirst?.(); // the fetch from before the lock answers, as it was then
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+  });
+});
+
+describe('AppSession: what screens see of it', () => {
+  // The session as last rendered, for the spec to read and call.
+  const shown: { session?: AppSession | undefined } = {};
+  function Grab() {
+    const session = useAppSession();
+    useEffect(() => {
+      shown.session = session;
+    });
+    return <output data-testid="status">{session.status}</output>;
+  }
+  const current = () => {
+    if (shown.session === undefined) throw new Error('No session rendered.');
+    return shown.session;
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    shown.session = undefined;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function show(api: PlatformApi, platform = fakePlatform()) {
+    render(
+      <AppSessionProvider api={api} platform={platform}>
+        <Grab />
+      </AppSessionProvider>,
+    );
+  }
+
+  it('knows the investor only while signed in, and asks for them only then', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    const asked = vi.spyOn(api, 'me');
+    const expected = await createSampleApi({ latencyMs: 0 }).me();
+    show(api, fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } }));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(current().me).toBeNull();
+    expect(asked).not.toHaveBeenCalled();
+    await act(() => current().enterSample());
+    await waitFor(() => expect(current().me?.email).toBe(expected.email));
+  });
+
+  it('paints the brand’s accent', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    const brand = await api.brand();
+    vi.spyOn(api, 'brand').mockResolvedValue({ ...brand, accentHex: '#1F9E76' });
+    show(api);
+    await waitFor(() => expect(current().brand?.accentHex).toBe('#1F9E76'));
+    const theme = current().theme;
+    const painted = themes.accent('#1F9E76', theme);
+    expect(document.documentElement.style.getPropertyValue('--primary')).toBe(painted.primary);
+  });
+
+  it('counts the lock as on while one is set up and the investor never chose', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    show(createSampleApi({ latencyMs: 0 }));
+    await waitFor(() => expect(status()).toHaveTextContent('locked'));
+    await act(async () => {
+      await current().unlock();
+    });
+    expect(current().lockMethod).toBe('webauthn');
+    expect(current().lockEnabled).toBe(true);
+    expect(localStorage.getItem('app.lockEnabled')).toBeNull();
+  });
+
+  it('keeps the investor’s choice to turn the lock off for the next launch', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    show(createSampleApi({ latencyMs: 0 }));
+    await waitFor(() => expect(status()).toHaveTextContent('locked'));
+    await act(async () => {
+      await current().unlock();
+    });
+    let turnedOff: boolean | undefined;
+    act(() => {
+      void current()
+        .setLockEnabled(false)
+        .then((ok) => (turnedOff = ok));
+    });
+    // The sheet takes presses once Radix has set it above the page, a render after it opens.
+    const sheet = await screen.findByRole('dialog', { name: 'Confirm' });
+    await waitFor(() => expect(sheet).toHaveStyle({ pointerEvents: 'auto' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(turnedOff).toBe(true));
+    expect(localStorage.getItem('app.lockEnabled')).toBe('false');
+    expect(current().lockEnabled).toBe(false);
+  });
+
+  it('shows one sheet at a time: the lock’s setup in place of the confirmation', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    show(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } }),
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    act(() => {
+      void current().confirm('Send $10.00 to $grace');
+    });
+    await user.click(await screen.findByRole('button', { name: 'Set up the lock' }));
+    await screen.findByRole('dialog', { name: 'Lock the app on this device' });
+    expect(screen.getAllByRole('dialog', { hidden: true })).toHaveLength(1);
+  });
+
+  it('lets the investor dismiss a notice', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    sessionStorage.setItem('app.sample', '1');
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const clear = () => Promise.reject(new Error('cannot clear'));
+    show(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({ lock: { enrolled: () => Promise.resolve(null), clear } }),
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    await act(() => current().signOut());
+    const notice = screen.getByText(SESSION_COPY.sessionNotCleared);
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(notice).toBeEmptyDOMElement();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('resets storage and shows sign-in when the passcode meets a lost key', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reset = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    show(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({
+        storage: { reset },
+        lock: {
+          available: () => Promise.resolve('passcode'),
+          enrolled: () => Promise.resolve(null),
+          enrollPasscode: () => Promise.reject(new Error(UNREADABLE)),
+        },
+      }),
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await act(() => current().enterSample());
+    await user.click(await screen.findByRole('button', { name: 'Set a passcode' }));
+    await user.type(screen.getByLabelText('Passcode'), '246810');
+    await user.type(await screen.findByLabelText('Repeat passcode'), '246810');
+    await user.click(screen.getByRole('button', { name: 'Save passcode' }));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[investor-app] setting up the lock:', expect.any(Error));
+  });
+
+  it('stays open after 4 minutes 59 hidden, and locks after 5 minutes 1', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    show(createSampleApi({ latencyMs: 0 }));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await act(() => current().enterSample());
+    await setUpDeviceLock(user);
+    act(() => {
+      hidden('hidden');
+      vi.advanceTimersByTime(299_000);
+      hidden('visible');
+    });
+    await act(() => vi.advanceTimersByTimeAsync(20));
+    expect(status()).toHaveTextContent('signed-in');
+    act(() => {
+      hidden('hidden');
+      vi.advanceTimersByTime(301_000);
+      hidden('visible');
+    });
+    expect(status()).toHaveTextContent('locked');
+  });
+
+  it('stops listening to the page and the other tabs once it goes away', async () => {
+    const added: string[] = [];
+    const removed: string[] = [];
+    for (const target of [window, document]) {
+      const add = target.addEventListener.bind(target);
+      const remove = target.removeEventListener.bind(target);
+      vi.spyOn(target, 'addEventListener').mockImplementation((type, ...rest) => {
+        added.push(type);
+        add(type, ...rest);
+      });
+      vi.spyOn(target, 'removeEventListener').mockImplementation((type, ...rest) => {
+        removed.push(type);
+        remove(type, ...rest);
+      });
+    }
+    const view = render(
+      <StrictMode>
+        <AppSessionProvider api={liveOver()} platform={fakePlatform()}>
+          <Grab />
+        </AppSessionProvider>
+      </StrictMode>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    view.unmount();
+    vi.restoreAllMocks();
+    const count = (types: string[], type: string) => types.filter((t) => t === type).length;
+    for (const type of ['storage', 'visibilitychange', 'online', 'offline']) {
+      expect(count(added, type), type).toBeGreaterThan(0);
+      expect(count(removed, type), type).toBe(count(added, type));
+    }
   });
 });
