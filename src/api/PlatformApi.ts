@@ -72,9 +72,11 @@ export interface PlatformApi {
   /**
    * POST /auth/logout with the stored tokens, once; the platform answers `{ ok: true }` regardless,
    * and a failure is ignored. The live client clears the stored tokens before it sends, and never
-   * refreshes, retries or calls onSignedOut; it rejects only when its token store fails.
+   * refreshes, retries or calls onSignedOut; it rejects only when its token store fails. With
+   * `sessionKey`, it ends only that sign-in: when the store holds another, it clears nothing and
+   * sends nothing (another sign-in holds this device), and resolves. The sample ignores the key.
    */
-  logout(): Promise<void>;
+  logout(sessionKey?: string): Promise<void>;
   /** GET /brand. */
   brand(): Promise<Brand>;
 

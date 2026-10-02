@@ -843,6 +843,51 @@ describe('sign-in and sign-out', () => {
     ]);
   });
 
+  it('logs out the sign-in it names, by its key', async () => {
+    const t = setup(() => json(200, { ok: true }), session(1));
+    await t.api.logout('k1');
+    expect([t.tokens(), t.writes, t.calls.map(path)]).toEqual([null, [null], ['/auth/logout']]);
+    expect(bearer(t.calls[0]!)).toBe('Bearer a1');
+  });
+
+  it('leaves a newer sign-in alone, and tells the platform nothing, for an old key', async () => {
+    const t = setup(() => json(200, { ok: true }), session(5, 'k2'));
+    await t.api.logout('k1');
+    expect([t.tokens(), t.writes, t.calls]).toEqual([session(5, 'k2'), [], []]);
+  });
+
+  it('clears only the sign-in it names, though another lands as it logs out', async () => {
+    const t = setup(() => json(200, { ok: true }), session(1), { cutIn: session(5, 'k2') });
+    await t.api.logout('k1');
+    expect(t.tokens()).toEqual(session(5, 'k2'));
+    // The platform hears of the session the logout read, the one it names.
+    expect([bearer(t.calls[0]!), bodyOf(t.calls[0]!)]).toEqual([
+      'Bearer a1',
+      { refreshToken: 'r1' },
+    ]);
+  });
+
+  it('lets a newer sign-in’s refresh land when a logout names an older one', async () => {
+    const refreshOut = gate();
+    const refreshAnswers = gate();
+    const t = setup(
+      async (c) => {
+        if (!isRefresh(c)) return json(200, { id: 'u1' });
+        refreshOut.release();
+        await refreshAnswers.open;
+        return json(200, pair(6));
+      },
+      restarted(5, 'k2'),
+    );
+    const call = t.api.me(); // this page refreshes the newer sign-in first
+    await refreshOut.open;
+    await t.api.logout('k1'); // an older sign-in's logout: not this device's session now
+    refreshAnswers.release();
+    await call;
+    expect(t.tokens()).toEqual(session(6, 'k2'));
+    expect(t.calls.map(path)).toEqual(['/auth/refresh', '/me']);
+  });
+
   it.each(['session_revoked', 'unauthorized'])(
     'neither refreshes nor reports a sign-out for a call that hears %s during a logout',
     async (code) => {
