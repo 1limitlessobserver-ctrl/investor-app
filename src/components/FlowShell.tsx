@@ -18,9 +18,10 @@ export interface FlowShellProps extends ShellProps {
 
 /**
  * The layout of detail screens and flows: Back, the title (the `<h1>`) and the screen's actions,
- * with the bell and Oracle orb on phones; no tab bar. At 900 px and above the rail stays (it
- * carries Alerts and the Oracle) and the header sits over the content column. Render it inside
- * the router.
+ * with the bell and Oracle orb on phones; no tab bar. On phones the controls take the first row
+ * and the title the whole second, so a long title wraps instead of squeezing. At 900 px and above
+ * the rail stays (it carries Alerts and the Oracle) and Back, title and actions share one row over
+ * the content column. Render it inside the router.
  */
 export function FlowShell({
   brand,
@@ -48,7 +49,7 @@ export function FlowShell({
           {actions !== undefined && actions !== null && (
             <div className={styles.actions}>{actions}</div>
           )}
-          {layout === 'phone' && <HeaderActions unread={unread} />}
+          {layout === 'phone' && <HeaderActions unread={unread} className={styles.shellActions} />}
         </div>
       }
       banners={<StatusBanners online={online} updateReady={updateReady} onReload={onReload} />}

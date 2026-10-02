@@ -1,7 +1,8 @@
 /*
- * A glass bar on the bottom edge. Tabs are quiet until chosen; the chosen one brightens and a
- * satellite dot of the accent lights above it. Move rises out of the bar as the solid orb, the
- * one place the accent fills a shape on every screen.
+ * A frosted bar on the bottom edge, dense enough that content scrolling beneath never competes
+ * with the labels. Tabs are quiet until chosen; the chosen one brightens and a satellite dot of
+ * the accent lights above it. Move rises out of the bar as the solid orb, the one place the
+ * accent fills a shape on every screen.
  */
 
 .bar {
@@ -11,7 +12,7 @@
   padding: 0 max(var(--space-2), var(--safe-right)) var(--safe-bottom)
     max(var(--space-2), var(--safe-left));
   border-top: 1px solid var(--glass-border);
-  background: var(--glass);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
   -webkit-backdrop-filter: blur(1.25rem) saturate(160%);
   backdrop-filter: blur(1.25rem) saturate(160%);
 }

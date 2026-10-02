@@ -33,6 +33,10 @@
   pointer-events: none;
 }
 
+.md::before {
+  inset: -10% -22%;
+}
+
 .lg::before {
   inset: -8% -20%;
   border-color: color-mix(in srgb, var(--accent-text) 36%, transparent);

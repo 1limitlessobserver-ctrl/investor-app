@@ -1,14 +1,29 @@
-/* Back, then the title in the display face taking what room is left; it wraps rather than clips. */
+/*
+ * Phones: Back and the controls on the first row, the title in the display face across the whole
+ * second row. 900 px and above: Back, title and actions on one row. A long title wraps between
+ * words; only a word longer than the line breaks.
+ */
 
 .bar {
-  display: flex;
+  display: grid;
   align-items: center;
-  gap: var(--space-2);
-  min-height: 2.75rem;
+  gap: var(--space-1) var(--space-2);
+}
+
+.phone {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'back . actions shell'
+    'title title title title';
+}
+
+.wide {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'back title actions';
 }
 
 .back {
-  flex: none;
+  grid-area: back;
   display: grid;
   place-items: center;
   width: 2.75rem;
@@ -33,15 +48,20 @@
 }
 
 .title {
-  flex: 1;
+  grid-area: title;
   min-width: 0;
   margin: 0;
   font-family: var(--font-display);
-  font-size: var(--text-xl);
+  font-size: var(--text-2xl);
   font-weight: 400;
-  line-height: 1.15;
+  line-height: 1.1;
   letter-spacing: -0.01em;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+
+.phone .title {
+  padding-bottom: var(--space-1);
 }
 
 .wide .title {
@@ -49,8 +69,12 @@
 }
 
 .actions {
-  flex: none;
+  grid-area: actions;
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.shellActions {
+  grid-area: shell;
 }

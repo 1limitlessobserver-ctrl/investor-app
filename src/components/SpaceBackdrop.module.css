@@ -1,7 +1,8 @@
 /*
  * Depth, from the back: the theme's background; a wide, faint glow of the accent from above;
- * for the space themes the starfield, then a planet whose limb catches the accent along the
- * bottom of the screen (it hides the stars behind it). Everything is derived from the tokens.
+ * for the space themes the starfield, then the dark night side of a planet rising at most 7rem
+ * from the bottom edge, its limb catching the accent (it hides the stars behind it). Everything
+ * is derived from the tokens.
  */
 
 .backdrop {
@@ -25,22 +26,18 @@
 }
 
 .backdrop[data-space]::after {
+  --diameter: max(170vw, 90rem);
   content: '';
   position: absolute;
-  bottom: 0;
+  bottom: calc(min(14vh, 7rem) - var(--diameter));
   left: 50%;
-  width: max(170vw, 90rem);
+  width: var(--diameter);
   aspect-ratio: 1;
   border-radius: 50%;
-  background: radial-gradient(
-    circle at 50% 0%,
-    color-mix(in srgb, var(--surface) 80%, var(--background)),
-    var(--background) 22%
-  );
+  background: var(--background);
   box-shadow:
-    0 -1px 0 color-mix(in srgb, var(--accent-text) 42%, transparent),
-    0 -0.75rem 2.5rem -0.75rem color-mix(in srgb, var(--accent-text) 30%, transparent),
-    0 -4rem 9rem -2rem var(--glow);
-  opacity: 0.9;
-  translate: -50% 92%;
+    0 -1px 0 color-mix(in srgb, var(--accent-text) 40%, transparent),
+    0 -0.5rem 2rem -0.5rem color-mix(in srgb, var(--accent-text) 24%, transparent),
+    0 -3rem 7rem -2.5rem var(--glow);
+  translate: -50% 0;
 }

@@ -1,7 +1,8 @@
 /*
- * The shells' frame, transparent over the fixed SpaceBackdrop. Phones: glass header pinned to the
- * top under the status bar, content column, room at the bottom for the tab bar and the home
- * indicator. 900 px and above: a glass rail on the left, the content centred in at most 720 px.
+ * The shells' frame, transparent over the fixed SpaceBackdrop. Phones: a frosted header pinned to
+ * the top under the status bar (dense enough that text scrolling beneath never competes with it,
+ * blur or not), the content column, room at the bottom for the tab bar and the home indicator.
+ * 900 px and above: a glass rail on the left, the content centred in at most 720 px.
  */
 
 .frame {
@@ -51,7 +52,7 @@
   padding: calc(var(--safe-top) + var(--space-2)) max(var(--space-4), var(--safe-right))
     var(--space-2) max(var(--space-4), var(--safe-left));
   border-bottom: 1px solid var(--glass-border);
-  background: var(--glass);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
   -webkit-backdrop-filter: blur(1.25rem) saturate(160%);
   backdrop-filter: blur(1.25rem) saturate(160%);
 }
