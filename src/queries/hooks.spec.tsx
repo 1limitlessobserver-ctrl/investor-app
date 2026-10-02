@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
+import { QueryObserver, type QueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { createSampleApi } from '../api/createSampleApi';
 import type { PlatformApi } from '../api/PlatformApi';
@@ -31,18 +32,63 @@ type MutationHook = () => { mutateAsync: (variables: unknown) => Promise<unknown
 
 function setup(api: PlatformApi, platform = fakePlatform()) {
   const queryClient = createQueryClient();
-  const invalidated = vi.spyOn(queryClient, 'invalidateQueries');
   const wrapper = ({ children }: { children: ReactNode }) => (
     <AppSessionProvider api={api} platform={platform} queryClient={queryClient}>
       {children}
     </AppSessionProvider>
   );
-  /** The keys invalidated so far, without the mode, sorted. */
-  const keys = () =>
-    invalidated.mock.calls
-      .map(([filters]) => JSON.stringify((filters?.queryKey ?? []).slice(1)))
+  return { queryClient, wrapper };
+}
+
+/**
+ * A screen's worth of queries on show, under the session's mode, one of each name (and two of
+ * `investment`): each counts its fetches. `refetched()` names the ones fetched again since they
+ * first loaded, as their keys without the mode, sorted.
+ */
+async function queriesOnShow(queryClient: QueryClient, api: PlatformApi) {
+  const shown: (string | number)[][] = [
+    ['me'],
+    ['sessions'],
+    ['kyc'],
+    ['dashboard'],
+    ['investments'],
+    ['investment', 'pos_1'],
+    ['investment', 'pos_9'],
+    ['strategies'],
+    ['history'],
+    ['statements', 'quarterly'],
+    ['statement', '2026-09'],
+    ['notifications'],
+    ['tickets', 1],
+    ['ticket', 'tk_9'],
+    ['depositOverview'],
+    ['withdrawals'],
+    ['transfers'],
+    ['legacyPlan'],
+    ['beneficiaries'],
+  ];
+  const fetches = new Map<string, number>();
+  const count = (name: string) => {
+    fetches.set(name, (fetches.get(name) ?? 0) + 1);
+    return Promise.resolve({ key: name });
+  };
+  // The session shares the investor's query, and its own fetch serves it: count at the api.
+  vi.spyOn(api, 'me').mockImplementation(() => count('["me"]') as never);
+  const stops = shown.map((key) => {
+    const name = JSON.stringify(key);
+    const observer = new QueryObserver<unknown>(queryClient, {
+      queryKey: [api.mode, ...key],
+      queryFn: name === '["me"]' ? () => api.me() : () => count(name),
+    });
+    return observer.subscribe(() => {});
+  });
+  await waitFor(() => expect(fetches.size).toBe(shown.length));
+  const refetched = () =>
+    [...fetches]
+      .filter(([, count]) => count > 1)
+      .map(([name]) => name)
       .sort();
-  return { queryClient, wrapper, keys };
+  return { refetched, stop: () => stops.forEach((stop) => stop()) };
 }
 
 const ALERTS = ['["dashboard"]', '["me"]', '["notifications"]'];
@@ -313,12 +359,43 @@ describe('mutation hooks invalidate exactly the queries they change', () => {
     ],
   ] as const)('%s', async (_, hook, method, variables, answer, expected) => {
     const { api, calls } = stubbedApi({ [method]: answer });
-    const { wrapper, keys } = setup(api);
+    const { wrapper, queryClient } = setup(api);
     const { result } = renderHook(hook as MutationHook, { wrapper });
+    const shown = await queriesOnShow(queryClient, api);
     // Each hook takes its api method's own argument.
     await result.current.mutateAsync(variables);
     expect(calls[method]).toHaveBeenCalledWith(variables);
-    expect(keys()).toEqual([...expected].sort());
+    // The queries a change names (a name alone: every one of that name) are fetched again, and
+    // no others.
+    const matches = (name: string) =>
+      expected.some((prefix) => name.startsWith(prefix.slice(0, -1)));
+    const again = [
+      '["me"]',
+      '["sessions"]',
+      '["kyc"]',
+      '["dashboard"]',
+      '["investments"]',
+      '["investment","pos_1"]',
+      '["investment","pos_9"]',
+      '["strategies"]',
+      '["history"]',
+      '["statements","quarterly"]',
+      '["statement","2026-09"]',
+      '["notifications"]',
+      '["tickets",1]',
+      '["ticket","tk_9"]',
+      '["depositOverview"]',
+      '["withdrawals"]',
+      '["transfers"]',
+      '["legacyPlan"]',
+      '["beneficiaries"]',
+    ]
+      .filter(matches)
+      .sort();
+    await waitFor(() => expect(shown.refetched()).toEqual(again));
+    await new Promise((resolve) => setTimeout(resolve, 20)); // and nothing more comes
+    expect(shown.refetched()).toEqual(again);
+    shown.stop();
   });
 
   it.each([
