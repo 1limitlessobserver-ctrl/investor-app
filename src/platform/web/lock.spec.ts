@@ -943,3 +943,81 @@ describe('device lock: enrolments and clear() wait for a passcode check under wa
     expect(await lock.enrolled()).toBeNull();
   });
 });
+
+describe('verifyAssertion: the DER of an ES256 signature', () => {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const origin = 'https://app.example';
+  const clientData = { type: 'webauthn.get', challenge: base64url.encode(challenge), origin };
+  /** SEQUENCE { INTEGER, INTEGER } around the integers' bytes, as given. */
+  const der = (...integers: number[][]) => {
+    const body = integers.flatMap((integer) => [0x02, integer.length, ...integer]);
+    return new Uint8Array([0x30, body.length, ...body]);
+  };
+  /** A 32-byte unsigned integer as DER writes it: no leading zeros, 0x00 before 0x80 or more. */
+  const integer = (bytes: Uint8Array) => {
+    let at = 0;
+    while (at < 31 && bytes[at] === 0) at++;
+    const value = [...bytes.subarray(at)];
+    return value[0]! >= 0x80 ? [0, ...value] : value;
+  };
+  const changed = (bytes: Uint8Array, at: number, value: number) => {
+    const copy = new Uint8Array(bytes);
+    copy[at] = value;
+    return copy;
+  };
+
+  /** A genuine assertion, and the 32-byte r and s of a fresh signature with r below 0x80. */
+  async function assertion() {
+    const keyPair = await es256();
+    const signed = await signAssertion(keyPair, { clientData, rpId: 'app.example', flags: 0x05 });
+    const input = {
+      publicKeySpki: await spkiOf(keyPair),
+      alg: -7 as const,
+      ...signed,
+      expectedChallenge: challenge,
+      expectedOrigin: origin,
+      rpId: 'app.example',
+    };
+    const clientHash = await crypto.subtle.digest('SHA-256', signed.clientDataJSON);
+    const message = new Uint8Array([...signed.authenticatorData, ...new Uint8Array(clientHash)]);
+    for (let attempt = 0; attempt < 64; attempt++) {
+      const raw = new Uint8Array(
+        await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keyPair.privateKey, message),
+      );
+      if (raw[0]! < 0x80) return { input, r: raw.slice(0, 32), s: raw.slice(32) };
+    }
+    throw new Error('no signature with r below 0x80 in 64 tries');
+  }
+
+  it('accepts one SEQUENCE of two INTEGERs with nothing after it, exactly', async () => {
+    const { input, r, s } = await assertion();
+    const exact = der(integer(r), integer(s));
+    expect(await verifyAssertion({ ...input, signature: exact })).toBe(true);
+    const counted = new Uint8Array([...exact, 0]);
+    counted[1]! += 1;
+    const cases: [string, Uint8Array][] = [
+      ['a byte after the SEQUENCE', new Uint8Array([...exact, 0])],
+      ['a byte after s, counted in the SEQUENCE', counted],
+      ['a SEQUENCE length one short', changed(exact, 1, exact[1]! - 1)],
+      ['a SEQUENCE length one long', changed(exact, 1, exact[1]! + 1)],
+      ['a SET instead of a SEQUENCE', changed(exact, 0, 0x31)],
+      ['r not an INTEGER', changed(exact, 2, 0x04)],
+      ['s not an INTEGER', changed(exact, 4 + exact[3]!, 0x04)],
+    ];
+    for (const [name, signature] of cases) {
+      expect(await verifyAssertion({ ...input, signature }), name).toBe(false);
+    }
+  });
+
+  it('takes a 33-byte INTEGER only with its sign byte: 0x00 before 0x80 or more', async () => {
+    const { input, r, s } = await assertion();
+    const cases: [string, Uint8Array][] = [
+      ['r after a 0x00 it does not need', der([0, ...r], integer(s))],
+      ['r after two 0x00', der([0, 0, ...r], integer(s))],
+      ['s after a byte that is not 0x00', der(integer(r), [0x01, ...s])],
+    ];
+    for (const [name, signature] of cases) {
+      expect(await verifyAssertion({ ...input, signature }), name).toBe(false);
+    }
+  });
+});

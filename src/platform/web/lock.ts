@@ -283,7 +283,8 @@ export async function verifyAssertion(input: {
 /**
  * An ES256 signature as WebCrypto verifies it: r and s, 32 bytes each. The authenticator sends DER,
  * SEQUENCE { INTEGER r, INTEGER s }, where each integer drops its leading zero bytes and gains a
- * 0x00 before a first byte of 0x80 or more. Null when the bytes are not that.
+ * 0x00 before a first byte of 0x80 or more. Null when the bytes are not exactly that: another tag
+ * or length, bytes left over, or an integer longer than 32 bytes but for that one sign byte.
  */
 function rawSignature(der: Uint8Array): Bytes | null {
   if (der[0] !== 0x30 || der[1] !== der.length - 2) return null;
@@ -293,7 +294,7 @@ function rawSignature(der: Uint8Array): Bytes | null {
     const length = der[at + 1];
     if (der[at] !== 0x02 || length === undefined || at + 2 + length > der.length) return null;
     let value = der.subarray(at + 2, at + 2 + length);
-    while (value.length > 32 && value[0] === 0) value = value.subarray(1);
+    if (value.length === 33 && value[0] === 0 && (value[1] ?? 0) >= 0x80) value = value.subarray(1);
     if (value.length > 32) return null;
     raw.set(value, offset + 32 - value.length);
     at += 2 + length;
