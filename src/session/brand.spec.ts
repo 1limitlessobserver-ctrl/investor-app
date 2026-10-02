@@ -1,0 +1,86 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Brand } from '../api/types';
+import { sampleData } from '../sample/sampleData';
+import { appConfig } from './appConfig';
+import { accentFor, brandCache, themeChoice, themeFor } from './brand';
+
+const brand = (): Brand => structuredClone(sampleData.createState().brand);
+
+afterEach(() => {
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
+
+describe('brandCache', () => {
+  it('keeps the brand on this device for the next launch', () => {
+    expect(brandCache.read()).toBeNull();
+    const b = brand();
+    brandCache.write(b);
+    expect(brandCache.read()).toEqual(b);
+  });
+
+  it('forgets a brand cached by another version of the app', () => {
+    localStorage.setItem('app.brand', JSON.stringify({ appVersion: '0.0.0-old', brand: brand() }));
+    expect(brandCache.read()).toBeNull();
+  });
+
+  it('reads anything that is not a whole brand as none', () => {
+    const cached = (value: unknown) =>
+      localStorage.setItem(
+        'app.brand',
+        JSON.stringify({ appVersion: appConfig.appVersion, brand: value }),
+      );
+    for (const broken of [
+      null,
+      'Everest',
+      { ...brand(), name: 42 },
+      { ...brand(), defaultTheme: 'neon' },
+      { ...brand(), features: { kyc: true } },
+      { ...brand(), links: null },
+      { ...brand(), apiVersion: 2 },
+    ]) {
+      cached(broken);
+      expect(brandCache.read()).toBeNull();
+    }
+    localStorage.setItem('app.brand', '{not json');
+    expect(brandCache.read()).toBeNull();
+  });
+
+  it('carries on without the cache when storage is blocked', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    expect(() => brandCache.write(brand())).not.toThrow();
+    expect(brandCache.read()).toBeNull();
+  });
+});
+
+describe('themeChoice', () => {
+  it('remembers a theme the investor picked, and only a theme', () => {
+    expect(themeChoice.read()).toBeNull();
+    themeChoice.write('ivory');
+    expect(localStorage.getItem('app.theme')).toBe('ivory');
+    expect(themeChoice.read()).toBe('ivory');
+    localStorage.setItem('app.theme', 'neon');
+    expect(themeChoice.read()).toBeNull();
+  });
+});
+
+describe('themeFor', () => {
+  it('shows the investor’s choice, else the brand’s default, else Orbital', () => {
+    expect(themeFor('aegis', { ...brand(), defaultTheme: 'verdant' })).toBe('aegis');
+    expect(themeFor(null, { ...brand(), defaultTheme: 'verdant' })).toBe('verdant');
+    expect(themeFor(null, null)).toBe('orbital');
+  });
+});
+
+describe('accentFor', () => {
+  it('paints the brand’s accent when it is a colour, else the install-time one', () => {
+    expect(accentFor({ ...brand(), accentHex: '#1F9E76' }, '#6EA8FF')).toBe('#1F9E76');
+    expect(accentFor({ ...brand(), accentHex: 'green' }, '#6EA8FF')).toBe('#6EA8FF');
+    expect(accentFor(null, '#6EA8FF')).toBe('#6EA8FF');
+  });
+});
