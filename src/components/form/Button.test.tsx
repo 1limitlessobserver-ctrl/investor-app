@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createRef, type FormEvent } from 'react';
+import { createRef, type FormEvent, type MouseEvent } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { cssRule, cssValues, rem } from '../../test/cssRules';
 import { Button } from './Button';
@@ -94,6 +94,34 @@ describe('Button', () => {
     expect(link).toHaveAttribute('href', 'https://example.com/update');
     expect(link).toHaveClass('button', 'outline', 'lg');
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('passes its attributes, ref and press on to the child it lends its look to', async () => {
+    const onClick = vi.fn<(event: MouseEvent) => void>((event) => event.preventDefault());
+    let received: Element | null = null;
+    render(
+      <Button
+        asChild
+        onClick={onClick}
+        ref={(element) => {
+          received = element;
+        }}
+        title="Opens the store"
+        aria-describedby="where"
+      >
+        <a href="https://example.com/update" className="own">
+          Get the update
+        </a>
+      </Button>,
+    );
+    const link = screen.getByRole('link', { name: 'Get the update' });
+    expect(received).toBe(link);
+    expect(link).toHaveAttribute('title', 'Opens the store');
+    expect(link).toHaveAttribute('aria-describedby', 'where');
+    expect(link).toHaveClass('button', 'own');
+    expect(link).not.toHaveAttribute('type');
+    await userEvent.setup().click(link);
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a 44 px target at every size', () => {

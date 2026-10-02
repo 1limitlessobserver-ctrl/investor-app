@@ -18,7 +18,8 @@ export type ButtonProps = ComponentProps<'button'> & {
   loading?: boolean | undefined;
   /**
    * Lends the button's look to its single child, a link say, instead of rendering a `<button>`.
-   * Put the child's own attributes on the child; `loading` and `type` do not apply.
+   * The other props (attributes, `onClick`, `ref`) pass on to the child, merged with its own;
+   * `loading` and `type` do not apply.
    */
   asChild?: boolean | undefined;
 };
@@ -32,7 +33,8 @@ function Spinner() {
 
 /**
  * The app's button. `type` is "button" unless set, so a press never submits a form by accident:
- * pass `type="submit"` for a form's main action. A `ref` reaches the `<button>`.
+ * pass `type="submit"` for a form's main action. A `ref` reaches the `<button>` (with `asChild`,
+ * the child).
  */
 export function Button({
   variant = 'primary',
@@ -49,7 +51,13 @@ export function Button({
     .filter(Boolean)
     .join(' ');
 
-  if (asChild) return <Slot.Root className={classes}>{children}</Slot.Root>;
+  if (asChild) {
+    return (
+      <Slot.Root {...rest} className={classes} onClick={onClick}>
+        {children}
+      </Slot.Root>
+    );
+  }
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     if (loading) {
