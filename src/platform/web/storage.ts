@@ -12,7 +12,8 @@
 // Each value is kept under `secure:<name>` as { iv, data }: a fresh random 12-byte IV and the
 // ciphertext, sealed with its name as additional data so it cannot be moved to another name. An
 // instance runs its calls one at a time, in call order. A value that no longer decrypts (its key
-// was lost, or it was changed) reads as null and is removed.
+// was lost, or it was changed) or has another shape reads as null and is removed; any other
+// failure rejects the call and keeps the value.
 
 import { createStore, del, get, keys, set, update } from 'idb-keyval';
 import type { SecureStorage } from '../types';
@@ -85,9 +86,9 @@ export function createSecureStorage(
         const cryptoKey = await theKey();
         const sealed = await db.get(entry);
         if (sealed === undefined) return null;
-        try {
-          return await open(cryptoKey, name, sealed);
-        } catch {
+        if (isSealed(sealed)) {
+          const value = await openUnlessStale(cryptoKey, name, sealed);
+          if (value !== null) return value;
           // Another instance may have stored a different key since this one read it: adopt the
           // stored key and try once more before calling the value stale. (IndexedDB answers a new
           // object on every read, so there the second try always runs.) A stored key that cannot be
@@ -95,15 +96,12 @@ export function createSecureStorage(
           const stored = await storedKey(keyStore);
           if (stored && stored !== cryptoKey) {
             key = Promise.resolve(stored);
-            try {
-              return await open(stored, name, sealed);
-            } catch {
-              // Stale under the stored key too.
-            }
+            const again = await openUnlessStale(stored, name, sealed);
+            if (again !== null) return again;
           }
-          await db.del(entry);
-          return null;
         }
+        await db.del(entry);
+        return null;
       }),
     set: (name, value) =>
       inOrder(async () => {
@@ -188,12 +186,36 @@ async function seal(key: CryptoKey, name: string, value: string): Promise<Sealed
   return { iv, data: new Uint8Array(data) };
 }
 
-/** Throws when the value does not decrypt: the wrong key, another name, or changed bytes. */
-async function open(key: CryptoKey, name: string, sealed: unknown): Promise<string> {
-  const { iv, data } = sealed as Sealed;
-  const additionalData = new TextEncoder().encode(name);
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData }, key, data);
-  return new TextDecoder().decode(plain);
+/** Whether a stored value has the shape set() writes: { iv: 12 bytes, data: bytes }. */
+function isSealed(value: unknown): value is Sealed {
+  if (typeof value !== 'object' || value === null) return false;
+  const { iv, data } = value as Record<string, unknown>;
+  return isBytes(iv) && iv.length === 12 && isBytes(data);
+}
+
+/** A Uint8Array from any realm (fake-indexeddb answers the specs' ones from another). */
+function isBytes(value: unknown): value is Uint8Array<ArrayBuffer> {
+  return Object.prototype.toString.call(value) === '[object Uint8Array]';
+}
+
+/**
+ * The value, or null when it does not decrypt (WebCrypto's OperationError: the wrong key, another
+ * name, or changed bytes). Any other failure throws.
+ */
+async function openUnlessStale(
+  key: CryptoKey,
+  name: string,
+  sealed: Sealed,
+): Promise<string | null> {
+  try {
+    const additionalData = new TextEncoder().encode(name);
+    const { iv, data } = sealed;
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData }, key, data);
+    return new TextDecoder().decode(plain);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'OperationError') return null;
+    throw error;
+  }
 }
 
 function indexedDbStore(): KvStore {

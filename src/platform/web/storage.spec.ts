@@ -344,3 +344,47 @@ describe('secure storage: removing many entries', () => {
     expect([...memory.raw.keys()]).toEqual(['secure:a']);
   });
 });
+
+describe('secure storage: values that no longer decrypt', () => {
+  it('keeps a value whose decryption fails for another reason than the value', async () => {
+    const db = memoryKvStore();
+    const storage = createSecureStorage({ db });
+    await storage.set('a', '1');
+    const decrypt = vi.spyOn(crypto.subtle, 'decrypt').mockRejectedValue(new TypeError('a bug'));
+    try {
+      await expect(storage.get('a')).rejects.toThrow('a bug');
+    } finally {
+      decrypt.mockRestore();
+    }
+    expect(db.raw.has('secure:a')).toBe(true);
+    expect(await storage.get('a')).toBe('1');
+  });
+
+  it('reads an entry not shaped { iv: 12 bytes, data: bytes } as stale, unopened', async () => {
+    const db = memoryKvStore();
+    const storage = createSecureStorage({ db });
+    await storage.set('a', '1');
+    const { iv, data } = db.raw.get('secure:a') as Sealed;
+    const shapes = [
+      null, // what Chromium and WebKit read for a value they cannot deserialise
+      'text',
+      [iv, data],
+      { iv },
+      { data },
+      { iv: iv.slice(0, 11), data },
+      { iv: [...iv], data },
+      { iv, data: [...data] },
+    ];
+    const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+    try {
+      for (const shape of shapes) {
+        db.raw.set('secure:b', shape);
+        expect(await storage.get('b'), JSON.stringify(shape)).toBeNull();
+        expect(db.raw.has('secure:b')).toBe(false);
+      }
+      expect(decrypt).not.toHaveBeenCalled();
+    } finally {
+      decrypt.mockRestore();
+    }
+  });
+});
