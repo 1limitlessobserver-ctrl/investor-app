@@ -61,7 +61,7 @@ export interface NotificationsAdapter {
   /** Ends the push subscription; the endpoint it had (for /push/unsubscribe), or null if none. */
   unsubscribe(): Promise<string | null>;
   /** Shows a notification from this device, with the app's icon and badge. */
-  show(n: { title: string; body?: string; tag?: string }): Promise<void>;
+  show(n: { title: string; body?: string | undefined; tag?: string | undefined }): Promise<void>;
 }
 
 export interface ShareAdapter {

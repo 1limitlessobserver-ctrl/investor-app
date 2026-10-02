@@ -186,7 +186,8 @@ describe('web notifications: permission, subscriptions and local notifications',
     const n = createWebNotifications({ registration });
     await n.show({ title: 'Deposit received', body: 'It is in your wallet.', tag: 'al_1' });
     await n.show({ title: 'Statement ready' });
-    expect(showNotification.mock.calls).toEqual([
+    await n.show({ title: 'Statement ready', body: undefined, tag: undefined });
+    expect(showNotification.mock.calls).toStrictEqual([
       [
         'Deposit received',
         {
@@ -196,6 +197,7 @@ describe('web notifications: permission, subscriptions and local notifications',
           badge: '/icons/badge-96.png',
         },
       ],
+      ['Statement ready', { icon: '/icons/icon-192.png', badge: '/icons/badge-96.png' }],
       ['Statement ready', { icon: '/icons/icon-192.png', badge: '/icons/badge-96.png' }],
     ]);
   });
