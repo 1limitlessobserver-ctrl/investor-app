@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react';
 import { X } from 'lucide-react';
 import { Dialog as RadixDialog } from 'radix-ui';
-import { useMotion } from '../../design/useMotion';
+import { useReducedMotion } from '../../design/useMotion';
 import styles from './Dialog.module.css';
 
 // A centred modal dialog over Radix, in the parts the ported screens use:
@@ -44,7 +44,8 @@ export function DialogContent({
   closeButton = true,
   ...rest
 }: DialogContentProps) {
-  const motion = useMotion().animate ? 'on' : 'off';
+  // The reduced-motion setting alone, so the entrance does not replay when the app comes back.
+  const motion = useReducedMotion() ? 'off' : 'on';
   return (
     <RadixDialog.Portal>
       <RadixDialog.Overlay className={styles.overlay} data-motion={motion} />

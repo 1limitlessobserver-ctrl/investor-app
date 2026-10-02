@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubMatchMedia } from '../../test/stubMatchMedia';
@@ -19,9 +19,28 @@ function Reinvest({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
   );
 }
 
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+  act(() => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+}
+
 describe('Sheet', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
+  it('animates by the reduced-motion setting alone, so coming back does not replay it', () => {
+    stubMatchMedia(false);
+    render(<Reinvest onOpenChange={() => {}} />);
+    const sheet = screen.getByRole('dialog', { name: 'Reinvest matured capital' });
+    expect(sheet).toHaveAttribute('data-motion', 'on');
+    setVisibility('hidden');
+    expect(sheet).toHaveAttribute('data-motion', 'on');
+    setVisibility('visible');
+    expect(sheet).toHaveAttribute('data-motion', 'on');
   });
 
   it('rises from the bottom on phones', () => {

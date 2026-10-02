@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { stubMatchMedia } from '../../test/stubMatchMedia';
 import { Button } from './Button';
 import {
   Dialog,
@@ -36,7 +37,51 @@ function NewRequest({ closeButton }: { closeButton?: boolean }) {
   );
 }
 
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+  act(() => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+}
+
 describe('Dialog', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
+  it('animates by the reduced-motion setting alone, so coming back does not replay it', () => {
+    stubMatchMedia(false);
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>New request</DialogTitle>
+        </DialogContent>
+      </Dialog>,
+    );
+    const dialog = screen.getByRole('dialog', { name: 'New request' });
+    expect(dialog).toHaveAttribute('data-motion', 'on');
+    setVisibility('hidden');
+    expect(dialog).toHaveAttribute('data-motion', 'on');
+    setVisibility('visible');
+    expect(dialog).toHaveAttribute('data-motion', 'on');
+  });
+
+  it('stays still under reduced motion', () => {
+    stubMatchMedia(true);
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>New request</DialogTitle>
+        </DialogContent>
+      </Dialog>,
+    );
+    expect(screen.getByRole('dialog', { name: 'New request' })).toHaveAttribute(
+      'data-motion',
+      'off',
+    );
+  });
+
   it('opens named and described, with focus inside and the page behind locked', async () => {
     const user = userEvent.setup();
     render(<NewRequest />);

@@ -2,7 +2,7 @@ import type { ComponentProps } from 'react';
 import { X } from 'lucide-react';
 import { Dialog as RadixDialog } from 'radix-ui';
 import { useLayout } from '../../design/useLayout';
-import { useMotion } from '../../design/useMotion';
+import { useReducedMotion } from '../../design/useMotion';
 import styles from './Sheet.module.css';
 
 // A sheet: rises from the bottom on phones and slides in from the right as a side panel at
@@ -44,7 +44,8 @@ export function SheetContent({
   ...rest
 }: SheetContentProps) {
   const layout = useLayout();
-  const motion = useMotion().animate ? 'on' : 'off';
+  // The reduced-motion setting alone, so the entrance does not replay when the app comes back.
+  const motion = useReducedMotion() ? 'off' : 'on';
   return (
     <RadixDialog.Portal>
       <RadixDialog.Overlay className={styles.overlay} data-motion={motion} />
