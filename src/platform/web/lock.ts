@@ -118,19 +118,24 @@ export function createLock(opts: {
 
     async enrollWebAuthn(user) {
       if (!credentials) throw new Error(CANNOT_ENROL);
+      // The install's handle names every credential it enrols, so a new one replaces the last on
+      // the authenticator; without one, a random handle.
+      const handle = user.handle === undefined ? randomBytes(32) : new Uint8Array(user.handle);
       const created = await credentials.create({
         publicKey: {
           rp: { id: rpId, name: document.title },
-          user: { id: randomBytes(32), name: user.email, displayName: user.email },
+          user: { id: handle, name: user.email, displayName: user.email },
           challenge: randomBytes(32),
           pubKeyCredParams: [
             { type: 'public-key', alg: ES256 },
             { type: 'public-key', alg: RS256 },
           ],
+          // Not a discoverable passkey: the lock always names its credential (allowCredentials),
+          // and the investor's list of passkeys stays clear of it.
           authenticatorSelection: {
             authenticatorAttachment: 'platform',
             userVerification: 'required',
-            residentKey: 'preferred',
+            residentKey: 'discouraged',
           },
           attestation: 'none',
           timeout: PROMPT_TIMEOUT_MS,

@@ -34,3 +34,13 @@ export function getDeviceId(storage?: Pick<Storage, 'getItem' | 'setItem'>): str
     return unstored;
   }
 }
+
+/**
+ * The user handle of this install's device credentials (src/platform/types.ts, enrollWebAuthn):
+ * the SHA-256 of its device id, 32 bytes, the same every time, so a new credential replaces the
+ * last. It names the install only, like the id it comes from.
+ */
+export async function deviceHandle(storage?: Pick<Storage, 'getItem' | 'setItem'>) {
+  const id = new TextEncoder().encode(getDeviceId(storage));
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', id));
+}

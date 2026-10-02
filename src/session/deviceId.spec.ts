@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getDeviceId } from './deviceId';
+import { deviceHandle, getDeviceId } from './deviceId';
 
 /** A Storage stand-in: `failing` makes every call throw, as a blocked localStorage does. */
 function store(initial: Record<string, string> = {}, failing = false) {
@@ -55,5 +55,20 @@ describe('getDeviceId', () => {
       expect.any(DOMException),
     );
     warn.mockRestore();
+  });
+});
+
+describe('deviceHandle', () => {
+  it('is 32 bytes, the same for this install and another for another install', async () => {
+    const install = store({ 'app.deviceId': 'install_1-abcdef' });
+    const handle = await deviceHandle(install);
+    expect(handle).toHaveLength(32);
+    expect(await deviceHandle(install)).toEqual(handle);
+    expect(await deviceHandle(store({ 'app.deviceId': 'install_2-abcdef' }))).not.toEqual(handle);
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode('install_1-abcdef'),
+    );
+    expect(handle).toEqual(new Uint8Array(digest));
   });
 });

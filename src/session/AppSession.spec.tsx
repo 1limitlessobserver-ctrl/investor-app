@@ -1306,6 +1306,29 @@ describe('AppSession: setting up the lock', () => {
     expect(localStorage.getItem('app.lockEnabled')).toBe('true');
   });
 
+  it('names the device credential after the investor, under this install’s handle', async () => {
+    localStorage.setItem('app.deviceId', 'install_1-abcdef');
+    const enrollWebAuthn = vi.fn(() => Promise.resolve());
+    const user = await launch(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({ lock: { enrolled: () => Promise.resolve(null), enrollWebAuthn } }),
+    );
+    await user.click(screen.getByText('enter'));
+    const me = await createSampleApi({ latencyMs: 0 }).me();
+    await user.click(
+      await screen.findByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
+    );
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode('install_1-abcdef'),
+    );
+    expect(enrollWebAuthn).toHaveBeenCalledWith({
+      id: me.id,
+      email: me.email,
+      handle: new Uint8Array(digest),
+    });
+  });
+
   it('offers the passcode when the browser cannot hold a device lock', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const user = await launch(

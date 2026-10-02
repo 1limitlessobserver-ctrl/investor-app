@@ -31,6 +31,7 @@ import { isBelowMinimum } from '../lib/semver';
 import type { LockMethod, Platform } from '../platform/types';
 import { brandQuery, meQuery } from '../queries/identity';
 import { themeChoice } from './brand';
+import { deviceHandle } from './deviceId';
 import { lockPreference, sampleFlag } from './localFlags';
 import type { SessionTokenStore, TokenStoreEvent } from './tokens';
 
@@ -266,6 +267,13 @@ export function createSessionController(deps: SessionDeps) {
   let ending: Ending | null = null;
   // The investor's lock choice when this device could not save it: it holds for this visit.
   let unsavedChoice: boolean | null = null;
+  // The user handle of this install's device credentials, made now so that the tap that enrols
+  // one asks the browser at once (its prompt needs the tap).
+  let handle: Uint8Array | undefined;
+  deviceHandle().then(
+    (bytes) => (handle = bytes),
+    (error: unknown) => reportProblem('making the device handle', error),
+  );
 
   function set(patch: Partial<SessionState>): void {
     state = { ...state, ...patch };
@@ -858,7 +866,11 @@ export function createSessionController(deps: SessionDeps) {
     const offer = state.lockSetup;
     if (offer === null || offer.busy) return;
     const me = queryClient.getQueryData(meQuery(api).queryKey);
-    const enrolling = platform.lock.enrollWebAuthn({ id: me?.id ?? '', email: me?.email ?? '' });
+    const enrolling = platform.lock.enrollWebAuthn({
+      id: me?.id ?? '',
+      email: me?.email ?? '',
+      handle,
+    });
     set({ lockSetup: { ...offer, busy: true, error: undefined } });
     const gen = generation;
     enrolling.then(

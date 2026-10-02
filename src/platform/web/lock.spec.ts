@@ -242,7 +242,7 @@ describe('webauthn lock', () => {
     expect(createArg.authenticatorSelection).toEqual({
       authenticatorAttachment: 'platform',
       userVerification: 'required',
-      residentKey: 'preferred',
+      residentKey: 'discouraged',
     });
     expect(createArg.user.name).toBe('ada@example.com');
     expect(createArg.user.id.length).toBe(32); // a random handle, never the email
@@ -698,6 +698,19 @@ describe('webauthn lock: availability, enrolment and verification', () => {
     const second = auth.create.mock.calls[1]![0].publicKey;
     expect(base64url.encode(second.user.id)).not.toBe(base64url.encode(publicKey.user.id));
     expect(base64url.encode(second.challenge)).not.toBe(base64url.encode(publicKey.challenge));
+  });
+
+  it('gives each enrolment the install’s handle, so the new one replaces the last', async () => {
+    const auth = await fakeAuthenticator();
+    const lock = lockOver(auth.credentials);
+    const handle = new Uint8Array(32).fill(7);
+    await lock.enrollWebAuthn({ ...ada, handle });
+    await lock.enrollWebAuthn({ ...ada, handle });
+    const [first, second] = auth.create.mock.calls.map(([options]) => options.publicKey);
+    expect(first?.user.id).toEqual(handle);
+    expect(second?.user.id).toEqual(handle);
+    expect(first?.user.name).toBe('ada@example.com');
+    expect(first?.authenticatorSelection?.residentKey).toBe('discouraged');
   });
 
   it('cannot enrol where the browser gives no usable public key, and enrols nothing', async () => {
