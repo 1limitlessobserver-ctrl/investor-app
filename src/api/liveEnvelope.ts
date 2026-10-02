@@ -71,14 +71,20 @@ export const isRefusal = (e: unknown): e is MobileApiError =>
 export const storageError = (cause: unknown): MobileApiError =>
   new MobileApiError('storage_error', 0, undefined, { cause });
 
-/** The platform's verdict `e` again, with `cause` as what went wrong on this side besides. */
-export const withCause = (e: MobileApiError, cause: unknown): MobileApiError =>
-  new MobileApiError(e.code, e.status, e.message, {
+/**
+ * The platform's verdict `e` again, with `cause` as what went wrong on this side besides. A code
+ * the platform named stays marked as its own, so a refusal stays a refusal (isRefusal).
+ */
+export const withCause = (e: MobileApiError, cause: unknown): MobileApiError => {
+  const again = new MobileApiError(e.code, e.status, e.message, {
     fields: e.fields,
     detail: e.detail,
     retryAfterSeconds: e.retryAfterSeconds,
     cause,
   });
+  if (namedByPlatform.has(e)) namedByPlatform.add(again);
+  return again;
+};
 
 /** The JSON value of a body, or undefined when it is not JSON (which JSON.parse never answers). */
 export function jsonOf(raw: string): unknown {

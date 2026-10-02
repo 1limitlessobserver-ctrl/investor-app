@@ -2,7 +2,14 @@
 // (codes by status, values by type, Retry-After in its forms) and the sign-in answer guards. The
 // wire spec pins that the client reads every answer through them.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { envelopeOf, errorFrom, isLoginResult, isTokenPair } from './liveEnvelope';
+import {
+  envelopeOf,
+  errorFrom,
+  isLoginResult,
+  isRefusal,
+  isTokenPair,
+  withCause,
+} from './liveEnvelope';
 import { MobileApiError } from './MobileApiError';
 import type { MobileTokens } from './types';
 
@@ -105,6 +112,16 @@ describe('the error envelope', () => {
     // JSON can spell a number too big to be finite (1e999); that is no wait either.
     const huge = '{"error":"rate_limited","retryAfterSeconds":1e999}';
     expect(answered(429, huge, '7').retryAfterSeconds).toBe(7);
+  });
+});
+
+describe('a refusal', () => {
+  it('stays a refusal when it gains a cause, and a nameless page stays none', () => {
+    const refused = fromJson(401, { error: 'session_revoked' });
+    const failure = new DOMException('The database is closed', 'InvalidStateError');
+    expect([isRefusal(refused), isRefusal(withCause(refused, failure))]).toEqual([true, true]);
+    const page = answered(403, '<html>Forbidden</html>');
+    expect([isRefusal(page), isRefusal(withCause(page, failure))]).toEqual([false, false]);
   });
 });
 
