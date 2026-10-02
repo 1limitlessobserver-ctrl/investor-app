@@ -1,0 +1,50 @@
+/*
+ * A text field on glass. The border is the muted text colour at 70 %, enough to read as a field
+ * edge (3:1) on every theme; focus turns it to the accent with a soft ring.
+ */
+
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 3rem;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.4;
+  caret-color: var(--accent-text);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.input::placeholder {
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--muted-foreground);
+}
+
+.input:focus-visible {
+  outline: none;
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 28%, transparent);
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+.input[aria-invalid='true']:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 28%, transparent);
+}
+
+.input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
