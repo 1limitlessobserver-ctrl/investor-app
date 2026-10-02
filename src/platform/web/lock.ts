@@ -153,9 +153,11 @@ export function createLock(opts: {
 
     async enrollPasscode(code) {
       if (!/^\d{6}$/.test(code)) throw new Error('The passcode must be six digits.');
-      const salt = randomBytes(16);
-      const hash = await derive(code, salt);
+      // The stretch runs in the queue too: a clear() asked for meanwhile (a sign-out) comes after
+      // this write, and so is never overtaken by it.
       await exclusive(async () => {
+        const salt = randomBytes(16);
+        const hash = await derive(code, salt);
         await writePasscode({ salt, hash, attempts: 0 });
         await storage.remove(WEBAUTHN);
       });

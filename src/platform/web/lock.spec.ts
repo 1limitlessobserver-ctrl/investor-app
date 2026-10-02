@@ -997,7 +997,7 @@ describe('device lock: replacing one method with the other', () => {
 
 /**
  * Holds back the PBKDF2 derivation under `salt` (a passcode check under way) until release();
- * `reached` resolves once it is held, `othersDerived` once any other derivation is done.
+ * `reached` resolves once it is held.
  */
 function holdDerivation(salt: string) {
   const deriveBits = crypto.subtle.deriveBits.bind(crypto.subtle);
@@ -1005,21 +1005,16 @@ function holdDerivation(salt: string) {
   const reached = new Promise<void>((resolve) => (reach = resolve));
   let release!: () => void;
   const released = new Promise<void>((resolve) => (release = resolve));
-  let derived!: () => void;
-  const othersDerived = new Promise<void>((resolve) => (derived = resolve));
   const spy = vi
     .spyOn(crypto.subtle, 'deriveBits')
     .mockImplementation(async (algorithm, baseKey, length) => {
       if (base64url.encode((algorithm as Pbkdf2Params).salt as Uint8Array) === salt) {
         reach();
         await released;
-        return deriveBits(algorithm, baseKey, length);
       }
-      const bits = await deriveBits(algorithm, baseKey, length);
-      derived();
-      return bits;
+      return deriveBits(algorithm, baseKey, length);
     });
-  return { reached, othersDerived, release, restore: () => spy.mockRestore() };
+  return { reached, release, restore: () => spy.mockRestore() };
 }
 
 /** Long enough for a change that is not held back to be written. */
@@ -1036,8 +1031,7 @@ describe('device lock: enrolments and clear() wait for a passcode check under wa
     try {
       const check = lock.verifyPasscode('246810');
       await held.reached; // the attempt is counted, and the check is deriving
-      const enrol = lock.enrollPasscode('135790');
-      await held.othersDerived; // the new passcode is hashed: stored now, or waiting for the check
+      const enrol = lock.enrollPasscode('135790'); // waits for the check, its stretch included
       await Promise.race([enrol, settle()]);
       held.release();
       expect(await check).toEqual({ ok: true, attemptsLeft: 5 });
@@ -1230,6 +1224,34 @@ describe('device lock: the browser defaults', () => {
 });
 
 describe('device lock: its queue of changes', () => {
+  it('stays cleared when clear() comes while a new passcode is being stretched', async () => {
+    const lock = createLock({ storage: secureStorage(), credentials: undefined });
+    const deriveBits = crypto.subtle.deriveBits.bind(crypto.subtle);
+    let reach!: () => void;
+    const reached = new Promise<void>((resolve) => (reach = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const spy = vi
+      .spyOn(crypto.subtle, 'deriveBits')
+      .mockImplementation(async (algorithm, baseKey, length) => {
+        reach();
+        await released;
+        return deriveBits(algorithm, baseKey, length);
+      });
+    try {
+      const enrol = lock.enrollPasscode('246810');
+      await reached; // the passcode is being stretched
+      const cleared = lock.clear(); // the session ends meanwhile
+      await Promise.race([cleared, settle()]);
+      release();
+      await enrol;
+      await cleared;
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await lock.enrolled()).toBeNull();
+  });
+
   it('lets a change that nobody waits for reject unhandled, and goes on after it', async () => {
     const secure = secureStorage();
     let broken = false;
