@@ -17,7 +17,7 @@ import { cssRule } from '../test/cssRules';
 import { fakePlatform } from '../test/fakePlatform';
 import { memoryKvStore } from '../test/memoryKvStore';
 import { brandCache } from './brand';
-import { createSessionController, updateRequiredFor } from './sessionController';
+import { createSessionController, SESSION_COPY, updateRequiredFor } from './sessionController';
 import { createTokenStore, type TokenStoreEvent } from './tokens';
 
 function Probe() {
@@ -1842,9 +1842,15 @@ describe('AppSession: two tabs on one device', () => {
   });
 
   it.each([
-    ['cannot be read', new Error('disk error'), 0],
-    ['has lost its key', new Error(UNREADABLE), 1],
-  ])('ends the session when the store it checks first %s', async (_, failure, resets) => {
+    // It cannot be cleared either: the investor is told what the device may still hold.
+    ['cannot be read', new Error('disk error'), 0, SESSION_COPY.sessionNotCleared],
+    [
+      'has lost its key',
+      new Error(UNREADABLE),
+      1,
+      "This device couldn't read your session, so you've been signed out. Nothing was sent.",
+    ],
+  ])('ends the session when the store it checks first %s', async (_, failure, resets, notice) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const device = fakePlatform();
     let broken = false;
@@ -1872,6 +1878,7 @@ describe('AppSession: two tabs on one device', () => {
     tell?.({ type: 'clear', sessionKey: 'any' }); // another tab signed out
     await waitFor(() => expect(a.status()).toBe('signed-out'));
     expect(reset).toHaveBeenCalledTimes(resets);
+    expect(a.session.getSnapshot().notice).toBe(notice);
     expect(warn).toHaveBeenCalled();
   });
 
@@ -2618,5 +2625,90 @@ describe('AppSession: unlocking a live session', () => {
     held.release();
     expect(await unlocking).toBe(false);
     expect(a.status()).toBe('locked');
+  });
+});
+
+describe('AppSession: why the session ended', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A sample tab signed in with no lock: `wired` reaches its callbacks. */
+  async function signedIn(device = fakePlatform()) {
+    let wired: ApiWiring | undefined;
+    const tab = openTab(device, (wiring) => {
+      wired = wiring;
+      return createSampleApi({ latencyMs: 0 });
+    });
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    tab.session.skipLockSetup();
+    return { ...tab, events: () => wired?.events };
+  }
+
+  it.each([
+    ['session_revoked', 'Your session ended. Sign in again.'],
+    ['refresh_failed', 'Your session ended. Sign in again.'],
+  ] as const)('says the session ended when the platform ends it (%s)', async (reason, notice) => {
+    const tab = await signedIn();
+    tab.events()?.onSignedOut(reason);
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    expect(tab.session.getSnapshot().notice).toBe(notice);
+  });
+
+  it('says this device could not read the session when a call cannot', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const tab = await signedIn();
+    const unreadable = () => Promise.reject(new MobileApiError('storage_error', 0));
+    await tab.queryClient
+      .fetchQuery({ queryKey: ['sample', 'x'], queryFn: unreadable })
+      .catch(() => {});
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    expect(tab.session.getSnapshot().notice).toBe(
+      "This device couldn't read your session, so you've been signed out. Nothing was sent.",
+    );
+  });
+
+  it('says the lock is gone when a session opens with the lock on and none left', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    localStorage.setItem('app.lockEnabled', 'true');
+    const tab = openTab(fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } }), () =>
+      createSampleApi({ latencyMs: 0 }),
+    );
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    expect(tab.session.getSnapshot().notice).toBe(
+      "The app lock on this device is gone, so you've been signed out.",
+    );
+  });
+
+  it('says the investor signed out on another tab', async () => {
+    const device = fakePlatform();
+    const a = openTab(device, liveOver());
+    const otherTab = createTokenStore(device.storage);
+    stops.push(otherTab.subscribe(() => {}));
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    await otherTab.clear();
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    expect(a.session.getSnapshot().notice).toBe('You signed out on another tab.');
+  });
+
+  it('says nothing when the investor signs out', async () => {
+    const tab = await signedIn();
+    await tab.session.signOut();
+    expect(tab.session.getSnapshot().notice).toBeNull();
+  });
+
+  it('forgets why the last session ended once the investor signs in again', async () => {
+    const tab = await signedIn();
+    tab.events()?.onSignedOut('session_revoked');
+    await waitFor(() => expect(tab.session.getSnapshot().notice).not.toBeNull());
+    await tab.session.enterSample();
+    expect(tab.session.getSnapshot().notice).toBeNull();
   });
 });

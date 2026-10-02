@@ -62,6 +62,12 @@ export const SESSION_COPY = {
   sessionNotCleared:
     "Your session couldn't be fully removed from this device. Clear this site's data to remove it.",
   turnOffLock: 'Turn off the app lock',
+  // Why the session ended, when the investor did not end it: shown on the sign-in screen.
+  endedStorage:
+    "This device couldn't read your session, so you've been signed out. Nothing was sent.",
+  endedByPlatform: 'Your session ended. Sign in again.',
+  endedLockGone: "The app lock on this device is gone, so you've been signed out.",
+  endedElsewhere: 'You signed out on another tab.',
 } as const;
 
 export type SessionStatus = 'loading' | 'signed-out' | 'locked' | 'signed-in';
@@ -148,6 +154,15 @@ type Check = { ok: boolean; attemptsLeft?: number | undefined };
  */
 export type EndReason =
   'investor' | 'revoked' | 'refresh_failed' | 'storage' | 'lock_gone' | 'elsewhere';
+
+/** What the sign-in screen says of a session that ended other than by the investor. */
+const ENDED: Record<Exclude<EndReason, 'investor'>, string> = {
+  revoked: SESSION_COPY.endedByPlatform,
+  refresh_failed: SESSION_COPY.endedByPlatform,
+  storage: SESSION_COPY.endedStorage,
+  lock_gone: SESSION_COPY.endedLockGone,
+  elsewhere: SESSION_COPY.endedElsewhere,
+};
 
 /** What a fresh look at the device's lock found: see refreshLock(). */
 type LockRead = 'stands' | 'gone' | 'unread';
@@ -297,6 +312,7 @@ export function createSessionController(deps: SessionDeps) {
   async function signIn(tokens: MobileTokens): Promise<void> {
     const gen = ++generation;
     closeFlows();
+    if (state.notice !== null) set({ notice: null }); // what ended the last session is old news
     // A lock belongs to the session that set it up: one an earlier session left on this device is
     // wiped before this one starts, never adopted. A lock that cannot be wiped stops the sign-in.
     await forgetLock();
@@ -403,6 +419,13 @@ export function createSessionController(deps: SessionDeps) {
       queryClient.clear();
       sampleFlag.clear();
       sessionKey = null;
+      // The sign-out goes on regardless, and the investor learns what this device still holds;
+      // else why the session ended, unless they ended it.
+      const notice = !(tokensGone && lockGone)
+        ? SESSION_COPY.sessionNotCleared
+        : reason === 'investor'
+          ? state.notice
+          : ENDED[reason];
       set({
         status: 'signed-out',
         lockMethod: null,
@@ -410,8 +433,7 @@ export function createSessionController(deps: SessionDeps) {
         unlocking: IDLE,
         confirmation: null,
         lockSetup: null,
-        // The sign-out goes on regardless, and the investor learns what this device still holds.
-        ...(tokensGone && lockGone ? {} : { notice: SESSION_COPY.sessionNotCleared }),
+        notice,
       });
     })().finally(() => {
       if (ending?.gen === gen) ending = null;

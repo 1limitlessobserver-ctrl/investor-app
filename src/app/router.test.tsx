@@ -71,6 +71,19 @@ describe('the routes', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Locked' })).toBeNull());
   });
 
+  it('says on the sign-in screen why the session ended', async () => {
+    const { api, router } = renderWithApp({ route: '/', signedIn: true });
+    await screen.findByRole('heading', { name: 'Home' });
+    act(() => api._test_revoke()); // the platform ends the session
+    await act(() => api.me().catch(() => {})); // and the next call hears it
+    expect(
+      await screen.findByRole('button', { name: 'Explore with sample data' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/sign-in');
+    const notice = screen.getByText('Your session ended. Sign in again.');
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+  });
+
   it('shows the update screen in place of the app, where Sign out still works', async () => {
     const user = userEvent.setup();
     const { router } = renderWithApp({
