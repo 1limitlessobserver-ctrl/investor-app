@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { join } from 'node:path';
 import { useEffect } from 'react';
 import { AppSessionProvider, useAppSession, type ApiWiring } from './AppSession';
 import { createSampleApi, type SampleApi } from '../api/createSampleApi';
@@ -10,6 +11,7 @@ import { MobileApiError } from '../api/MobileApiError';
 import type { PlatformApi } from '../api/PlatformApi';
 import type { Platform } from '../platform/types';
 import { createQueryClient } from '../queries/client';
+import { cssRule } from '../test/cssRules';
 import { fakePlatform } from '../test/fakePlatform';
 import { createTokenStore } from './tokens';
 
@@ -821,6 +823,16 @@ describe('AppSession: the platform’s answers', () => {
     await act(() => queryClient.refetchQueries({ queryKey: ['sample', 'brand'] }));
     await waitFor(() => expect(document.title).toBe('cancelled'));
     expect(screen.getByTestId('update')).toHaveTextContent('"99.0.0"');
+  });
+
+  it('keeps the notice’s live region in the page while it has nothing to say', () => {
+    // An empty region that is hidden leaves the accessibility tree, and its first words go unsaid.
+    const css = join(import.meta.dirname, 'AppSession.module.css');
+    for (const selector of ['.notice', '.message', '.message:empty']) {
+      const rule = cssRule(css, selector);
+      expect(rule.display, selector).not.toBe('none');
+      expect(rule.visibility, selector).not.toBe('hidden');
+    }
   });
 
   it('says so when the session could not be saved on this device', async () => {

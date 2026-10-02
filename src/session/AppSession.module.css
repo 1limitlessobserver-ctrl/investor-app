@@ -27,15 +27,12 @@
   pointer-events: auto;
 }
 
+/* Empty, it takes no room and stays in the accessibility tree, so its next words are announced. */
 .message {
   margin: 0;
   font-size: var(--text-sm);
   line-height: 1.45;
   text-wrap: pretty;
-}
-
-.message:empty {
-  display: none;
 }
 
 /* The setup problem: one calm message in the middle of the page. */
