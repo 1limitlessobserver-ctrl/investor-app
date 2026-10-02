@@ -60,15 +60,20 @@ export function createLock(opts: {
     return run;
   }
 
-  async function readCredential(): Promise<CredentialRecord | null> {
-    const stored = await storage.get(WEBAUTHN);
-    return stored === null ? null : credentialFrom(stored);
+  /**
+   * The record kept under `entry`, or null. A record that cannot be read is removed, so the lock
+   * fails closed and the next enrolment starts clean.
+   */
+  async function read<T>(entry: string, parse: (stored: string) => T | null): Promise<T | null> {
+    const stored = await storage.get(entry);
+    if (stored === null) return null;
+    const record = parse(stored);
+    if (record === null) await storage.remove(entry);
+    return record;
   }
 
-  async function readPasscode(): Promise<PasscodeRecord | null> {
-    const stored = await storage.get(PASSCODE);
-    return stored === null ? null : passcodeFrom(stored);
-  }
+  const readCredential = () => read(WEBAUTHN, credentialFrom);
+  const readPasscode = () => read(PASSCODE, passcodeFrom);
 
   async function writePasscode(passcode: PasscodeRecord): Promise<void> {
     const { salt, hash, attempts } = passcode;
@@ -92,8 +97,9 @@ export function createLock(opts: {
     },
 
     async enrolled() {
-      if (await readCredential()) return 'webauthn';
-      if (await readPasscode()) return 'passcode';
+      // Which record exists, readable or not: the checks fail closed on one they cannot read.
+      if ((await storage.get(WEBAUTHN)) !== null) return 'webauthn';
+      if ((await storage.get(PASSCODE)) !== null) return 'passcode';
       return null;
     },
 
@@ -144,7 +150,7 @@ export function createLock(opts: {
 
     async verify() {
       try {
-        const credential = await readCredential();
+        const credential = await exclusive(readCredential);
         if (!credentials || !credential) return false;
         const challenge = randomBytes(32);
         const assertion = await credentials.get({
@@ -299,27 +305,32 @@ function enrolmentOf(created: Credential | null): CredentialRecord | null {
   return { credentialId: new Uint8Array(rawId), publicKeySpki: new Uint8Array(spki), alg };
 }
 
+/** `lock:webauthn` read back: a credential id and public key (neither empty) and ES256 or RS256. */
 function credentialFrom(stored: string): CredentialRecord | null {
   try {
     const { credentialId, publicKeySpki, alg } = JSON.parse(stored) as Record<string, unknown>;
     if (typeof credentialId !== 'string' || typeof publicKeySpki !== 'string') return null;
     if (alg !== ES256 && alg !== RS256) return null;
-    return {
+    const record: CredentialRecord = {
       credentialId: base64url.decode(credentialId),
       publicKeySpki: base64url.decode(publicKeySpki),
       alg,
     };
+    return record.credentialId.length > 0 && record.publicKeySpki.length > 0 ? record : null;
   } catch {
     return null;
   }
 }
 
+/** `lock:passcode` read back: a 16-byte salt, a 32-byte hash and 0 to 5 wrong attempts. */
 function passcodeFrom(stored: string): PasscodeRecord | null {
   try {
     const { salt, hash, attempts } = JSON.parse(stored) as Record<string, unknown>;
     if (typeof salt !== 'string' || typeof hash !== 'string') return null;
-    if (typeof attempts !== 'number' || !Number.isInteger(attempts) || attempts < 0) return null;
-    return { salt: base64url.decode(salt), hash: base64url.decode(hash), attempts };
+    if (typeof attempts !== 'number' || !Number.isInteger(attempts)) return null;
+    if (attempts < 0 || attempts > MAX_ATTEMPTS) return null;
+    const record = { salt: base64url.decode(salt), hash: base64url.decode(hash), attempts };
+    return record.salt.length === 16 && record.hash.length === 32 ? record : null;
   } catch {
     return null;
   }

@@ -669,3 +669,85 @@ describe('webauthn lock: availability, enrolment and verification', () => {
     expect(await lock.enrolled()).toBeNull();
   });
 });
+
+describe('device lock: a stored record it cannot read', () => {
+  const bytes = (length: number) => base64url.encode(new Uint8Array(length).fill(1));
+  const passcodeRecord = (fields: object) =>
+    JSON.stringify({ salt: bytes(16), hash: bytes(32), attempts: 0, ...fields });
+  const credentialRecord = (fields: object) =>
+    JSON.stringify({ credentialId: 'AQID', publicKeySpki: bytes(91), alg: -7, ...fields });
+  const badPasscodes = [
+    'not json',
+    'null',
+    passcodeRecord({ salt: 1 }),
+    passcodeRecord({ salt: bytes(15) }),
+    passcodeRecord({ hash: bytes(31) }),
+    passcodeRecord({ hash: '***' }),
+    passcodeRecord({ attempts: -1 }),
+    passcodeRecord({ attempts: 1.5 }),
+    passcodeRecord({ attempts: 6 }),
+    passcodeRecord({ attempts: '0' }),
+  ];
+  const badCredentials = [
+    'not json',
+    '[]',
+    credentialRecord({ credentialId: 1 }),
+    credentialRecord({ credentialId: '***' }),
+    credentialRecord({ credentialId: '' }),
+    credentialRecord({ publicKeySpki: '' }),
+    credentialRecord({ alg: -8 }),
+    credentialRecord({ alg: '-7' }),
+  ];
+
+  it('still reports the method whose record is stored', async () => {
+    for (const [entry, records, method] of [
+      ['lock:passcode', badPasscodes, 'passcode'],
+      ['lock:webauthn', badCredentials, 'webauthn'],
+    ] as const) {
+      for (const record of records) {
+        const secure = secureStorage();
+        await secure.set(entry, record);
+        const lock = createLock({ storage: secure, credentials: undefined });
+        expect(await lock.enrolled(), record).toBe(method);
+      }
+    }
+  });
+
+  it('answers attemptsLeft 0 for a passcode record it cannot read, and removes it', async () => {
+    const deriveBits = vi.spyOn(crypto.subtle, 'deriveBits');
+    try {
+      for (const record of badPasscodes) {
+        const secure = secureStorage();
+        await secure.set('lock:passcode', record);
+        const lock = createLock({ storage: secure, credentials: undefined });
+        expect(await lock.verifyPasscode('246810'), record).toEqual({ ok: false, attemptsLeft: 0 });
+        expect(await secure.get('lock:passcode'), record).toBeNull();
+      }
+      expect(deriveBits).not.toHaveBeenCalled();
+    } finally {
+      deriveBits.mockRestore();
+    }
+  });
+
+  it('answers false from verify() for a credential it cannot read, and removes it', async () => {
+    const auth = await fakeAuthenticator();
+    for (const record of badCredentials) {
+      const secure = secureStorage();
+      await secure.set('lock:webauthn', record);
+      expect(await lockOver(auth.credentials, secure).verify(), record).toBe(false);
+      expect(await secure.get('lock:webauthn'), record).toBeNull();
+    }
+    expect(auth.get).not.toHaveBeenCalled();
+  });
+
+  it('removes an unreadable credential without touching one enrolled meanwhile', async () => {
+    const auth = await fakeAuthenticator();
+    const secure = secureStorage();
+    await secure.set('lock:webauthn', 'not json');
+    const lock = lockOver(auth.credentials, secure);
+    const [verified] = await Promise.all([lock.verify(), lock.enrollWebAuthn(ada)]);
+    expect(verified).toBe(false);
+    expect(await lock.enrolled()).toBe('webauthn');
+    expect(await lock.verify()).toBe(true);
+  });
+});

@@ -28,7 +28,10 @@ export type LockMethod = 'webauthn' | 'passcode';
 export interface LockAdapter {
   /** 'webauthn' where the device has a user-verifying platform authenticator, else 'passcode'. */
   available(): Promise<LockMethod>;
-  /** The method enrolled on this device, or null when there is none. */
+  /**
+   * The method whose record is stored on this device, or null when there is none. A record that
+   * cannot be read still counts: verify() and verifyPasscode() fail closed on it and remove it.
+   */
   enrolled(): Promise<LockMethod | null>;
   /**
    * Creates a platform credential through the operating system's prompt and replaces any passcode.
@@ -40,13 +43,14 @@ export interface LockAdapter {
   /** Stores a six-digit passcode (anything else throws) and replaces any WebAuthn credential. */
   enrollPasscode(code: string): Promise<void>;
   /**
-   * Runs the operating system's prompt; false when it is cancelled, fails or does not verify, and
-   * when no credential is enrolled.
+   * Runs the operating system's prompt; false when it is cancelled, fails or does not verify, when
+   * no credential is enrolled, and when its record cannot be read (which is then removed).
    */
   verify(): Promise<boolean>;
   /**
    * Checks the passcode. The fifth wrong attempt in a row wipes the passcode and answers
-   * `attemptsLeft: 0`, and so does a check with no passcode enrolled: the caller then signs out.
+   * `attemptsLeft: 0`, and so does a check with no passcode enrolled, or with a record that cannot
+   * be read (which is then removed): the caller then signs out.
    * Each attempt is counted before it is checked, so when storage cannot count it the call
    * rejects and nothing is checked.
    */
