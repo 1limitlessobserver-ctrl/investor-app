@@ -1519,6 +1519,28 @@ describe('the session a request belongs to', () => {
     expect(t.signedOut).toEqual([]);
   });
 
+  it('refreshes nothing for an unauthorized heard after a logout that could not clear', async () => {
+    // The store still holds the session the call went out with: only the client's count says no.
+    const held = gate();
+    const t = setup(
+      async (c) => {
+        if (path(c) === '/auth/logout') return json(200, { ok: true });
+        if (isRefresh(c)) return json(200, pair(2));
+        await held.open;
+        return json(401, { error: 'unauthorized', message: 'Expired.' });
+      },
+      session(1),
+      { faults: { clear: () => new DOMException('The database is closed', 'InvalidStateError') } },
+    );
+    const call = failure(t.api.me());
+    expect((await failure(t.api.logout())).code).toBe('storage_error');
+    held.release();
+    const e = await call;
+    expect([e.code, e.message]).toEqual(['unauthorized', 'Expired.']);
+    expect(t.calls.map(path)).toEqual(['/me', '/auth/logout']);
+    expect([t.signedOut, t.tokens()]).toEqual([[], session(1)]);
+  });
+
   // A logout that could not clear leaves the session in the store, so only the client's count tells
   // a refresh that was out that its session is over: it stores nothing back and ends nothing, and
   // its callers still get what the platform answered.
