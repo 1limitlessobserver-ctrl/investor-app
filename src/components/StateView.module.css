@@ -1,0 +1,137 @@
+/*
+ * States read left to right like the content they stand in for: a small orbit glyph, then the
+ * title in the display face, a line of detail and the way on. Skeleton lines take the shape of
+ * text and breathe slowly when motion is allowed.
+ */
+
+.view {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-1);
+}
+
+.glyph {
+  width: 3rem;
+  height: 3rem;
+  overflow: visible;
+}
+
+.orbit {
+  fill: none;
+  stroke: var(--accent-text);
+  stroke-width: 1.5;
+  opacity: 0.7;
+}
+
+.planet {
+  fill: var(--surface);
+  stroke: color-mix(in srgb, var(--accent-text) 55%, transparent);
+  stroke-width: 1.5;
+}
+
+.moon {
+  fill: var(--accent-text);
+}
+
+.error .orbit {
+  stroke: var(--error);
+}
+
+.error .moon {
+  fill: var(--error);
+}
+
+.offline .orbit {
+  stroke: var(--muted-foreground);
+  stroke-dasharray: 3 5;
+}
+
+.offline .planet {
+  stroke: var(--muted-foreground);
+}
+
+.text {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-1);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  line-height: 1.15;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  max-width: 34rem;
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
+.action {
+  margin-top: var(--space-2);
+}
+
+.loading {
+  padding: var(--space-4) 0;
+}
+
+.lines {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.line {
+  display: block;
+  height: 0.875rem;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--muted-foreground) 18%, transparent);
+}
+
+.line:nth-child(1) {
+  width: 46%;
+  height: 1.25rem;
+}
+
+.line:nth-child(5n + 2) {
+  width: 92%;
+}
+
+.line:nth-child(5n + 3) {
+  width: 78%;
+}
+
+.line:nth-child(5n + 4) {
+  width: 86%;
+}
+
+.line:nth-child(5n) {
+  width: 64%;
+}
+
+.line:nth-child(5n + 6) {
+  width: 72%;
+}
+
+.lines[data-motion='on'] .line {
+  animation: breathe 1.8s ease-in-out infinite;
+}
+
+.lines[data-motion='on'] .line:nth-child(even) {
+  animation-delay: 0.3s;
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
