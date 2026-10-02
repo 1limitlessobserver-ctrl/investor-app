@@ -9,6 +9,11 @@
 // tabs of every write: a refreshed pair of the session they hold is taken up into their memory
 // (so each tab need not refresh in turn), and a new sign-in or a sign-out empties it and is passed
 // to the session layer through subscribe().
+//
+// The rotate message carries the pair itself, the access token included. That gives away nothing:
+// a BroadcastChannel reaches only this origin's pages, and any of them can already decrypt the
+// refresh token, as secure storage's key belongs to the origin too. Sending it spares each tab a
+// refresh of its own, which would rotate the token again under the others.
 
 import type { StoredSession, TokenStore } from '../api/createLiveApi';
 import type { MobileTokens } from '../api/types';
