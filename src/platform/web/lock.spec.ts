@@ -1,9 +1,19 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { createLock, verifyAssertion } from './lock';
 import { createSecureStorage, type KvStore } from './storage';
 import { base64url } from '../../lib/base64url';
 import { memoryKvStore } from '../../test/memoryKvStore';
 import type { SecureStorage } from '../types';
+
+// jsdom has no WebAuthn. Every test, the plan's included, starts in a browser whose attestation
+// responses hand over the public key (getPublicKey), as the lock requires before it offers
+// WebAuthn; the tests of other browsers replace it.
+beforeEach(() => {
+  vi.stubGlobal('AuthenticatorAttestationResponse', { prototype: { getPublicKey: () => null } });
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function memoryStore(): KvStore {
   const raw = new Map<string, unknown>();
@@ -562,6 +572,16 @@ describe('webauthn lock: availability, enrolment and verification', () => {
     platformAuthenticator(() => Promise.reject(new Error('not now')));
     expect(await lockOver(credentials).available()).toBe('passcode');
     vi.stubGlobal('PublicKeyCredential', undefined);
+    expect(await lockOver(credentials).available()).toBe('passcode');
+  });
+
+  it('offers the passcode where the browser cannot hand over the public key', async () => {
+    const { credentials } = await fakeAuthenticator();
+    platformAuthenticator(() => Promise.resolve(true));
+    expect(await lockOver(credentials).available()).toBe('webauthn');
+    vi.stubGlobal('AuthenticatorAttestationResponse', { prototype: {} }); // iOS 15, older Chromium
+    expect(await lockOver(credentials).available()).toBe('passcode');
+    vi.stubGlobal('AuthenticatorAttestationResponse', undefined);
     expect(await lockOver(credentials).available()).toBe('passcode');
   });
 

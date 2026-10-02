@@ -26,7 +26,10 @@ export type LockMethod = 'webauthn' | 'passcode';
 
 /** The device lock that gates the app's screens; the platform session remains the real security. */
 export interface LockAdapter {
-  /** 'webauthn' where the device has a user-verifying platform authenticator, else 'passcode'. */
+  /**
+   * 'webauthn' where the device has a user-verifying platform authenticator and the browser hands
+   * over a new credential's public key (getPublicKey; not iOS 15), else 'passcode'.
+   */
   available(): Promise<LockMethod>;
   /**
    * The method whose record is stored on this device, or null when there is none. A record that

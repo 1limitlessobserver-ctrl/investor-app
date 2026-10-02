@@ -87,9 +87,15 @@ export function createLock(opts: {
     async available() {
       if (!credentials) return 'passcode';
       try {
-        const api = (globalThis as { PublicKeyCredential?: typeof PublicKeyCredential })
-          .PublicKeyCredential;
-        const ready = await api?.isUserVerifyingPlatformAuthenticatorAvailable();
+        const browser = globalThis as {
+          PublicKeyCredential?: typeof PublicKeyCredential;
+          AuthenticatorAttestationResponse?: typeof AuthenticatorAttestationResponse;
+        };
+        // Enrolment keeps the key getPublicKey() hands over, which iOS 15 and older Chromium lack.
+        const prototype = browser.AuthenticatorAttestationResponse?.prototype;
+        if (typeof prototype?.getPublicKey !== 'function') return 'passcode';
+        const ready =
+          await browser.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable();
         return ready === true ? 'webauthn' : 'passcode';
       } catch {
         return 'passcode';
