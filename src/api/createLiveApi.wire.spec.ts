@@ -153,6 +153,13 @@ function gate() {
   });
   return { open, release };
 }
+/**
+ * Lets every promise chain that no gate holds run as far as it can, without a timer: a call that
+ * has heard its answer then waits where the client makes it wait.
+ */
+async function settle() {
+  for (let turn = 0; turn < 100; turn += 1) await Promise.resolve();
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -1042,9 +1049,12 @@ describe('the refresh and its edges', () => {
     expect(t.tokens()).toBeNull();
   });
 
+  // The last row keeps the retry's tokens under another key, as no real sign-in would: endSession
+  // tells the store's session apart by its key, not by the token values alone.
   it.each([
     ['another request refreshed again', session(3)],
     ['another tab rotated the refresh token', { ...session(2), refreshToken: 'r9' }],
+    ['the store holds a sign-in that only its key tells apart', session(2, 'k2')],
   ])('does not end the session when %s while the retry was out', async (_how, moved) => {
     const first = gate();
     const retried = gate();
@@ -1231,11 +1241,13 @@ describe('the refresh and its edges', () => {
   // The platform answers a refresh some time after it was asked, and the store can change in
   // between: the investor signs out, signs in again, or another tab refreshes (the refresh token
   // is shared, the access token is not). The answer then belongs to a session that is over, so it
-  // must change nothing of what the store holds now.
+  // must change nothing of what the store holds now. In the last row only the key differs, which
+  // no real sign-in does (its tokens are new too): the store's session is told apart by its key.
   const changes: [string, StoredSession | null][] = [
     ['a logout', null],
     ['a new sign-in', session(5, 'k2')],
     ["another tab's refresh", { ...session(1), refreshToken: 'r9' }],
+    ['a sign-in that only its key tells apart', session(1, 'k2')],
   ];
   describe.each(changes)('a refresh answered after %s', (_name, now) => {
     /** Asks for a refresh, makes the change while it is out, then lets the platform answer it. */
@@ -1318,9 +1330,11 @@ describe('the refresh and its edges', () => {
   });
 });
 
-// A request belongs to the session it went out with. That session is over once the client has
-// ended one since (logout(), a revocation, a refused refresh), and stale when another call or tab
-// has stored newer tokens. Only a session that is neither is refreshed, retried or ended.
+// A request belongs to the session it went out with, named by its sign-in's key. That session is
+// over once the client has ended one since (logout(), a revocation, a refused refresh) or the store
+// holds another sign-in (another key: someone signed in, here or in another tab), and stale when
+// another call or tab has stored newer tokens of it. Only a session that is neither over nor stale
+// is refreshed, retried or ended, and only with tokens of that same sign-in.
 describe('the session a request belongs to', () => {
   it.each(['unauthorized', 'session_revoked'])(
     'throws %s untouched when the investor signed out meanwhile, even with a new sign-in stored',
@@ -1349,8 +1363,8 @@ describe('the session a request belongs to', () => {
   it.each(['unauthorized', 'session_revoked'])(
     'refreshes with the refresh token another tab rotated, and retries, on %s',
     async (code) => {
-      // Tabs share the refresh token, not the access token: another tab's refresh leaves this
-      // tab's a1 stale, and the platform may say so with either code.
+      // Tabs share the refresh token, not the access token: another tab's refresh of the same
+      // sign-in (k1) leaves this tab's a1 stale, and the platform may say so with either code.
       const held = gate();
       const t = setup(async (c) => {
         if (isRefresh(c)) return json(200, pair(10));
@@ -1371,6 +1385,148 @@ describe('the session a request belongs to', () => {
       expect([t.signedOut, t.tokens()]).toEqual([[], session(10)]);
     },
   );
+
+  // Another tab signed out and signed in as another investor (k2): the store now answers that
+  // investor's refresh token, beside this tab's old access token or with none. A call this tab
+  // sent as k1 must not be refreshed with it, retried, or end anything.
+  describe.each([
+    [
+      "beside this tab's old access token",
+      { sessionKey: 'k2', refreshToken: 'r5', accessToken: 'a1' },
+    ],
+    ['with no access token', restarted(5, 'k2')],
+  ])('when another tab signs in as someone else, %s', (_how, other: StoredSession) => {
+    it.each(['unauthorized', 'session_revoked'])(
+      'throws %s untouched, refreshes nothing and tells no one',
+      async (code) => {
+        const held = gate();
+        const t = setup(async (c) => {
+          if (isRefresh(c)) return json(200, pair(6));
+          if (bearer(c) !== 'Bearer a1') return json(200, { kind: 'wallet' });
+          await held.open;
+          return json(401, { error: code, message: 'The platform said so.' });
+        });
+        const invest = failure(t.api.invest({ planId: 'p1', amountCents: 500000 }));
+        t.store(other);
+        held.release();
+        const e = await invest;
+        expect([e.code, e.status, e.message]).toEqual([code, 401, 'The platform said so.']);
+        expect(t.calls.map((c) => `${path(c)} ${bearer(c)}`)).toEqual(['/invest Bearer a1']);
+        expect([t.signedOut, t.writes, t.tokens()]).toEqual([[], [], other]);
+      },
+    );
+  });
+
+  it.each(['joined', 'started'])(
+    'throws the 401 untouched when another tab signs in as someone else while the refresh it %s is out',
+    async (how) => {
+      const started = gate();
+      const answer = gate();
+      const t = setup(async (c) => {
+        if (!isRefresh(c)) {
+          return bearer(c) === 'Bearer a1'
+            ? json(401, { error: 'unauthorized' })
+            : json(200, { id: 'u1' });
+        }
+        started.release();
+        await answer.open;
+        return json(200, pair(2));
+      });
+      const refreshing = how === 'joined' ? t.api.refresh() : undefined;
+      const call = failure(t.api.me());
+      await started.open;
+      await settle(); // the call has heard its 401 and waits for the refresh
+      t.store(session(5, 'k2'));
+      answer.release();
+      expect((await call).code).toBe('unauthorized');
+      expect(await refreshing).toEqual(how === 'joined' ? pair(2) : undefined);
+      // No retry: the store no longer holds the sign-in the call went out with.
+      expect(t.calls.map(path).sort()).toEqual(['/auth/refresh', '/me']);
+      expect([t.signedOut, t.writes, t.tokens()]).toEqual([[], [], session(5, 'k2')]);
+    },
+  );
+
+  it.each(['unauthorized', 'session_revoked'])(
+    'throws %s untouched, not retried, when the refresh it joins renewed an earlier sign-in',
+    async (code) => {
+      // A refresh of k1 is out when the investor signs out and someone signs in (k2) on this tab:
+      // a call of the new session that hears a 401 joins it, and must not go out with k1's pair.
+      const started = gate();
+      const answer = gate();
+      const t = setup(async (c) => {
+        if (path(c) === '/auth/logout') return json(200, { ok: true });
+        if (isRefresh(c)) {
+          started.release();
+          await answer.open;
+          return json(200, pair(2));
+        }
+        return bearer(c) === 'Bearer a5' ? json(401, { error: code }) : json(200, { id: 'u1' });
+      });
+      const refreshing = t.api.refresh();
+      await started.open;
+      await t.api.logout();
+      t.store(session(5, 'k2')); // the session layer starts the new sign-in
+      const call = failure(t.api.me());
+      await settle(); // the call has heard its 401 and joined the refresh still out
+      answer.release();
+      expect((await call).code).toBe(code);
+      expect(await refreshing).toEqual(pair(2));
+      expect(t.calls.map((c) => `${path(c)} ${bearer(c)}`)).toEqual([
+        '/auth/refresh null',
+        '/auth/logout Bearer a1',
+        '/me Bearer a5',
+      ]);
+      expect([t.signedOut, t.tokens()]).toEqual([[], session(5, 'k2')]);
+    },
+  );
+
+  it('sends nothing for a call with no access token when the refresh it joins renewed another sign-in', async () => {
+    // This tab's refresh of k1 is out when another tab signs in as someone else (k2): a call that
+    // has no access token for k2 refreshes first by joining it, and must not go out as k1.
+    const started = gate();
+    const answer = gate();
+    const t = setup(async (c) => {
+      if (!isRefresh(c)) return json(200, { id: 'u1' });
+      started.release();
+      await answer.open;
+      return json(200, pair(2));
+    });
+    const refreshing = t.api.refresh();
+    await started.open;
+    t.store(restarted(5, 'k2'));
+    const call = failure(t.api.me());
+    await settle(); // the call has joined the refresh still out
+    answer.release();
+    const e = await call;
+    expect([e.code, e.status]).toEqual(['unauthorized', 401]);
+    expect(await refreshing).toEqual(pair(2));
+    expect(t.calls.map(path)).toEqual(['/auth/refresh']);
+    expect([t.signedOut, t.writes, t.tokens()]).toEqual([[], [], restarted(5, 'k2')]);
+  });
+
+  it('sends nothing for a call that refreshed first when the investor signed out meanwhile', async () => {
+    const started = gate();
+    const answer = gate();
+    const t = setup(async (c) => {
+      if (path(c) === '/auth/logout') return json(200, { ok: true });
+      if (!isRefresh(c)) return json(200, { id: 'u1' });
+      started.release();
+      await answer.open;
+      return json(200, pair(2));
+    }, restarted(1));
+    const call = failure(t.api.me());
+    await started.open;
+    await t.api.logout();
+    answer.release();
+    const e = await call;
+    expect([e.code, e.status]).toEqual(['unauthorized', 401]);
+    // The logout names the session by its refresh token; the call never goes out.
+    expect(t.calls.map((c) => `${path(c)} ${bearer(c)}`)).toEqual([
+      '/auth/refresh null',
+      '/auth/logout null',
+    ]);
+    expect([t.signedOut, t.tokens()]).toEqual([[], null]);
+  });
 
   it.each(['joined', 'started'])(
     'throws the 401 untouched when the refresh it %s lands after a logout',
@@ -1396,6 +1552,32 @@ describe('the session a request belongs to', () => {
       expect([t.signedOut, t.tokens()]).toEqual([[], null]);
     },
   );
+
+  it('throws the 401 untouched when its refresh lands after a logout that could not clear', async () => {
+    // The store still holds the sign-in the call went out with, so only the session the client
+    // has ended tells this call's session is over.
+    const started = gate();
+    const answer = gate();
+    const t = setup(
+      async (c) => {
+        if (path(c) === '/auth/logout') return json(200, { ok: true });
+        if (!isRefresh(c)) return json(401, { error: 'unauthorized', message: 'Expired.' });
+        started.release();
+        await answer.open;
+        return json(200, pair(2));
+      },
+      session(1),
+      { faults: { clear: () => new DOMException('The database is closed', 'InvalidStateError') } },
+    );
+    const call = failure(t.api.me());
+    await started.open;
+    expect((await failure(t.api.logout())).code).toBe('storage_error');
+    answer.release();
+    const e = await call;
+    expect([e.code, e.message]).toEqual(['unauthorized', 'Expired.']);
+    expect(t.calls.map(path).sort()).toEqual(['/auth/logout', '/auth/refresh', '/me']);
+    expect(t.signedOut).toEqual([]);
+  });
 
   it('ends a revoked session once for every call that hears it at the same time', async () => {
     const t = setup(() => json(401, { error: 'session_revoked' }));

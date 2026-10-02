@@ -22,6 +22,7 @@ export type StoredSession = {
   /** Names the sign-in this session came from; random per sign-in, unchanged by a refresh. */
   readonly sessionKey: string;
   readonly refreshToken: string;
+  /** This page's access token for this very sign-in, or null; never one from another sign-in. */
   readonly accessToken: string | null;
 };
 
@@ -43,8 +44,25 @@ export type TokenStore = {
   clear(): Promise<void>;
 };
 
-/** The tokens a request went out with: an access token, and the refresh token stored beside it. */
-type Sent = { readonly accessToken: string; readonly refreshToken: string };
+/**
+ * The tokens a request went out with: an access token, the refresh token stored beside it, and the
+ * key of the sign-in they belong to.
+ */
+type Sent = {
+  readonly sessionKey: string;
+  readonly accessToken: string;
+  readonly refreshToken: string;
+};
+
+/** What a refresh gives: the new pair, and the key of the sign-in whose session it renewed. */
+type Renewed = { readonly sessionKey: string; readonly tokens: MobileTokens };
+
+/** The tokens of a refreshed session, to send a request with. */
+const sentOf = ({ sessionKey, tokens }: Renewed): Sent => ({
+  sessionKey,
+  accessToken: tokens.accessToken,
+  refreshToken: tokens.refreshToken,
+});
 
 /** How the app names itself on every request. createLiveApi refuses one it cannot send. */
 export type AppIdentity = {
@@ -74,9 +92,10 @@ export type LiveApiConfig = {
    * refused its refresh (`refresh_failed`). The store is already cleared (or could not be), and
    * the call that met it still rejects. It runs once per ended session and never for logout(),
    * not even for a call that hears a 401 while a logout is out. Sign out on this callback, not on
-   * a rejection: a call can reject `session_revoked` without it (the session was over already, or
-   * newer tokens were stored). The client does not notice closeAccount() or a revokeSession()
-   * that answers `current: true`: sign out after those yourself.
+   * a rejection: a call can reject `session_revoked` without it (the session was over already,
+   * newer tokens were stored, or the store holds another sign-in). The client does not notice
+   * closeAccount() or a revokeSession() that answers `current: true`: sign out after those
+   * yourself.
    */
   onSignedOut?: ((reason: SignedOutReason) => void) | undefined;
   /**
@@ -452,7 +471,7 @@ const nameHeaderOf = (name: string | undefined): string | null =>
  * send, and every method rejects with a MobileApiError, with two codes of the client's own beside
  * `network`: `timeout` (it gave up waiting; a money call may still have gone through) and
  * `storage_error` (the store failed before the platform was asked). Beyond the interface:
- *  - refresh() resolves the new pair and stores it; with nothing stored it rejects
+ *  - refresh() resolves the new pair and rotates it into the store; with nothing stored it rejects
  *    `unauthorized` and sends nothing;
  *  - logout() clears the store first, then sends at most one request, whose failure it ignores;
  *    it never refreshes, retries or calls onSignedOut, and rejects only when the store fails;
@@ -466,9 +485,10 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   const deviceName = nameHeaderOf(app.deviceName);
   const fetchImpl: typeof fetch =
     config.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
-  let refreshing: Promise<MobileTokens> | null = null;
+  let refreshing: Promise<Renewed> | null = null;
   // Counts the sessions this client has ended itself: logout(), a revocation, a refused refresh.
-  // A request that began under an earlier count belongs to a session that is over.
+  // A request that began under an earlier count belongs to a session that is over. Across tabs,
+  // the store's sessionKey tells one sign-in from the next.
   let generation = 0;
 
   /**
@@ -564,8 +584,12 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       // Only the refresh token survives a restart: there is no access token to send yet.
       sent =
         access === undefined
-          ? await refreshOnce()
-          : { accessToken: access, refreshToken: stored.refreshToken };
+          ? await refreshedFirst(stored, gen0)
+          : {
+              sessionKey: stored.sessionKey,
+              accessToken: access,
+              refreshToken: stored.refreshToken,
+            };
     }
     try {
       return await send<T>(route, options, sent?.accessToken);
@@ -588,53 +612,81 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   /**
    * After the platform answered `e` to a request that began under `gen0` and went out with
    * `sent`: the tokens to retry with, or the error the request ends in. In this order: join a
-   * refresh under way; throw `e` untouched once the client has ended a session or the store is
-   * empty; retry with a newer access token this tab stored; refresh when another tab rotated the
-   * refresh token or the access token expired; end the session when it was revoked and the store
-   * holds the same tokens. A refreshed pair is not retried with if a session ended meanwhile.
+   * refresh under way; throw `e` untouched once the client has ended a session, the store is
+   * empty or it holds another sign-in; retry with a newer access token this tab stored; refresh
+   * when another tab rotated the same sign-in's refresh token or the access token expired; end the
+   * session when it was revoked and the store holds the same tokens. A refreshed pair is retried
+   * with only while it is of the request's sign-in (refreshed).
    */
   async function tokenAfter401(e: TokenProblem, gen0: number, sent: Sent): Promise<Sent> {
     // A refresh under way is, or is about to be, what replaced `sent`: join it, and its failure.
-    if (refreshing !== null) return refreshed(e, gen0, refreshing);
+    if (refreshing !== null) return refreshed(e, gen0, sent, refreshing);
     const now = await read(e);
     // The request's session is over: the client ended one since (logout(), a revocation, a
-    // refused refresh), or the store is empty. Nothing to refresh, and no one left to tell.
-    if (generation !== gen0 || now === null) throw e;
+    // refused refresh), the store is empty, or someone signed in since, in this tab or another.
+    // Nothing to refresh, and no one left to tell.
+    if (generation !== gen0 || now === null || now.sessionKey !== sent.sessionKey) throw e;
     // This tab stored a newer pair since the request went out. A refresh token alone (no access
     // token) is not a token to send, so it falls through to refreshing with it.
     const newer = textOf(now.accessToken);
     if (newer !== undefined && newer !== sent.accessToken) {
-      return { accessToken: newer, refreshToken: now.refreshToken };
+      return { sessionKey: now.sessionKey, accessToken: newer, refreshToken: now.refreshToken };
     }
-    // Another tab rotated the shared refresh token, so this tab's access token is stale whatever
-    // the code says; or the access token expired. Either way: refresh with the stored token.
+    // Another tab refreshed this same sign-in, so this tab's access token is stale whatever the
+    // code says; or the access token expired. Either way: refresh with the stored token.
     if (now.refreshToken !== sent.refreshToken || e.code === 'unauthorized') {
-      return refreshed(e, gen0, refreshOnce());
+      return refreshed(e, gen0, sent, refreshOnce());
     }
     // session_revoked, and the store holds the very tokens it was said of: the session is over.
     return endSession(e, gen0, sent);
   }
 
-  /** The pair `refresh` gives, unless the client ended a session meanwhile: then `e`, untouched. */
+  /**
+   * The pair `refresh` gives, to retry a request of `sent`'s sign-in with: only while the client
+   * has ended no session since `gen0`, the refresh renewed that sign-in (not an earlier one whose
+   * refresh was still out), and the store still holds it once the pair is in. Otherwise `e`,
+   * untouched.
+   */
   async function refreshed(
     e: TokenProblem,
     gen0: number,
-    refresh: Promise<MobileTokens>,
+    sent: Sent,
+    refresh: Promise<Renewed>,
   ): Promise<Sent> {
-    const fresh = await refresh;
-    if (generation !== gen0) throw e;
-    return fresh;
+    const renewed = await refresh;
+    if (renewed.sessionKey === sent.sessionKey) {
+      const now = await read(e);
+      if (generation === gen0 && now?.sessionKey === sent.sessionKey) return sentOf(renewed);
+    }
+    throw e;
+  }
+
+  /**
+   * The refresh a request makes first when the store has no access token for it: the pair, if the
+   * client has ended no session since `gen0` and it renewed the sign-in the request read. Otherwise
+   * (a logout, or a refresh of an earlier sign-in that was still out) nothing is sent, and the
+   * request rejects `unauthorized`.
+   */
+  async function refreshedFirst(stored: StoredSession, gen0: number): Promise<Sent> {
+    const renewed = await refreshOnce();
+    if (generation !== gen0 || renewed.sessionKey !== stored.sessionKey) {
+      throw new MobileApiError('unauthorized', 401);
+    }
+    return sentOf(renewed);
   }
 
   /**
    * The platform revoked the session `sent` belongs to: signOut, but only while the client has
-   * ended no session since `gen0` and the store still holds both of `sent`'s tokens; otherwise `e`
-   * is thrown untouched. Of the calls that hear one revocation together, the first ends the
-   * session and the rest find the count changed.
+   * ended no session since `gen0` and the store still holds `sent`'s sign-in and both its tokens;
+   * otherwise `e` is thrown untouched. Of the calls that hear one revocation together, the first
+   * ends the session and the rest find the count changed.
    */
   async function endSession(e: MobileApiError, gen0: number, sent: Sent): Promise<never> {
     const now = await read(e);
-    const held = now?.accessToken === sent.accessToken && now.refreshToken === sent.refreshToken;
+    const held =
+      now?.sessionKey === sent.sessionKey &&
+      now.accessToken === sent.accessToken &&
+      now.refreshToken === sent.refreshToken;
     if (generation !== gen0 || !held) throw e;
     return signOut(e, 'session_revoked');
   }
@@ -669,7 +721,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   }
 
   /** One refresh at a time: a refresh token works once, so concurrent calls share the request. */
-  function refreshOnce(): Promise<MobileTokens> {
+  function refreshOnce(): Promise<Renewed> {
     refreshing ??= renew().finally(() => {
       refreshing = null;
     });
@@ -677,16 +729,18 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   }
 
   /**
-   * Sends the stored refresh token. A token pair is stored and resolved; a refusal (isRefusal)
-   * signs out with `refresh_failed`; any other failure is thrown and keeps the session. When the
-   * store has stopped holding the token sent meanwhile (a logout, a new sign-in, another tab's
-   * refresh), the answer touches nothing stored, and its callers still get it. With nothing
-   * stored: 401 `unauthorized`, and nothing is sent.
+   * Sends the stored refresh token. A token pair is rotated into the store and resolved, with the
+   * key of the sign-in it renewed; a refusal (isRefusal) signs out with `refresh_failed`; any
+   * other failure is thrown and keeps the session. When the store has stopped holding that
+   * sign-in and its refresh token meanwhile (a logout, a new sign-in, another tab's refresh), the
+   * answer touches nothing stored, and its callers still get it. With nothing stored: 401
+   * `unauthorized`, and nothing is sent.
    */
-  async function renew(): Promise<MobileTokens> {
+  async function renew(): Promise<Renewed> {
     const stored = await read();
     if (stored === null) throw new MobileApiError('unauthorized', 401);
-    const unchanged = (now: StoredSession | null) => now?.refreshToken === stored.refreshToken;
+    const unchanged = (now: StoredSession | null) =>
+      now?.sessionKey === stored.sessionKey && now.refreshToken === stored.refreshToken;
     let fresh: MobileTokens;
     try {
       const answer = await send<MobileTokens>(
@@ -710,7 +764,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       // callers get it all the same, and the store's failure is reported.
       notify(onStorageError, error);
     }
-    return fresh;
+    return { sessionKey: stored.sessionKey, tokens: fresh };
   }
 
   /** For a method that resolves the JSON the platform answers. */
@@ -731,7 +785,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     login: (body) => call('login', { body, check: isLoginResult }),
     loginTwoFactor: async (body) =>
       pairOf(await call('loginTwoFactor', { body, check: isTokenPair })),
-    refresh: () => refreshOnce(),
+    refresh: async () => (await refreshOnce()).tokens,
     /**
      * Ends the session on this device first, then tells the platform once with the tokens it read,
      * whatever that request meets. A store that could not be read or cleared makes it reject
