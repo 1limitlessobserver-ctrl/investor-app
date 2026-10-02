@@ -1,0 +1,70 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { stubRadixBrowserApis } from '../../test/browserStubs';
+import { Field } from './Field';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './Select';
+
+beforeAll(stubRadixBrowserApis);
+afterAll(() => vi.unstubAllGlobals());
+
+function Relationship(props: { value?: string; onValueChange?: (value: string) => void }) {
+  return (
+    <Field label="Relationship" hint="How they are related to you." error={props.value ? '' : 'Choose one.'}>
+      <Select {...props}>
+        <SelectTrigger>
+          <SelectValue placeholder="Choose one" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="spouse">Spouse</SelectItem>
+          <SelectItem value="child">Child</SelectItem>
+          <SelectItem value="sibling">Sibling</SelectItem>
+        </SelectContent>
+      </Select>
+    </Field>
+  );
+}
+
+describe('Select', () => {
+  it('shows the chosen option on a trigger the Field names and describes', () => {
+    render(<Relationship value="child" />);
+    const trigger = screen.getByRole('combobox', { name: 'Relationship' });
+    expect(trigger).toHaveTextContent('Child');
+    expect(trigger).toHaveAccessibleDescription('How they are related to you.');
+    expect(trigger).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('shows the placeholder and the Field error before anything is chosen', () => {
+    render(<Relationship />);
+    const trigger = screen.getByRole('combobox', { name: 'Relationship' });
+    expect(trigger).toHaveTextContent('Choose one');
+    expect(trigger).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('opens from the keyboard, moves through the options and reports the choice', async () => {
+    const user = userEvent.setup();
+    const onValueChange = vi.fn();
+    render(<Relationship value="child" onValueChange={onValueChange} />);
+    screen.getByRole('combobox', { name: 'Relationship' }).focus();
+    await user.keyboard('{Enter}');
+    const listbox = await screen.findByRole('listbox');
+    expect(listbox).toBeVisible();
+    expect(screen.getByRole('option', { name: 'Child' })).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(onValueChange).toHaveBeenCalledWith('sibling');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Relationship' })).toHaveFocus();
+  });
+
+  it('closes on Escape without choosing', async () => {
+    const user = userEvent.setup();
+    const onValueChange = vi.fn();
+    render(<Relationship value="spouse" onValueChange={onValueChange} />);
+    screen.getByRole('combobox', { name: 'Relationship' }).focus();
+    await user.keyboard('{ArrowDown}');
+    expect(await screen.findByRole('listbox')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+});

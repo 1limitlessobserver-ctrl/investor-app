@@ -1,0 +1,123 @@
+/* The trigger wears Input's field look; the list is a solid popup, above sheets and dialogs. */
+
+.trigger {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 3rem;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.4;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.trigger:hover:not(:disabled) {
+  border-color: var(--muted-foreground);
+}
+
+.trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 28%, transparent);
+}
+
+.trigger[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+.trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.trigger[data-placeholder] .value {
+  color: var(--muted-foreground);
+}
+
+.value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon {
+  display: grid;
+  flex: none;
+  color: var(--muted-foreground);
+  transition: transform 160ms ease;
+}
+
+.icon svg,
+.indicator svg,
+.scroll svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.trigger[data-state='open'] .icon {
+  transform: rotate(180deg);
+}
+
+.content {
+  z-index: 60;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--popup);
+  color: var(--popup-foreground);
+  box-shadow: 0 1.5rem 3rem -1.25rem color-mix(in srgb, var(--background) 85%, transparent);
+}
+
+.viewport {
+  padding: var(--space-1);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-md);
+  line-height: 1.35;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.item[data-highlighted] {
+  background: color-mix(in srgb, var(--accent-text) 14%, transparent);
+}
+
+.item[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.indicator {
+  display: grid;
+  color: var(--accent-text);
+}
+
+.scroll {
+  display: grid;
+  place-items: center;
+  height: 1.75rem;
+  color: var(--muted-foreground);
+  cursor: default;
+}
