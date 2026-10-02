@@ -1,7 +1,8 @@
 // UpdateToast beyond the plan's spec of the offer (UpdateToast.test.tsx): while no version waits,
 // its hourly look for one, and how a waiting version takes over when several tabs are open.
 
-import { act, render, screen } from '@testing-library/react';
+import { MutationObserver } from '@tanstack/react-query';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisterSWOptions } from 'virtual:pwa-register/react';
@@ -30,6 +31,7 @@ vi.mock('virtual:pwa-register/react', () => ({
     };
   },
 }));
+import { createQueryClient } from '../queries/client';
 import { UpdateToast } from './UpdateToast';
 
 const HOUR = 60 * 60_000;
@@ -166,5 +168,28 @@ describe('UpdateToast, as a waiting version takes over', () => {
     // The new version is in control already: nothing waits to be handed over.
     expect(reload).toHaveBeenCalledTimes(1);
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('UpdateToast, while the app is sending a change', () => {
+  beforeEach(() => {
+    registered.waiting = true;
+  });
+
+  it('holds Reload until the change has gone, so a reload never cuts it short', async () => {
+    const queryClient = createQueryClient();
+    let sent!: () => void;
+    const gone = new Promise<void>((resolve) => (sent = resolve));
+    const sending = new MutationObserver(queryClient, { mutationFn: () => gone });
+    void sending.mutate();
+    render(<UpdateToast queryClient={queryClient} />);
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeDisabled();
+    act(() => sent());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled());
+  });
+
+  it('offers Reload at once while nothing is being sent', () => {
+    render(<UpdateToast queryClient={createQueryClient()} />);
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled();
   });
 });

@@ -1,3 +1,4 @@
+import { QueryClient, useIsMutating } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { reportProblem } from '../lib/report';
@@ -7,6 +8,14 @@ import styles from './UpdateToast.module.css';
 
 /** How often the open app asks whether a newer version has been published. */
 export const UPDATE_CHECK_MS = 60 * 60_000;
+
+/** A cache with nothing in it, for a toast mounted without the app's. */
+const NOTHING_SENT = new QueryClient();
+
+export interface UpdateToastProps {
+  /** The app's query cache: while it is sending a change (a money action, say), Reload waits. */
+  queryClient?: QueryClient | undefined;
+}
 
 /** Asks the server for a newer service worker; offline there is no one to ask until the next. */
 function checkForUpdate(registration: ServiceWorkerRegistration): void {
@@ -21,11 +30,13 @@ function checkForUpdate(registration: ServiceWorkerRegistration): void {
  * available" with Reload, which hands over to it and reloads. It never reloads on its own, so no
  * flow is cut short: the new version takes over every open tab at once, but only the tab whose
  * Reload asked for it reloads; the others keep the offer, and their Reload then simply reloads.
- * The browser looks for a new version at launch; this looks again every hour while the app stays
- * open. Mount it once, outside the router. Its live region is always in the page, empty until
- * there is something to offer, so the offer is announced when it comes.
+ * Reload is held while the app is sending a change, so a reload never cuts one short. The browser
+ * looks for a new version at launch; this looks again every hour while the app stays open. Mount
+ * it once, outside the router. Its live region is always in the page, empty until there is
+ * something to offer, so the offer is announced when it comes.
  */
-export function UpdateToast() {
+export function UpdateToast({ queryClient = NOTHING_SENT }: UpdateToastProps) {
+  const sending = useIsMutating({}, queryClient) > 0;
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const mounted = useRef(true);
   // This tab's Reload asked for the new version.
@@ -79,7 +90,7 @@ export function UpdateToast() {
         {needRefresh && 'Update available'}
       </p>
       {needRefresh && (
-        <Button size="sm" variant="outline" onClick={() => void reload()}>
+        <Button size="sm" variant="outline" disabled={sending} onClick={() => void reload()}>
           Reload
         </Button>
       )}
