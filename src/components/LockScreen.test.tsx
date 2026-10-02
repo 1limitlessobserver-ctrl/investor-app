@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { Sheet, SheetContent, SheetTitle } from './form/Sheet';
 import { LockScreen, type LockScreenProps } from './LockScreen';
 
 const brand = { name: 'Northwind Wealth', logoDataUrl: null };
@@ -12,12 +13,50 @@ function renderLock(props: Partial<LockScreenProps> = {}) {
 }
 
 describe('LockScreen', () => {
-  it('names itself Locked, shows the brand and waits in the passcode', () => {
+  it('is a dialog named Locked that shows the brand and waits in the passcode', () => {
     renderLock();
     expect(screen.getByRole('heading', { level: 1, name: 'Locked' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Locked' })).toHaveTextContent('Northwind Wealth');
+    expect(screen.getByRole('dialog', { name: 'Locked' })).toHaveTextContent('Northwind Wealth');
     expect(screen.getByLabelText('Passcode')).toHaveFocus();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('takes focus over an open sheet and hides that sheet from assistive technology', () => {
+    const handlers = { onUnlock: vi.fn(), onPasscode: vi.fn(), onSignOut: vi.fn() };
+    function App({ locked }: { locked: boolean }) {
+      return (
+        <>
+          <Sheet open>
+            <SheetContent>
+              <SheetTitle>Withdraw</SheetTitle>
+              <input aria-label="Amount" />
+            </SheetContent>
+          </Sheet>
+          {locked && <LockScreen method="passcode" brand={brand} {...handlers} />}
+        </>
+      );
+    }
+    const { rerender } = render(<App locked={false} />);
+    expect(screen.getByRole('textbox', { name: 'Amount' })).toHaveFocus();
+
+    rerender(<App locked />);
+    expect(screen.getByLabelText('Passcode')).toHaveFocus();
+    expect(screen.getByRole('heading', { level: 1, name: 'Locked' })).toBeVisible();
+    expect(screen.queryByRole('dialog', { name: 'Withdraw' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Amount' })).toBeNull();
+  });
+
+  it('keeps Tab inside and cannot be dismissed with Escape', async () => {
+    const user = userEvent.setup();
+    renderLock({ method: 'webauthn' });
+    const unlock = screen.getByRole('button', { name: 'Unlock' });
+    expect(unlock).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Sign out instead' })).toHaveFocus();
+    await user.tab();
+    expect(unlock).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: 'Locked' })).toBeInTheDocument();
   });
 
   it('hands over the six digits on Unlock and clears the boxes for another try', async () => {

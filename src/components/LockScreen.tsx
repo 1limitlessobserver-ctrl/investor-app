@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { Dialog as RadixDialog } from 'radix-ui';
 import type { LockMethod } from '../platform/types';
 import { BrandMark, type BrandIdentity } from './BrandMark';
 import { Button } from './form/Button';
@@ -37,10 +37,6 @@ function DeviceUnlock({
   error,
   onUnlock,
 }: Pick<LockScreenProps, 'busy' | 'error' | 'onUnlock'>) {
-  const button = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    button.current?.focus();
-  }, []);
   return (
     <div className={styles.unlock}>
       <p className={styles.lead}>Unlock with your face, fingerprint or device PIN.</p>
@@ -49,7 +45,7 @@ function DeviceUnlock({
           {error}
         </p>
       )}
-      <Button ref={button} size="lg" loading={busy} onClick={onUnlock}>
+      <Button size="lg" loading={busy} onClick={onUnlock}>
         {error ? 'Try again' : 'Unlock'}
       </Button>
     </div>
@@ -57,9 +53,12 @@ function DeviceUnlock({
 }
 
 /**
- * The lock overlay: covers the whole app (opaque, so nothing behind it shows) with the brand, the
- * heading "Locked", the way to unlock (the device prompt, or the passcode labelled "Passcode")
- * and "Sign out instead". Focus moves into it when it appears; make the app behind it `inert`.
+ * The lock: the top modal layer, a dialog named by its `<h1>Locked</h1>` that covers the whole app
+ * (opaque, so nothing behind it shows). It holds the brand, the way to unlock (the device prompt,
+ * or the passcode labelled "Passcode") and "Sign out instead". Over anything already open (a
+ * Sheet, a Dialog) it takes focus (the passcode box, or Unlock), keeps Tab inside, hides the rest
+ * from assistive technology and stops the page scrolling. Escape and presses outside do nothing.
+ * Render it once, at the app's root, outside the shell frame, while the app is locked.
  */
 export function LockScreen({
   method,
@@ -71,7 +70,6 @@ export function LockScreen({
   onPasscode,
   onSignOut,
 }: LockScreenProps) {
-  const headingId = useId();
   const passcodeError =
     error ??
     (attemptsLeft !== undefined && attemptsLeft > 0
@@ -79,40 +77,48 @@ export function LockScreen({
       : undefined);
 
   return (
-    <section className={styles.screen} aria-labelledby={headingId}>
-      <div className={styles.content}>
-        <div className={styles.emblem} aria-hidden="true">
-          {brand ? (
-            <BrandMark
-              name={brand.name}
-              logoDataUrl={brand.logoDataUrl}
-              size="lg"
-              showName={false}
-            />
-          ) : (
-            <Orb size="lg" tone="glass" />
-          )}
-        </div>
-        <h1 id={headingId} className={styles.title}>
-          Locked
-        </h1>
-        {brand && <p className={styles.company}>{brand.name}</p>}
-        {method === 'passcode' ? (
-          <PasscodeForm
-            className={styles.unlock}
-            submitLabel="Unlock"
-            busy={busy}
-            error={passcodeError}
-            onPasscode={onPasscode}
-            focusOnMount
-          />
-        ) : (
-          <DeviceUnlock busy={busy} error={error} onUnlock={onUnlock} />
-        )}
-        <Button variant="ghost" onClick={onSignOut}>
-          Sign out instead
-        </Button>
-      </div>
-    </section>
+    <RadixDialog.Root open modal>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className={styles.backdrop} />
+        <RadixDialog.Content
+          className={styles.screen}
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
+        >
+          <div className={styles.content}>
+            <div className={styles.emblem} aria-hidden="true">
+              {brand ? (
+                <BrandMark
+                  name={brand.name}
+                  logoDataUrl={brand.logoDataUrl}
+                  size="lg"
+                  showName={false}
+                />
+              ) : (
+                <Orb size="lg" tone="glass" />
+              )}
+            </div>
+            <RadixDialog.Title asChild>
+              <h1 className={styles.title}>Locked</h1>
+            </RadixDialog.Title>
+            {brand && <p className={styles.company}>{brand.name}</p>}
+            {method === 'passcode' ? (
+              <PasscodeForm
+                className={styles.unlock}
+                submitLabel="Unlock"
+                busy={busy}
+                error={passcodeError}
+                onPasscode={onPasscode}
+              />
+            ) : (
+              <DeviceUnlock busy={busy} error={error} onUnlock={onUnlock} />
+            )}
+            <Button variant="ghost" onClick={onSignOut}>
+              Sign out instead
+            </Button>
+          </div>
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   );
 }

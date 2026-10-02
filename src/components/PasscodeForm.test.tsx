@@ -45,9 +45,4 @@ describe('PasscodeForm', () => {
     await user.keyboard('{Enter}');
     expect(onPasscode).not.toHaveBeenCalled();
   });
-
-  it('takes focus when it appears, if asked', () => {
-    render(<PasscodeForm submitLabel="Unlock" onPasscode={() => {}} focusOnMount />);
-    expect(screen.getByLabelText('Passcode')).toHaveFocus();
-  });
 });

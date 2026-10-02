@@ -1,18 +1,14 @@
 /*
  * The lock is the shell's one ceremonial moment: an opaque night with a soft accent dawn behind
  * the company's mark, which sits on its own orbit with a lit satellite; "Locked" in the display
- * face; then a narrow column (six code boxes wide) for the way in. It sits above every sheet.
+ * face; then a narrow column (six code boxes wide) for the way in. The opaque backdrop and the
+ * scrolling content are the dialog's overlay and content, above every sheet.
  */
 
-.screen {
+.backdrop {
   position: fixed;
   inset: 0;
   z-index: 80;
-  display: grid;
-  place-items: center;
-  overflow-y: auto;
-  padding: calc(var(--safe-top) + var(--space-8)) max(var(--space-4), var(--safe-right))
-    calc(var(--safe-bottom) + var(--space-8)) max(var(--space-4), var(--safe-left));
   background:
     radial-gradient(
       circle at 50% 28%,
@@ -25,8 +21,24 @@
       transparent 70%
     ),
     var(--background);
+}
+
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: calc(var(--safe-top) + var(--space-8)) max(var(--space-4), var(--safe-right))
+    calc(var(--safe-bottom) + var(--space-8)) max(var(--space-4), var(--safe-left));
   color: var(--foreground);
   pointer-events: auto;
+}
+
+.screen:focus {
+  outline: none;
 }
 
 .content {

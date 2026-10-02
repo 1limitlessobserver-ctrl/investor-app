@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Button } from './form/Button';
 import { Field } from './form/Field';
 import { PinInput } from './form/PinInput';
@@ -14,8 +14,6 @@ export interface PasscodeFormProps {
   error?: string | undefined;
   /** The six digits, on the submit button or Enter. The boxes then clear for another try. */
   onPasscode: (code: string) => void;
-  /** Puts focus in the first box when the form appears. */
-  focusOnMount?: boolean | undefined;
   /** More buttons under the submit button (Cancel). */
   children?: ReactNode;
   className?: string | undefined;
@@ -30,17 +28,12 @@ export function PasscodeForm({
   busy = false,
   error,
   onPasscode,
-  focusOnMount = false,
   children,
   className,
 }: PasscodeFormProps) {
   const [code, setCode] = useState('');
   const [incomplete, setIncomplete] = useState(false);
   const firstBox = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (focusOnMount) firstBox.current?.focus();
-  }, [focusOnMount]);
 
   function change(next: string) {
     setCode(next);
