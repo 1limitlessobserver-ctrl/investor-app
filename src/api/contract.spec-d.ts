@@ -6,7 +6,7 @@
 import { expectTypeOf } from 'vitest';
 import type { z } from 'zod';
 import type { LegacyPlanSchema } from '../lib/legacyPlanModel';
-import type { ROUTES } from './createLiveApi';
+import type { ROUTES } from './liveRoutes';
 import type { PlatformApi } from './PlatformApi';
 import type {
   BeneficiaryInput,

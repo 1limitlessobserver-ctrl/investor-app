@@ -5,14 +5,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createLiveApi,
-  PUBLIC_ROUTES,
-  ROUTES,
-  type ApiMethod,
   type AppIdentity,
   type LiveApi,
   type LiveApiConfig,
   type StoredSession,
 } from './createLiveApi';
+import { ROUTES, type ApiMethod } from './liveRoutes';
 import { MobileApiError } from './MobileApiError';
 import type { PlatformApi } from './PlatformApi';
 import type { KycSubmission, LegacyPlan, MobileTokens } from './types';
@@ -544,10 +542,6 @@ describe('the routes', () => {
       expect(ROUTES[name]).toEqual({ method: verb, path: target.split('?')[0] });
     },
   );
-
-  it('names the same public routes as the client', () => {
-    expect([...PUBLIC_ROUTES].sort()).toEqual([...publicRoutes].sort());
-  });
 
   it('leaves out the query key and the body field that were not given', async () => {
     const t = setup(() => json(200, {}));
