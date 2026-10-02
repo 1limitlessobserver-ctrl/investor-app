@@ -1282,8 +1282,9 @@ describe('the session a request belongs to', () => {
   );
 
   // Another tab signed out and signed in as another investor (k2): the store now answers that
-  // investor's refresh token, beside this tab's old access token or with none. A call this tab
-  // sent as k1 must not be refreshed with it, retried, or end anything.
+  // investor's refresh token with no access token (as StoredSession asks) or, from a store that
+  // does not keep to that, beside this tab's old one. A call this tab sent as k1 must not be
+  // refreshed with it, retried, or end anything.
   describe.each([
     [
       "beside this tab's old access token",
@@ -1449,8 +1450,8 @@ describe('the session a request belongs to', () => {
   );
 
   it('throws the 401 untouched when its refresh lands after a logout that could not clear', async () => {
-    // The store still holds the sign-in the call went out with, so only the session the client
-    // has ended tells this call's session is over.
+    // The store still holds the sign-in the call went out with, so only the client's own count of
+    // the sessions it has ended tells that this call's session is over.
     const started = gate();
     const answer = gate();
     const t = setup(
