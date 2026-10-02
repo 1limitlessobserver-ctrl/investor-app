@@ -699,6 +699,44 @@ describe('AppSession: the platform’s answers', () => {
     expect(screen.getByTestId('update')).toHaveTextContent('"2.1.0"');
   });
 
+  it('ends an open confirmation as cancelled when the platform requires an update', async () => {
+    document.title = '';
+    let wired: ApiWiring | undefined;
+    const user = await launch((wiring) => {
+      wired = wiring;
+      return createSampleApi({ latencyMs: 0 });
+    });
+    await user.click(screen.getByText('enter'));
+    await setUpDeviceLock(user);
+    await user.click(screen.getByText('confirm'));
+    await screen.findByRole('dialog', { name: 'Confirm' });
+    act(() => wired?.events.onUpgradeRequired('2.0.0'));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('ends an open confirmation as cancelled when a newer brand requires an update', async () => {
+    document.title = '';
+    const api = createSampleApi({ latencyMs: 0 });
+    const brand = await api.brand();
+    const queryClient = createQueryClient();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AppSessionProvider api={api} platform={fakePlatform()} queryClient={queryClient}>
+        <Probe />
+      </AppSessionProvider>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await user.click(screen.getByText('enter'));
+    await setUpDeviceLock(user);
+    await user.click(screen.getByText('confirm'));
+    await screen.findByRole('dialog', { name: 'Confirm' });
+    vi.spyOn(api, 'brand').mockResolvedValue({ ...brand, minSupportedAppVersion: '99.0.0' });
+    await act(() => queryClient.refetchQueries({ queryKey: ['sample', 'brand'] }));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    expect(screen.getByTestId('update')).toHaveTextContent('"99.0.0"');
+  });
+
   it('says so when the session could not be saved on this device', async () => {
     let wired: ApiWiring | undefined;
     await launch((wiring) => {

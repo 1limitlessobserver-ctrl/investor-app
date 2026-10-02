@@ -14,7 +14,7 @@
 //    and nothing else does: a rejected call never signs out on its own.
 //  - Storage this device cannot read means signing in again, after a reset when its key is lost.
 
-import { onlineManager, type QueryClient } from '@tanstack/react-query';
+import { hashKey, onlineManager, type QueryClient } from '@tanstack/react-query';
 import { MobileApiError } from '../api/MobileApiError';
 import type { SignedOutReason } from '../api/createLiveApi';
 import type { PlatformApi } from '../api/PlatformApi';
@@ -189,6 +189,7 @@ export function createSessionController(deps: SessionDeps) {
   };
   const api = deps.makeApi({ events, tokenStore });
   const live = api.mode === 'live';
+  const brandHash = hashKey(brandQuery(api).queryKey);
 
   let state: SessionState = {
     status: 'loading',
@@ -738,6 +739,13 @@ export function createSessionController(deps: SessionDeps) {
     // A version beats none: a 426 that names none keeps the one an earlier answer gave.
     const next = minVersion !== '' ? minVersion : (state.upgradeRequired ?? '');
     if (next !== state.upgradeRequired) set({ upgradeRequired: next });
+    // The update screen covers everything: a confirmation or a setup waiting under it ends.
+    closeFlows();
+  }
+
+  /** A brand fetched afresh may require a newer app: then the flows under the update end too. */
+  function brandFetched(): void {
+    if (updateIsRequired()) closeFlows();
   }
 
   /** Another tab signed in or out: this one follows what is stored now. */
@@ -774,9 +782,13 @@ export function createSessionController(deps: SessionDeps) {
     const stops = [
       live ? tokenStore.subscribe(storeChanged) : () => {},
       queryClient.getQueryCache().subscribe((event) => {
-        if (event.type !== 'updated' || event.action.type !== 'error') return;
-        const error: unknown = event.action.error;
-        callFailed(error);
+        if (event.type !== 'updated') return;
+        if (event.action.type === 'error') {
+          const error: unknown = event.action.error;
+          callFailed(error);
+        } else if (event.action.type === 'success' && event.query.queryHash === brandHash) {
+          brandFetched();
+        }
       }),
       queryClient.getMutationCache().subscribe((event) => {
         if (event.type !== 'updated' || event.action.type !== 'error') return;
