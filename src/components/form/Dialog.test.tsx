@@ -37,7 +37,7 @@ function NewRequest({ closeButton }: { closeButton?: boolean }) {
 }
 
 describe('Dialog', () => {
-  it('opens as a named, described dialog with focus inside and the page behind locked', async () => {
+  it('opens named and described, with focus inside and the page behind locked', async () => {
     const user = userEvent.setup();
     render(<NewRequest />);
     await user.click(screen.getByRole('button', { name: 'Write to support' }));

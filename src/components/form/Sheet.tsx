@@ -11,7 +11,10 @@ import styles from './Sheet.module.css';
 //
 //   <Sheet open={open} onOpenChange={setOpen}>
 //     <SheetContent>
-//       <SheetHeader><SheetTitle>…</SheetTitle><SheetDescription>…</SheetDescription></SheetHeader>
+//       <SheetHeader>
+//         <SheetTitle>…</SheetTitle>
+//         <SheetDescription>…</SheetDescription>
+//       </SheetHeader>
 //       …
 //     </SheetContent>
 //   </Sheet>

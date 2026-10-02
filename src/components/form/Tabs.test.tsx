@@ -21,7 +21,7 @@ function Portfolio(props: { value?: string; onValueChange?: (value: string) => v
 }
 
 describe('Tabs', () => {
-  it('moves between tabs with the arrow keys, Home and End, and shows the matching panel', async () => {
+  it('moves with the arrow keys, Home and End, and shows the matching panel', async () => {
     const user = userEvent.setup();
     render(<Portfolio />);
     expect(screen.getByRole('tablist', { name: 'Portfolio sections' })).toBeInTheDocument();

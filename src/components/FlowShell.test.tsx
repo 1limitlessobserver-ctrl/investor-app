@@ -13,7 +13,7 @@ describe('FlowShell', () => {
     vi.unstubAllGlobals();
   });
 
-  it('on phones: back, the title, the screen’s actions, bell and orb, and no tab bar', async () => {
+  it('on phones: back, title, actions, bell and orb, and no tab bar', async () => {
     const onBack = vi.fn();
     renderInRouter(
       <FlowShell

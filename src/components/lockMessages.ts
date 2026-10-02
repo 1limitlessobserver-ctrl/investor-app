@@ -8,5 +8,6 @@ export const INCOMPLETE_PASSCODE = 'Enter all six digits.';
 
 /** After a wrong passcode, with the attempts platform.lock.verifyPasscode() says are left. */
 export function attemptsLeftMessage(attemptsLeft: number): string {
-  return `That passcode didn't match. ${attemptsLeft} ${attemptsLeft === 1 ? 'attempt' : 'attempts'} left.`;
+  const attempts = attemptsLeft === 1 ? 'attempt' : 'attempts';
+  return `That passcode didn't match. ${attemptsLeft} ${attempts} left.`;
 }
