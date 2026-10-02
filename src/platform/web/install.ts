@@ -30,7 +30,21 @@ export function createWebInstall(
   let held: BeforeInstallPromptEvent | null = null;
   let installedNow = false;
   const listeners = new Set<() => void>();
-  const notify = () => [...listeners].forEach((listener) => listener());
+  /**
+   * Tells every listener. One that throws stops neither the others nor the prompt; its error is
+   * reported on its own.
+   */
+  const notify = () => {
+    for (const listener of [...listeners]) {
+      try {
+        listener();
+      } catch (error) {
+        queueMicrotask(() => {
+          throw error;
+        });
+      }
+    }
+  };
 
   window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault(); // no mini-infobar: the app offers the prompt itself

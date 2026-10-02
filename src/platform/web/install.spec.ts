@@ -138,6 +138,35 @@ describe('install adapter: prompts, installation and hints', () => {
     expect(listener).toHaveBeenCalledTimes(3);
   });
 
+  it('tells every listener, and still prompts, when one listener throws', async () => {
+    const install = createWebInstall(chromeOnWindows);
+    const uncaught: unknown[] = [];
+    const report = (error: unknown) => {
+      uncaught.push(error);
+    };
+    process.on('uncaughtException', report); // Vitest leaves an error with a listener to it
+    const leaveFailing = install.subscribe(() => {
+      throw new Error('listener bug');
+    });
+    const later = vi.fn();
+    const leaveLater = install.subscribe(later);
+    try {
+      const { event, prompt } = promptEvent('accepted');
+      window.dispatchEvent(event);
+      expect(later).toHaveBeenCalledTimes(1);
+      expect(install.canPrompt()).toBe(true);
+      expect(await install.prompt()).toBe('accepted');
+      expect(prompt).toHaveBeenCalledTimes(1);
+      expect(later).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(uncaught).toHaveLength(2)); // each reported on its own
+    } finally {
+      leaveFailing();
+      leaveLater();
+      process.off('uncaughtException', report);
+    }
+    expect(uncaught).toEqual([new Error('listener bug'), new Error('listener bug')]);
+  });
+
   it('counts an appinstalled event as installed, and drops a prompt it held', () => {
     const install = createWebInstall({
       userAgent: safariOnMac,
