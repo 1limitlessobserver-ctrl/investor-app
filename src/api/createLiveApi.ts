@@ -250,6 +250,8 @@ const nameHeaderOf = (name: string | undefined): string | null =>
  * `storage_error` (the store failed before the platform was asked). Beyond the interface:
  *  - refresh() resolves the new pair and rotates it into the store; with nothing stored it rejects
  *    `unauthorized` and sends nothing;
+ *  - a call that must refresh first (no access token on this page) rejects `unauthorized`, unsent,
+ *    when that refresh renewed another sign-in or the investor signed out meanwhile;
  *  - logout() clears the store first, then sends at most one request, whose failure it ignores;
  *    it never refreshes, retries or calls onSignedOut, and rejects only when the store fails;
  *  - login() and loginTwoFactor() store nothing: the session layer stores the pair it signs in
