@@ -27,7 +27,10 @@ export interface SampleApiOptions {
   now?: () => Date;
   /** The overflow audit's world: a 40-character company name and a $12,345,678.90 wallet. */
   stress?: boolean;
-  /** What GET /brand reports as the minimum app version ("1.0.0" unless set). */
+  /**
+   * What GET /brand reports as the minimum app version: "0.0.0" (none) unless set, so the app,
+   * whatever its version, is outdated in the sample world only when asked (?sampleMinVersion).
+   */
   minSupportedAppVersion?: string;
   /**
    * The session ended, as the live client's callback of that name says: told once per ended
@@ -51,7 +54,7 @@ export function createSampleApi(options: SampleApiOptions = {}): SampleApi {
     latencyMs = 450,
     now = () => new Date(),
     stress = false,
-    minSupportedAppVersion = '1.0.0',
+    minSupportedAppVersion = '0.0.0',
     onSignedOut,
   } = options;
   const state = sampleData.createState({ now: now(), stress });

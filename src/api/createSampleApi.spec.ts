@@ -195,8 +195,9 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
     }
   });
 
-  it('reports the minimum app version it was given', async () => {
-    expect((await api().brand()).minSupportedAppVersion).toBe('1.0.0');
+  it('reports the minimum app version it was given, and none unless told', async () => {
+    // No minimum by default: the template's own version (0.1.0) must never read as outdated.
+    expect((await api().brand()).minSupportedAppVersion).toBe('0.0.0');
     const old = createSampleApi({ latencyMs: 0, minSupportedAppVersion: '99.0.0' });
     expect((await old.brand()).minSupportedAppVersion).toBe('99.0.0');
   });
