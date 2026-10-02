@@ -42,6 +42,8 @@ export interface LockAdapter {
   /**
    * Checks the passcode. The fifth wrong attempt in a row wipes the passcode and answers
    * `attemptsLeft: 0`, and so does a check with no passcode enrolled: the caller then signs out.
+   * Each attempt is counted before it is checked, so when storage cannot count it the call
+   * rejects and nothing is checked.
    */
   verifyPasscode(code: string): Promise<{ ok: boolean; attemptsLeft: number }>;
   /** Forgets both enrolments. */
@@ -55,12 +57,15 @@ export interface NotificationsAdapter {
   request(): Promise<'granted' | 'denied' | 'unsupported'>;
   /**
    * This browser's push subscription for the platform's VAPID key (base64url), in the form
-   * POST /push/subscribe takes.
+   * POST /push/subscribe takes. Rejects where no service worker is registered.
    */
   subscribe(vapidPublicKey: string): Promise<PushSubscriptionInput>;
-  /** Ends the push subscription; the endpoint it had (for /push/unsubscribe), or null if none. */
+  /**
+   * Ends the push subscription and answers the endpoint it had, for /push/unsubscribe; null when
+   * there is none, or no service worker to hold one.
+   */
   unsubscribe(): Promise<string | null>;
-  /** Shows a notification from this device, with the app's icon and badge. */
+  /** Shows a notification with the app's icon and badge; rejects where no worker is registered. */
   show(n: { title: string; body?: string | undefined; tag?: string | undefined }): Promise<void>;
 }
 
