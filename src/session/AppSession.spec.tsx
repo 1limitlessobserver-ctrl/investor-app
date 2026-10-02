@@ -1807,8 +1807,9 @@ describe('AppSession: two tabs on one device', () => {
       const storeCleared = vi.fn();
       tokenStore.clear = async (key) => {
         storeCleared();
-        await waitHere('the store');
-        return clearStore(key);
+        const cleared = await clearStore(key);
+        await waitHere('the store'); // the store answers late, its sign-in already gone
+        return cleared;
       };
       const clearLock = vi.fn(async () => {
         await waitHere('the lock');
