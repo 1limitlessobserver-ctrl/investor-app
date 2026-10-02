@@ -1,11 +1,14 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { cssOrder, cssRule, cssValues, rem } from './cssRules';
 
+const dir = mkdtempSync(join(tmpdir(), 'css-rules-'));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
 function sheet(css: string): string {
-  const path = join(mkdtempSync(join(tmpdir(), 'css-rules-')), 'sheet.module.css');
+  const path = join(dir, 'sheet.module.css');
   writeFileSync(path, css);
   return path;
 }

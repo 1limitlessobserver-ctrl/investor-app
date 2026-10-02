@@ -27,7 +27,8 @@
   opacity: 1;
 }
 
-.input:hover {
+/* Only while it can be used; :where() adds no weight, so the error's rule after it still wins. */
+.input:hover:where(:not(:disabled)) {
   border-color: var(--muted-foreground);
 }
 

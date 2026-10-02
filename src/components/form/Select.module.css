@@ -26,7 +26,8 @@
     box-shadow 140ms ease;
 }
 
-.trigger:hover {
+/* Only while it can be used; :where() adds no weight, so the error's rule after it still wins. */
+.trigger:hover:where(:not(:disabled)) {
   border-color: var(--muted-foreground);
 }
 

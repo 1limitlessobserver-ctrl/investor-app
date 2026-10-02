@@ -21,6 +21,14 @@ describe('Textarea', () => {
     expect(screen.getByRole('textbox', { name: 'Reply' })).toHaveAttribute('aria-invalid', 'true');
   });
 
+  it('darkens its edge on hover only while it can be used', () => {
+    const css = join(import.meta.dirname, 'Textarea.module.css');
+    expect(cssRule(css, '.textarea:hover')).toEqual({});
+    expect(cssRule(css, '.textarea:hover:where(:not(:disabled))')).toEqual({
+      'border-color': 'var(--muted-foreground)',
+    });
+  });
+
   it('keeps a real outline on keyboard focus, and focus wins over hover and the error', () => {
     const css = join(import.meta.dirname, 'Textarea.module.css');
     expect(cssRule(css, '.textarea:focus-visible')).toMatchObject({
@@ -28,10 +36,9 @@ describe('Textarea', () => {
       'outline-offset': '2px',
       'border-color': 'var(--accent-text)',
     });
-    expect(cssOrder(css, '.textarea:hover')).toBeGreaterThan(-1);
-    expect(cssOrder(css, '.textarea:hover')).toBeLessThan(
-      cssOrder(css, ".textarea[aria-invalid='true']"),
-    );
+    const hover = '.textarea:hover:where(:not(:disabled))';
+    expect(cssOrder(css, hover)).toBeGreaterThan(-1);
+    expect(cssOrder(css, hover)).toBeLessThan(cssOrder(css, ".textarea[aria-invalid='true']"));
     expect(cssOrder(css, ".textarea[aria-invalid='true']")).toBeLessThan(
       cssOrder(css, '.textarea:focus-visible'),
     );

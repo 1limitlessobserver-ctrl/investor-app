@@ -35,13 +35,20 @@ describe('Input', () => {
       'outline-offset': '2px',
       'border-color': 'var(--accent-text)',
     });
-    expect(cssOrder(css, '.input:hover')).toBeGreaterThan(-1);
-    expect(cssOrder(css, '.input:hover')).toBeLessThan(
-      cssOrder(css, ".input[aria-invalid='true']"),
-    );
+    const hover = '.input:hover:where(:not(:disabled))';
+    expect(cssOrder(css, hover)).toBeGreaterThan(-1);
+    expect(cssOrder(css, hover)).toBeLessThan(cssOrder(css, ".input[aria-invalid='true']"));
     expect(cssOrder(css, ".input[aria-invalid='true']")).toBeLessThan(
       cssOrder(css, '.input:focus-visible'),
     );
+  });
+
+  it('darkens its edge on hover only while it can be used', () => {
+    const css = join(import.meta.dirname, 'Input.module.css');
+    expect(cssRule(css, '.input:hover')).toEqual({});
+    expect(cssRule(css, '.input:hover:where(:not(:disabled))')).toEqual({
+      'border-color': 'var(--muted-foreground)',
+    });
   });
 
   it('is tall enough to tap and large enough that phones do not zoom on focus', () => {

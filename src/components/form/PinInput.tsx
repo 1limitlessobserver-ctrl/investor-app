@@ -84,6 +84,12 @@ export function PinInput({
 
   useEffect(() => {
     latest.current = current;
+    // A controlled parent may have refused the digits just typed: focus never stays past the
+    // first empty box.
+    const focused = boxes.current.findIndex(
+      (box) => box !== null && box === document.activeElement,
+    );
+    if (focused > current.length) focusBox(current.length);
     if (current === shown.current) return;
     shown.current = current;
     if (current.length === length) onComplete?.(current);

@@ -74,6 +74,14 @@ describe('Select', () => {
     expect(onValueChange).not.toHaveBeenCalled();
   });
 
+  it('darkens the trigger’s edge on hover only while it can be used', () => {
+    const css = join(import.meta.dirname, 'Select.module.css');
+    expect(cssRule(css, '.trigger:hover')).toEqual({});
+    expect(cssRule(css, '.trigger:hover:where(:not(:disabled))')).toEqual({
+      'border-color': 'var(--muted-foreground)',
+    });
+  });
+
   it('keeps a real outline on keyboard focus, and focus wins over hover and the error', () => {
     const css = join(import.meta.dirname, 'Select.module.css');
     expect(cssRule(css, '.trigger:focus-visible')).toMatchObject({
@@ -81,10 +89,9 @@ describe('Select', () => {
       'outline-offset': '2px',
       'border-color': 'var(--accent-text)',
     });
-    expect(cssOrder(css, '.trigger:hover')).toBeGreaterThan(-1);
-    expect(cssOrder(css, '.trigger:hover')).toBeLessThan(
-      cssOrder(css, ".trigger[aria-invalid='true']"),
-    );
+    const hover = '.trigger:hover:where(:not(:disabled))';
+    expect(cssOrder(css, hover)).toBeGreaterThan(-1);
+    expect(cssOrder(css, hover)).toBeLessThan(cssOrder(css, ".trigger[aria-invalid='true']"));
     expect(cssOrder(css, ".trigger[aria-invalid='true']")).toBeLessThan(
       cssOrder(css, '.trigger:focus-visible'),
     );

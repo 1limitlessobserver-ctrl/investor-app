@@ -168,6 +168,8 @@ describe('PinInput', () => {
     await user.type(screen.getByLabelText('PIN'), '1234');
     expect(values()).toBe('12__');
     expect(onComplete).not.toHaveBeenCalled();
+    // The refused digits leave no gap: focus is back on the first empty box.
+    expect(boxes()[2]).toHaveFocus();
   });
 
   it('completes once a parent takes the last digit', async () => {
