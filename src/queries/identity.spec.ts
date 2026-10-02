@@ -1,5 +1,5 @@
 import { QueryObserver } from '@tanstack/react-query';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSampleApi } from '../api/createSampleApi';
 import { sampleData } from '../sample/sampleData';
 import { brandCache } from '../session/brand';
@@ -24,6 +24,24 @@ describe('brandQuery', () => {
     const result = observer.getCurrentResult();
     expect(result.data?.name).toBe('Cached Company');
     expect(result.isStale).toBe(true);
+  });
+
+  it.each([
+    ['a theme this app does not know', { defaultTheme: 'nebula' }],
+    ['no minimum version', { minSupportedAppVersion: null }],
+    ['no links', { links: undefined }],
+  ])('refuses a brand with %s, and keeps the one cached', async (_, change) => {
+    const api = createSampleApi({ latencyMs: 0 });
+    const cached = { ...sampleData.createState().brand, name: 'Cached Company' };
+    brandCache.write(cached);
+    vi.spyOn(api, 'brand').mockResolvedValue({ ...(await api.brand()), ...change } as never);
+    const client = createQueryClient();
+    await expect(client.fetchQuery(brandQuery(api))).rejects.toMatchObject({
+      code: 'server_error',
+      status: 0,
+    });
+    expect(brandCache.read()).toEqual(cached);
+    expect(client.getQueryData(brandQuery(api).queryKey)).toEqual(cached);
   });
 });
 

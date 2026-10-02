@@ -3,15 +3,19 @@
 // once and fetches it again) and the investor signed in.
 
 import { queryOptions } from '@tanstack/react-query';
+import { MobileApiError } from '../api/MobileApiError';
 import type { PlatformApi } from '../api/PlatformApi';
-import { brandCache } from '../session/brand';
+import { brandCache, isBrand } from '../session/brand';
 import { queryKey } from './keys';
 
 export function brandQuery(api: PlatformApi) {
   return queryOptions({
     queryKey: queryKey(api.mode, 'brand'),
     queryFn: async () => {
-      const brand = await api.brand();
+      const brand: unknown = await api.brand();
+      // A brand this version cannot use (an unknown theme, a missing field) is a failed fetch:
+      // the brand the app has, cached or none, stays.
+      if (!isBrand(brand)) throw new MobileApiError('server_error', 0);
       brandCache.write(brand);
       return brand;
     },

@@ -1,5 +1,6 @@
 import { QueryClientProvider, useQuery, type QueryClient } from '@tanstack/react-query';
 import {
+  Component,
   createContext,
   useContext,
   useEffect,
@@ -15,6 +16,7 @@ import { ConfirmSheet } from '../components/ConfirmSheet';
 import { Button } from '../components/form/Button';
 import { StateView } from '../components/StateView';
 import { themes, type ThemeId } from '../design/themes';
+import { reportProblem } from '../lib/report';
 import { platform as webPlatform } from '../platform';
 import type { LockMethod, Platform } from '../platform/types';
 import { createQueryClient } from '../queries/client';
@@ -184,7 +186,7 @@ function Session({ controller, children }: { controller: SessionController; chil
   const { confirmation, lockSetup, notice } = state;
   return (
     <SessionContext.Provider value={session}>
-      {children}
+      <ShowsFailure>{children}</ShowsFailure>
       <ConfirmSheet
         open={confirmation !== null && lockSetup === null && updateRequired === null}
         reason={confirmation?.reason ?? ''}
@@ -220,6 +222,36 @@ function Session({ controller, children }: { controller: SessionController; chil
       </div>
     </SessionContext.Provider>
   );
+}
+
+/**
+ * The app beneath the session, or, when it fails to render, a calm message and a reload in its
+ * place (never a blank page). The session's own sheets and notice sit outside it and stay.
+ */
+class ShowsFailure extends Component<{ children: ReactNode }, { failed: boolean }> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  override componentDidCatch(error: unknown): void {
+    reportProblem('showing the app', error);
+  }
+
+  override render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <main className={styles.problem}>
+        <StateView
+          kind="error"
+          title="Something went wrong"
+          detail="The app couldn't be shown. Reload it to try again."
+          action={{ label: 'Reload', onClick: () => window.location.reload() }}
+        />
+      </main>
+    );
+  }
 }
 
 const SETUP_PROBLEM =

@@ -16,7 +16,8 @@ import { createQueryClient } from '../queries/client';
 import { cssRule } from '../test/cssRules';
 import { fakePlatform } from '../test/fakePlatform';
 import { memoryKvStore } from '../test/memoryKvStore';
-import { createSessionController } from './sessionController';
+import { brandCache } from './brand';
+import { createSessionController, updateRequiredFor } from './sessionController';
 import { createTokenStore, type TokenStoreEvent } from './tokens';
 
 function Probe() {
@@ -1106,6 +1107,44 @@ describe('AppSession: the platform’s answers', () => {
     expect(screen.getByTestId('update')).toHaveTextContent('"99.0.0"');
   });
 
+  it.each([
+    ['a theme this version does not know', { defaultTheme: 'nebula' }],
+    ['no minimum version', { minSupportedAppVersion: null }],
+  ])('carries on with the cached brand when the platform’s has %s', async (_, change) => {
+    const api = createSampleApi({ latencyMs: 0 });
+    const brand = await api.brand();
+    brandCache.write({ ...brand, name: 'Cached Company' });
+    const fetched = vi.spyOn(api, 'brand').mockResolvedValue({ ...brand, ...change } as never);
+    await launch(api);
+    await waitFor(() => expect(fetched).toHaveBeenCalled());
+    await act(() => vi.advanceTimersByTimeAsync(50));
+    expect(status()).toHaveTextContent('signed-out');
+    expect(screen.getByTestId('brand')).toHaveTextContent('Cached Company');
+    expect(screen.getByTestId('update')).toHaveTextContent('null');
+    expect(document.documentElement.dataset.theme).toBe('orbital');
+  });
+
+  it('carries on in Orbital when the platform’s brand is unusable and none cached', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    const brand = await api.brand();
+    const fetched = vi
+      .spyOn(api, 'brand')
+      .mockResolvedValue({ ...brand, defaultTheme: 'nebula' } as never);
+    await launch(api);
+    await waitFor(() => expect(fetched).toHaveBeenCalled());
+    await act(() => vi.advanceTimersByTimeAsync(50));
+    expect(status()).toHaveTextContent('signed-out');
+    expect(screen.getByTestId('brand')).toHaveTextContent('');
+    expect(document.documentElement.dataset.theme).toBe('orbital');
+  });
+
+  it('needs no update for a brand that names no minimum version', async () => {
+    const brand = await createSampleApi({ latencyMs: 0 }).brand();
+    const unnamed = { ...brand, minSupportedAppVersion: null as never };
+    expect(updateRequiredFor(unnamed, null, '0.1.0')).toBeNull();
+    expect(updateRequiredFor(unnamed, '', '0.1.0')).toBe('');
+  });
+
   it('keeps the notice’s live region in the page while it has nothing to say', () => {
     // An empty region that is hidden leaves the accessibility tree, and its first words go unsaid.
     const css = join(import.meta.dirname, 'AppSession.module.css');
@@ -1477,6 +1516,28 @@ describe('AppSession: a live session', () => {
     await user.click(screen.getByText('sign in live'));
     await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
     expect(reset).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AppSession: a screen that cannot render', () => {
+  it('shows a calm message with Reload in its place, and reports what failed', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const problem = new Error('a screen that cannot render');
+    function Broken(): never {
+      throw problem;
+    }
+    render(
+      <AppSessionProvider api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
+        <Broken />
+      </AppSessionProvider>,
+    );
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Something went wrong');
+    expect(alert).toHaveTextContent("The app couldn't be shown. Reload it to try again.");
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(warn).toHaveBeenCalledWith('[investor-app] showing the app:', problem);
+    logged.mockRestore();
   });
 });
 

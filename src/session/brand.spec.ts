@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Brand } from '../api/types';
 import { sampleData } from '../sample/sampleData';
 import { appConfig } from './appConfig';
-import { accentFor, brandCache, themeChoice, themeFor } from './brand';
+import { accentFor, brandCache, isBrand, themeChoice, themeFor } from './brand';
 
 const brand = (): Brand => structuredClone(sampleData.createState().brand);
 
@@ -73,6 +73,22 @@ describe('brandCache', () => {
   });
 });
 
+describe('isBrand', () => {
+  it('knows a whole brand, as GET /brand answers it', () => {
+    expect(isBrand(brand())).toBe(true);
+    expect(isBrand({ ...brand(), vapidPublicKey: 'BKey' })).toBe(true);
+    for (const broken of [
+      null,
+      { ...brand(), minSupportedAppVersion: null },
+      { ...brand(), defaultTheme: 'nebula' },
+      { ...brand(), themes: ['orbital', 'nebula'] },
+      { ...brand(), vapidPublicKey: 42 },
+    ]) {
+      expect(isBrand(broken)).toBe(false);
+    }
+  });
+});
+
 describe('themeChoice', () => {
   it('remembers a theme the investor picked, and only a theme', () => {
     expect(themeChoice.read()).toBeNull();
@@ -89,6 +105,10 @@ describe('themeFor', () => {
     expect(themeFor('aegis', { ...brand(), defaultTheme: 'verdant' })).toBe('aegis');
     expect(themeFor(null, { ...brand(), defaultTheme: 'verdant' })).toBe('verdant');
     expect(themeFor(null, null)).toBe('orbital');
+  });
+
+  it('shows Orbital for a default theme this version does not know', () => {
+    expect(themeFor(null, { ...brand(), defaultTheme: 'nebula' as never })).toBe('orbital');
   });
 });
 

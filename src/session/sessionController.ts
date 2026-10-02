@@ -182,10 +182,9 @@ export function updateRequiredFor(
   upgradeRequired: string | null,
   appVersion: string,
 ): string | null {
+  const minimum: unknown = brand?.minSupportedAppVersion;
   const fromBrand =
-    brand !== null && isBelowMinimum(appVersion, brand.minSupportedAppVersion)
-      ? brand.minSupportedAppVersion
-      : null;
+    typeof minimum === 'string' && isBelowMinimum(appVersion, minimum) ? minimum : null;
   if (upgradeRequired === null) return fromBrand;
   return upgradeRequired !== '' ? upgradeRequired : (fromBrand ?? '');
 }

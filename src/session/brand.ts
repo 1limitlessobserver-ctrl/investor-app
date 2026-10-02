@@ -37,8 +37,11 @@ const isThemeId = (value: unknown): value is ThemeId => themes.ids.some((id) => 
 const all = (value: unknown, keys: readonly string[], check: (v: unknown) => boolean) =>
   isRecord(value) && keys.every((key) => check(value[key]));
 
-/** A whole Brand, as GET /brand answers it; a cached one must be, or it is not used. */
-function isBrand(value: unknown): value is Brand {
+/**
+ * A whole Brand, as GET /brand answers it, in a shape this version can use: a cached one must be,
+ * or it is not used, and so must one the platform sends (identity.ts).
+ */
+export function isBrand(value: unknown): value is Brand {
   return (
     isRecord(value) &&
     value.apiVersion === 1 &&
@@ -96,9 +99,12 @@ export const themeChoice = {
   },
 };
 
-/** The theme to show: the investor's choice, else the brand's default, else Orbital. */
+/**
+ * The theme to show: the investor's choice, else the brand's default, else Orbital (also for a
+ * default this version does not know).
+ */
 export function themeFor(choice: ThemeId | null, brand: Brand | null): ThemeId {
-  return choice ?? brand?.defaultTheme ?? 'orbital';
+  return choice ?? (isThemeId(brand?.defaultTheme) ? brand.defaultTheme : 'orbital');
 }
 
 /** The accent to paint: the brand's when it is a colour, else the install-time one. */
