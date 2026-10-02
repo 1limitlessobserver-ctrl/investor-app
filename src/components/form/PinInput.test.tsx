@@ -137,6 +137,48 @@ describe('PinInput', () => {
     expect(screen.getByRole('button', { name: 'Before' })).toHaveFocus();
   });
 
+  it('follows a parent that keeps fewer digits, completing only what it shows', async () => {
+    const user = userEvent.setup();
+    const onComplete = vi.fn();
+    function Capped() {
+      const [pin, setPin] = useState('');
+      return (
+        <PinInput
+          length={4}
+          aria-label="PIN"
+          value={pin}
+          onChange={(next) => setPin(next.slice(0, 2))}
+          onComplete={onComplete}
+        />
+      );
+    }
+    render(<Capped />);
+    await user.type(screen.getByLabelText('PIN'), '1234');
+    expect(values()).toBe('12__');
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('completes once a parent takes the last digit', async () => {
+    const user = userEvent.setup();
+    const onComplete = vi.fn();
+    function Controlled() {
+      const [pin, setPin] = useState('');
+      return (
+        <PinInput
+          length={4}
+          aria-label="PIN"
+          value={pin}
+          onChange={setPin}
+          onComplete={onComplete}
+        />
+      );
+    }
+    render(<Controlled />);
+    await user.type(screen.getByLabelText('PIN'), '2468');
+    expect(values()).toBe('2468');
+    expect(onComplete.mock.calls).toEqual([['2468']]);
+  });
+
   it('follows a value it is given, and masks the digits when asked', () => {
     function Controlled() {
       const [pin, setPin] = useState('12');

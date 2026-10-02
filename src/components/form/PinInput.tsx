@@ -2,6 +2,7 @@ import {
   useEffect,
   useId,
   useImperativeHandle,
+  useReducer,
   useRef,
   useState,
   type ChangeEvent,
@@ -21,7 +22,10 @@ export interface PinInputProps {
   defaultValue?: string | undefined;
   /** Every change, with the digits entered so far (no gaps: "12" is the first two boxes). */
   onChange?: ((value: string) => void) | undefined;
-  /** Each time the last box fills, with the whole code. */
+  /**
+   * Each time the boxes come to show a full code, with it: after the render that shows it, so a
+   * parent that keeps fewer digits than were typed never hears of a code it refused.
+   */
   onComplete?: ((code: string) => void) | undefined;
   /** Shows dots instead of digits (a passcode or PIN). */
   mask?: boolean | undefined;
@@ -73,9 +77,16 @@ export function PinInput({
   // The newest digits, read by handlers that run before the next render. Synced after every
   // render, so a parent that keeps its value after onChange is followed too.
   const latest = useRef(current);
+  // The code the boxes showed after the last render, to report a full code once.
+  const shown = useRef(current);
+  // A controlled change renders again even when the parent keeps its value (and so does not).
+  const [, renderAgain] = useReducer((count: number) => count + 1, 0);
 
   useEffect(() => {
     latest.current = current;
+    if (current === shown.current) return;
+    shown.current = current;
+    if (current.length === length) onComplete?.(current);
   });
 
   useImperativeHandle<HTMLInputElement | null, HTMLInputElement | null>(
@@ -92,10 +103,8 @@ export function PinInput({
     const previous = latest.current;
     latest.current = next;
     if (value === undefined) setOwn(next);
-    if (next !== previous) {
-      onChange?.(next);
-      if (next.length === length) onComplete?.(next);
-    }
+    else renderAgain();
+    if (next !== previous) onChange?.(next);
     focusBox(focusIndex);
   }
 
