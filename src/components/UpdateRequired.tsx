@@ -1,3 +1,4 @@
+import { VisuallyHidden } from 'radix-ui';
 import { BrandMark, type BrandIdentity } from './BrandMark';
 import { Button } from './form/Button';
 import styles from './UpdateRequired.module.css';
@@ -47,7 +48,7 @@ export function UpdateRequired({
           {storeUrl ? (
             <Button asChild size="lg">
               <a href={storeUrl} target="_blank" rel="noopener noreferrer">
-                Get the update
+                Get the update <VisuallyHidden.Root>(opens in a new tab)</VisuallyHidden.Root>
               </a>
             </Button>
           ) : (

@@ -31,7 +31,7 @@ describe('UpdateRequired', () => {
         onSignOut={() => {}}
       />,
     );
-    const link = screen.getByRole('link', { name: 'Get the update' });
+    const link = screen.getByRole('link', { name: 'Get the update (opens in a new tab)' });
     expect(link).toHaveAttribute('href', 'https://apps.example.com/northwind');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
