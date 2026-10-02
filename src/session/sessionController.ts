@@ -6,12 +6,16 @@
 //  - Launch: a stored session (live: the token store holds one; sample: this tab's flag) opens
 //    locked while the lock is on and set up, signed out (never unlocked) when it is on and no
 //    longer set up, else signed in.
+//  - The lock belongs to the session: a fresh sign-in wipes any lock left on the device and
+//    offers the setup; sign-out wipes it too.
 //  - The lock is on once the investor sets one up, until they turn it off (app.lockEnabled); with
-//    no choice stored, a lock that is set up counts as on. It locks after five minutes hidden, on
-//    lock() and at launch; confirmations always ask, whatever it says.
-//  - Sign-out: the platform first, then the store, the lock, push, the cache and the flag. The
-//    client's onSignedOut (and the sample's) ends the session the same way without the platform,
-//    and nothing else does: a rejected call never signs out on its own.
+//    no choice stored, a lock that is set up counts as on ("Not now" stores none). It locks after
+//    five minutes hidden, on lock() and at launch; confirmations always ask, whatever it says.
+//    The device's lock is read afresh before each of these, and when another tab changes it: a
+//    locked app whose lock has gone signs out.
+//  - Sign-out: the platform first (waited for 3 s at most), then the store, the lock, push, the
+//    cache and the flag. The client's onSignedOut (and the sample's) ends the session the same
+//    way without the platform, and nothing else does: a rejected call never signs out on its own.
 //  - Storage this device cannot read means signing in again, after a reset when its key is lost.
 
 import { hashKey, onlineManager, type QueryClient } from '@tanstack/react-query';
