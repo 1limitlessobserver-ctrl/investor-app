@@ -1,0 +1,6 @@
+/* A money figure keeps its digits in columns and on one line, as a figure is read whole. */
+
+.amount {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
