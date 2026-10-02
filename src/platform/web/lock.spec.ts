@@ -1186,7 +1186,7 @@ describe('device lock: its queue of changes', () => {
     const collect = (reason: unknown) => {
       unhandled.push(reason);
     };
-    process.on('unhandledRejection', collect); // Vitest leaves a rejection with a listener to it
+    process.on('unhandledRejection', collect); // Vitest stays out while the test listens
     try {
       broken = true;
       void lock.clear();

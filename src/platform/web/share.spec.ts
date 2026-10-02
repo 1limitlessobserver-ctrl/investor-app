@@ -76,7 +76,7 @@ describe('web share: the download fallback', () => {
     expect(seen).toEqual([]);
   });
 
-  it('downloads nothing while a share sheet is already open: a cancel too', async () => {
+  it('answers cancelled, downloading nothing, while a share sheet is already open', async () => {
     const share = vi.fn(() =>
       Promise.reject(new DOMException('A share is already in progress.', 'InvalidStateError')),
     );

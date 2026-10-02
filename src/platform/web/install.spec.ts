@@ -187,7 +187,7 @@ describe('install adapter: prompts, installation and hints', () => {
     const report = (error: unknown) => {
       uncaught.push(error);
     };
-    process.on('uncaughtException', report); // Vitest leaves an error with a listener to it
+    process.on('uncaughtException', report); // Vitest stays out while the test listens
     const leaveFailing = install.subscribe(() => {
       throw new Error('listener bug');
     });

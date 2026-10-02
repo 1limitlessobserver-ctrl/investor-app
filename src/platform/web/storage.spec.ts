@@ -224,7 +224,7 @@ describe('secure storage: the call queue', () => {
     const collect = (reason: unknown) => {
       unhandled.push(reason);
     };
-    process.on('unhandledRejection', collect); // Vitest leaves a rejection with a listener to it
+    process.on('unhandledRejection', collect); // Vitest stays out while the test listens
     try {
       void storage.set('a', '1');
       await vi.waitFor(() => expect(unhandled).toHaveLength(1));

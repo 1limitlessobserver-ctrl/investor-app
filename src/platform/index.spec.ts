@@ -160,7 +160,7 @@ describe('the web platform: the adapters it wires', () => {
     expect(await lock.available()).toBe('webauthn');
     await lock.enrollWebAuthn({ id: 'u1', email: 'ada@example.com' });
     expect(auth.create.mock.calls[0]![0].publicKey.rp.id).toBe('localhost'); // not localhost:3000
-    expect(await lock.verify()).toBe(true); // signed for http://localhost:3000, not its href
+    expect(await lock.verify()).toBe(true); // signed for the origin, not the page address (href)
     expect(await storage.get('lock:webauthn')).not.toBeNull();
     await storage.reset();
   });
