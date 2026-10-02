@@ -1,12 +1,13 @@
 // Web Push and local notifications through the app's service worker. The push subscription is
 // made for the platform's VAPID key and handed to the platform as PushSubscriptionInput; a local
-// notification shows the app's own icon and badge. Without the Notification API or a service
-// worker registration, there is no push: permission() says 'unsupported'.
+// notification shows the app's own icon and badge. Without the Notification API, a service worker
+// registration or a PushManager, there is no push: permission() says 'unsupported'.
 
 import type { PushSubscriptionInput } from '../../api/types';
 import { base64url } from '../../lib/base64url';
 import type { NotificationsAdapter } from '../types';
 
+const UNSUPPORTED = 'Notifications are not supported in this browser.';
 const ICON = '/icons/icon-192.png';
 const BADGE = '/icons/badge-96.png';
 
@@ -24,14 +25,14 @@ export function createWebNotifications(
   /** The subscription subscribe() last handed over, for unsubscribe() to end. */
   let made: PushSubscription | null = null;
 
-  /** The Notification API, when push is supported at all. */
+  /** The Notification API, where the browser has Web Push at all. */
   function notificationApi(): NotificationApi | undefined {
     const api = (globalThis as { Notification?: NotificationApi }).Notification;
-    return registration ? api : undefined;
+    return registration && 'PushManager' in globalThis ? api : undefined;
   }
 
   function serviceWorker(): Promise<ServiceWorkerRegistration> {
-    if (!registration) throw new Error('Notifications are not supported in this browser.');
+    if (!registration) throw new Error(UNSUPPORTED);
     return registration();
   }
 
@@ -48,6 +49,7 @@ export function createWebNotifications(
 
     async subscribe(vapidPublicKey) {
       const { pushManager } = await serviceWorker();
+      if (!pushManager) throw new Error(UNSUPPORTED); // a worker without push (Safari before 16)
       const subscription =
         (await pushManager.getSubscription()) ??
         (await pushManager.subscribe({
@@ -62,7 +64,7 @@ export function createWebNotifications(
       if (!registration) return null;
       // Without a service worker there is no subscription to end.
       const worker = await registration().catch(() => null);
-      if (!worker) return null;
+      if (!worker?.pushManager) return null;
       // The browser's own answer covers a subscription made before this page loaded.
       const subscription = (await worker.pushManager.getSubscription()) ?? made;
       if (!subscription) return null;

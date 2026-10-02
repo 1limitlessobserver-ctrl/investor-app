@@ -71,6 +71,9 @@ function fakeRegistration(existing: FakeSubscription | null, created?: FakeSubsc
   return { pushManager, showNotification, registration };
 }
 
+/** A browser with Web Push (jsdom has no PushManager); afterEach takes it away again. */
+const pushSupported = () => vi.stubGlobal('PushManager', class PushManager {});
+
 function notificationApi(permission: NotificationPermission, answer = permission) {
   const requestPermission = vi.fn(() => Promise.resolve(answer));
   vi.stubGlobal('Notification', { permission, requestPermission });
@@ -83,6 +86,7 @@ describe('web notifications: permission, subscriptions and local notifications',
   });
 
   it("reports the browser's permission while push is supported", () => {
+    pushSupported();
     const { registration } = fakeRegistration(null);
     for (const permission of ['default', 'granted', 'denied'] as const) {
       notificationApi(permission);
@@ -91,6 +95,7 @@ describe('web notifications: permission, subscriptions and local notifications',
   });
 
   it('asks for permission, and counts a prompt closed without an answer as denied', async () => {
+    pushSupported();
     const { registration } = fakeRegistration(null);
     const answers = [
       ['granted', 'granted'],
@@ -124,6 +129,27 @@ describe('web notifications: permission, subscriptions and local notifications',
     const n = createWebNotifications({ registration: fakeRegistration(null).registration });
     expect(n.permission()).toBe('unsupported');
     expect(await n.request()).toBe('unsupported');
+  });
+
+  it('is unsupported without a PushManager, as in Safari 15 on macOS', async () => {
+    const requestPermission = notificationApi('granted');
+    const n = createWebNotifications({ registration: fakeRegistration(null).registration });
+    expect('PushManager' in globalThis).toBe(false); // jsdom has none
+    expect(n.permission()).toBe('unsupported');
+    expect(await n.request()).toBe('unsupported');
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('cannot subscribe through a worker without push, and has nothing to end there', async () => {
+    const showNotification = vi.fn(() => Promise.resolve());
+    const n = createWebNotifications({
+      registration: () =>
+        Promise.resolve({ showNotification } as unknown as ServiceWorkerRegistration),
+    });
+    await expect(n.subscribe(vapidKey)).rejects.toThrow(
+      'Notifications are not supported in this browser.',
+    );
+    expect(await n.unsubscribe()).toBeNull();
   });
 
   it('reuses the subscription the browser already holds', async () => {

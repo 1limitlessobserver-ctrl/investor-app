@@ -69,12 +69,12 @@ export interface NotificationsAdapter {
   request(): Promise<'granted' | 'denied' | 'unsupported'>;
   /**
    * This browser's push subscription for the platform's VAPID key (base64url), in the form
-   * POST /push/subscribe takes. Rejects where no service worker is registered.
+   * POST /push/subscribe takes. Rejects where no service worker is registered, or it has no push.
    */
   subscribe(vapidPublicKey: string): Promise<PushSubscriptionInput>;
   /**
    * Ends the push subscription and answers the endpoint it had, for /push/unsubscribe; null when
-   * there is none, or no service worker to hold one.
+   * there is none, or no service worker with push to hold one.
    */
   unsubscribe(): Promise<string | null>;
   /** Shows a notification with the app's icon and badge; rejects where no worker is registered. */

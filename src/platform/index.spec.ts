@@ -35,6 +35,7 @@ describe('the web platform', () => {
 
   it('never waits for a service worker that is not registered', async () => {
     vi.stubGlobal('Notification', { permission: 'granted', requestPermission: vi.fn() });
+    vi.stubGlobal('PushManager', class PushManager {});
     serviceWorkerContainer(undefined);
     const { notifications } = await freshPlatform();
     expect(notifications.permission()).toBe('granted');
