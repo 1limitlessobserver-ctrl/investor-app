@@ -68,7 +68,7 @@ export function createLock(opts: {
   }
 
   /**
-   * The record kept under `entry`, or null. A record that cannot be read is removed, so the lock
+   * The record kept under `entry`, or null. A record that cannot be parsed is removed, so the lock
    * fails closed and the next enrolment starts clean.
    */
   async function read<T>(entry: string, parse: (stored: string) => T | null): Promise<T | null> {
@@ -110,7 +110,7 @@ export function createLock(opts: {
     },
 
     async enrolled() {
-      // Which record exists, readable or not: the checks fail closed on one they cannot read.
+      // Which record exists, parsable or not: the checks fail closed on one they cannot parse.
       if ((await storage.get(WEBAUTHN)) !== null) return 'webauthn';
       if ((await storage.get(PASSCODE)) !== null) return 'passcode';
       return null;

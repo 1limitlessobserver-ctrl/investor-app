@@ -778,7 +778,7 @@ describe('webauthn lock: availability, enrolment and verification', () => {
   });
 });
 
-describe('device lock: a stored record it cannot read', () => {
+describe('device lock: a stored record it cannot parse', () => {
   const bytes = (length: number) => base64url.encode(new Uint8Array(length).fill(1));
   const passcodeRecord = (fields: object) =>
     JSON.stringify({ salt: bytes(16), hash: bytes(32), attempts: 0, ...fields });
@@ -821,7 +821,7 @@ describe('device lock: a stored record it cannot read', () => {
     }
   });
 
-  it('answers attemptsLeft 0 for a passcode record it cannot read, and removes it', async () => {
+  it('answers attemptsLeft 0 for a passcode record it cannot parse, and removes it', async () => {
     const deriveBits = vi.spyOn(crypto.subtle, 'deriveBits');
     try {
       for (const record of badPasscodes) {
@@ -837,7 +837,7 @@ describe('device lock: a stored record it cannot read', () => {
     }
   });
 
-  it('answers false from verify() for a credential it cannot read, and removes it', async () => {
+  it('answers false from verify() for a credential it cannot parse, and removes it', async () => {
     const auth = await fakeAuthenticator();
     for (const record of badCredentials) {
       const secure = secureStorage();
@@ -848,7 +848,7 @@ describe('device lock: a stored record it cannot read', () => {
     expect(auth.get).not.toHaveBeenCalled();
   });
 
-  it('removes an unreadable credential without touching one enrolled meanwhile', async () => {
+  it('removes an unparsable credential without touching one enrolled meanwhile', async () => {
     const auth = await fakeAuthenticator();
     const secure = secureStorage();
     await secure.set('lock:webauthn', 'not json');

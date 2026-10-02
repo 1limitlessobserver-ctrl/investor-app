@@ -44,8 +44,9 @@ export interface LockAdapter {
   available(): Promise<LockMethod>;
   /**
    * The method whose record is stored on this device, or null when there is none. A record that
-   * cannot be read still counts: verify() and verifyPasscode() fail closed on it and remove it.
-   * Rejects when storage cannot be read: treat that as locked.
+   * decrypts but cannot be parsed still counts, and is removed on the next check (verify() and
+   * verifyPasscode() fail closed on it); one whose ciphertext no longer decrypts is deleted by
+   * storage and reads as no lock. Rejects when storage cannot be read: treat that as locked.
    */
   enrolled(): Promise<LockMethod | null>;
   /**
@@ -67,18 +68,17 @@ export interface LockAdapter {
   enrollPasscode(code: string): Promise<void>;
   /**
    * Runs the operating system's prompt (in the investor's tap); false when it is cancelled, fails
-   * or does not verify, when no credential is enrolled, and when its record cannot be read (which
-   * is then removed).
+   * or does not verify, when no credential is enrolled, and when its record cannot be parsed
+   * (which is then removed).
    */
   verify(): Promise<boolean>;
   /**
    * Checks the passcode. The fifth wrong attempt in a row wipes the passcode and answers
    * `attemptsLeft: 0`, and so does a check with no passcode enrolled, or with a record that cannot
-   * be read (which is then removed): the caller then signs out. While a WebAuthn credential record
-   * exists, which outranks the passcode as in enrolled(), it answers `attemptsLeft: 0` too and
-   * removes the passcode, checking nothing.
-   * Each attempt is counted before it is checked, so when storage cannot count it the call
-   * rejects and nothing is checked.
+   * be parsed (which is then removed): the caller then signs out. While a WebAuthn credential
+   * record exists, which outranks the passcode as in enrolled(), it answers `attemptsLeft: 0` too
+   * and removes the passcode, checking nothing. Each attempt is counted before it is checked, so
+   * when storage cannot count it the call rejects and nothing is checked.
    */
   verifyPasscode(code: string): Promise<{ ok: boolean; attemptsLeft: number }>;
   /** Forgets both enrolments. */
