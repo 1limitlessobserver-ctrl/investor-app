@@ -7,7 +7,8 @@
 //    locked whenever a lock is set up on the device, whatever the setting; with none, it ends
 //    (never unlocked) when the lock is on, else it opens signed in.
 //  - The lock belongs to the session: a fresh sign-in wipes any lock left on the device and
-//    offers the setup; sign-out wipes it too.
+//    offers the setup; sign-out wipes it too, with its setting, once the session has left the
+//    store. A session that may still be stored keeps them, so the next launch still asks.
 //  - The lock is on once the investor sets one up, until they turn it off (app.lockEnabled); with
 //    no choice stored, a lock that is set up counts as on ("Not now" stores none). It locks after
 //    five minutes hidden while on; launch, lock() and confirmations ask whatever it says.
@@ -183,6 +184,9 @@ type LockRead = 'stands' | 'gone' | 'unread';
 
 /** A sign-out or an end of the session under way, and the generation it started. */
 type Ending = { gen: number; done: Promise<void> };
+
+/** Where ending a session left the store: see leaveStore(). */
+type Left = 'gone' | 'replaced' | 'kept';
 
 const IDLE: Unlocking = { busy: false };
 
@@ -439,10 +443,12 @@ export function createSessionController(deps: SessionDeps) {
 
   /**
    * Ends the session on this device, without telling the platform: this sign-in leaves the store
-   * (by its key: one stored since is not this session's), then the device's lock and its setting,
-   * push, the cache and the sample flag, and sign-in shows. A step that fails does not stop the
-   * rest. A session that begins meanwhile (another tab signs in, and this one follows) stops it
-   * before its next step: what the device holds is that session's now.
+   * (by its key: one stored since is not this session's), then, once the store holds no session,
+   * the device's lock and its setting; then push, the cache and the sample flag, and sign-in
+   * shows. A session that may still be stored keeps its lock and setting, so the next launch asks
+   * for the lock; a newer sign-in stored meanwhile keeps its own. A step that fails does not stop
+   * the rest. A session that begins meanwhile (another tab signs in, and this one follows) stops
+   * it before its next step: what the device holds is that session's now.
    */
   function endHere(reason: EndReason): Promise<void> {
     if (ending?.gen === generation) return ending.done;
@@ -451,12 +457,13 @@ export function createSessionController(deps: SessionDeps) {
     const key = sessionKey;
     const moved = () => gen !== generation;
     const done = (async () => {
-      const tokensGone = await clearSession(key, reason);
+      const left = await leaveStore(key, reason);
       if (moved()) return;
       // The lock belongs to the session: the next sign-in here is offered the setup again.
-      const lockGone = await attempt('removing the lock', () => platform.lock.clear());
+      const lockGone =
+        left === 'gone' ? await attempt('removing the lock', () => platform.lock.clear()) : true;
       if (moved()) return;
-      forgetChoice();
+      if (left === 'gone') forgetChoice();
       const unsubscribe = () => settled(platform.notifications.unsubscribe(), UNSUBSCRIBE_WAIT_MS);
       await attempt('ending push', unsubscribe);
       if (moved()) return;
@@ -465,11 +472,12 @@ export function createSessionController(deps: SessionDeps) {
       sessionKey = null;
       // The sign-out goes on regardless, and the investor learns what this device still holds;
       // else why the session ended, unless they ended it.
-      const notice = !(tokensGone && lockGone)
-        ? SESSION_COPY.sessionNotCleared
-        : reason === 'investor'
-          ? state.notice
-          : ENDED[reason];
+      const notice =
+        left === 'kept' || !lockGone
+          ? SESSION_COPY.sessionNotCleared
+          : reason === 'investor'
+            ? state.notice
+            : ENDED[reason];
       set({
         status: 'signed-out',
         lockMethod: null,
@@ -513,14 +521,31 @@ export function createSessionController(deps: SessionDeps) {
   }
 
   /**
-   * Takes this tab's sign-in out of the store (live), by its key. With no key known, nothing is
-   * cleared, unless the investor signs out: then whatever is stored. Resolves whether it worked.
+   * Takes this tab's sign-in out of the store (live), by its key, and resolves where that leaves
+   * the store: 'gone' when it holds no session now; 'replaced' when it holds another sign-in's, a
+   * newer one, whose lock the device keeps; 'kept' when this sign-in may still be stored. With no
+   * key known nothing is cleared, unless the investor signs out (then whatever is stored); and
+   * whenever nothing was cleared, a fresh look at the store decides (one it cannot take: 'kept').
    */
-  function clearSession(key: string | null, reason: EndReason): Promise<boolean> {
-    if (!live) return Promise.resolve(true);
-    const where = 'removing the session';
-    if (key !== null) return attempt(where, () => tokenStore.clear(key));
-    return reason === 'investor' ? attempt(where, () => tokenStore.clear()) : Promise.resolve(true);
+  async function leaveStore(key: string | null, reason: EndReason): Promise<Left> {
+    if (!live) return 'gone';
+    if (key !== null || reason === 'investor') {
+      try {
+        if (await (key === null ? tokenStore.clear() : tokenStore.clear(key))) return 'gone';
+      } catch (error) {
+        reportProblem('ending the session: removing the session', error);
+        // Storage whose key is lost is reset, which wipes it all.
+        if (isUnreadableKey(error)) return (await resetStorage()) ? 'gone' : 'kept';
+      }
+    }
+    try {
+      const stored = (await tokenStore.get())?.sessionKey ?? null;
+      if (stored === null) return 'gone';
+      return key !== null && stored !== key ? 'replaced' : 'kept';
+    } catch (error) {
+      reportProblem('ending the session: reading the store', error);
+      return isUnreadableKey(error) && (await resetStorage()) ? 'gone' : 'kept';
+    }
   }
 
   /**

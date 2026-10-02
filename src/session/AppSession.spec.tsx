@@ -3264,3 +3264,181 @@ describe('AppSession: what screens see of it', () => {
     }
   });
 });
+
+describe('AppSession: a session still stored when its end is done', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A live tab on `device`, signed in, with the device's own lock set up by the investor. */
+  async function signedInWithLock(device: Platform) {
+    let wired: ApiWiring | undefined;
+    const tab = openTab(device, (wiring) => {
+      wired = wiring;
+      return liveOver()(wiring);
+    });
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.signIn(pairOf(1));
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    await waitFor(() => expect(tab.queryClient.getQueryData(['live', 'me'])).toBeDefined());
+    tab.session.enrolDevice();
+    await waitFor(() => expect(tab.session.getSnapshot().lockMethod).toBe('webauthn'));
+    return { ...tab, endedByPlatform: () => wired?.events.onSignedOut('session_revoked') };
+  }
+
+  /** The page goes away: every tab a test opened stops. */
+  const closePage = () => {
+    for (const stop of stops.splice(0)) stop();
+  };
+
+  it('keeps the lock of a session the launch could not read: the next launch locks', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    await signedInWithLock(device);
+    closePage();
+    let fails = 1; // the next page's first look at the store fails, once
+    const flaky = {
+      ...device,
+      storage: {
+        ...device.storage,
+        get: (key: string) =>
+          key === 'session' && fails-- > 0
+            ? Promise.reject(new Error('disk busy'))
+            : device.storage.get(key),
+      },
+    };
+    const reopened = openTab(flaky, liveOver());
+    await waitFor(() => expect(reopened.status()).toBe('signed-out'));
+    expect(reopened.session.getSnapshot().notice).toBe(SESSION_COPY.sessionNotCleared);
+    expect(await device.lock.enrolled()).toBe('webauthn');
+    expect(localStorage.getItem('app.lockEnabled')).toBe('true');
+    closePage();
+    const again = openTab(device, liveOver());
+    await waitFor(() => expect(again.status()).toBe('locked'));
+    expect(warn).toHaveBeenCalledWith('[investor-app] opening the session:', expect.any(Error));
+  });
+
+  it.each([
+    [
+      'the investor signs out',
+      (tab: Awaited<ReturnType<typeof signedInWithLock>>) => {
+        void tab.session.signOut();
+      },
+    ],
+    [
+      'the platform ends it',
+      (tab: Awaited<ReturnType<typeof signedInWithLock>>) => {
+        tab.endedByPlatform();
+      },
+    ],
+  ])('keeps the lock when %s and the session cannot be removed', async (_, end) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    let removable = true;
+    const stuck = {
+      ...device,
+      storage: {
+        ...device.storage,
+        remove: (key: string) =>
+          key === 'session' && !removable
+            ? Promise.reject(new Error('disk full'))
+            : device.storage.remove(key),
+      },
+    };
+    const tab = await signedInWithLock(stuck);
+    removable = false;
+    end(tab);
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    expect(tab.session.getSnapshot().notice).toBe(SESSION_COPY.sessionNotCleared);
+    expect(await storedKey(device)).not.toBeNull(); // still stored
+    expect(await device.lock.enrolled()).toBe('webauthn');
+    expect(localStorage.getItem('app.lockEnabled')).toBe('true');
+    closePage();
+    const reopened = openTab(device, liveOver());
+    await waitFor(() => expect(reopened.status()).toBe('locked'));
+  });
+
+  it('resets lost-key storage, lock and all, when the session cannot be removed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    let lost = false;
+    const reset = vi.fn(() => {
+      lost = false; // a reset makes a new key
+      return device.storage.reset();
+    });
+    const stuck = {
+      ...device,
+      storage: {
+        ...device.storage,
+        reset,
+        remove: (key: string) =>
+          lost ? Promise.reject(new Error(UNREADABLE)) : device.storage.remove(key),
+      },
+    };
+    const tab = await signedInWithLock(stuck);
+    lost = true;
+    await tab.session.signOut();
+    expect(tab.status()).toBe('signed-out');
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(tab.session.getSnapshot().notice).toBeNull();
+    expect(await device.lock.enrolled()).toBeNull();
+    expect(localStorage.getItem('app.lockEnabled')).toBeNull();
+  });
+
+  it('resets lost-key storage, lock and all, when it cannot look at the store', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    await signedInWithLock(device);
+    closePage();
+    // The next page's launch cannot read the store, nor its end's look at it: the key is lost.
+    const failures = [new Error('disk busy'), new Error(UNREADABLE)];
+    const reset = vi.fn(() => device.storage.reset());
+    const flaky = {
+      ...device,
+      storage: {
+        ...device.storage,
+        reset,
+        get: (key: string) => {
+          const failure = key === 'session' ? failures.shift() : undefined;
+          return failure ? Promise.reject(failure) : device.storage.get(key);
+        },
+      },
+    };
+    const reopened = openTab(flaky, liveOver());
+    await waitFor(() => expect(reopened.status()).toBe('signed-out'));
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(reopened.session.getSnapshot().notice).toBe(SESSION_COPY.endedStorage);
+    expect(await device.lock.enrolled()).toBeNull();
+    expect(localStorage.getItem('app.lockEnabled')).toBeNull();
+  });
+
+  it('leaves the lock of a newer sign-in it finds stored when it ends its own', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    // This tab hears nothing of the other: its store has no channel.
+    const a = openTab(device, liveOver(), createTokenStore(device.storage, { channel: null }));
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    // Another tab signs in, and its investor sets up the device's own lock.
+    const newer = await createTokenStore(device.storage, { channel: null }).start(pairOf(2));
+    await device.lock.enrollWebAuthn({ id: 'investor-2', email: 'ada@example.com' });
+    localStorage.setItem('app.lockEnabled', 'true');
+    // A call of this tab's cannot read its session: its session ends here.
+    const unreadable = () => Promise.reject(new MobileApiError('storage_error', 0));
+    await a.queryClient
+      .fetchQuery({ queryKey: ['live', 'x'], queryFn: unreadable })
+      .catch(() => {});
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    expect(await storedKey(device)).toBe(newer);
+    expect(await device.lock.enrolled()).toBe('webauthn');
+    expect(localStorage.getItem('app.lockEnabled')).toBe('true');
+    closePage();
+    const reopened = openTab(device, liveOver());
+    await waitFor(() => expect(reopened.status()).toBe('locked'));
+  });
+});
