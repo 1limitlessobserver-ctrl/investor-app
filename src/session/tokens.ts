@@ -24,8 +24,8 @@ import type { SecureStorage } from '../platform/types';
 const ENTRY = 'session';
 const NAME = 'investor-app-session';
 
-/** What another tab did that this page must act on. */
-export type TokenStoreEvent = { type: 'start' | 'clear' };
+/** What another tab did that this page must act on, and to which sign-in (its session key). */
+export type TokenStoreEvent = { type: 'start' | 'clear'; sessionKey: string };
 
 /** The part of a BroadcastChannel the store uses; tests pass their own. */
 export interface SessionChannel {
@@ -46,9 +46,9 @@ export interface TokenStoreOptions {
 export interface SessionTokenStore extends TokenStore {
   /**
    * Stores a sign-in's pair under a new session key, replacing whatever was stored, and tells the
-   * other tabs.
+   * other tabs. Resolves the key, which names this sign-in from now on.
    */
-  start(tokens: MobileTokens): Promise<void>;
+  start(tokens: MobileTokens): Promise<string>;
   /** This page's access token, without reading storage; null when it has none. */
   peekAccess(): string | null;
   /**
@@ -154,7 +154,7 @@ export function createTokenStore(
       .then((current) => {
         if (!current) return;
         held = null;
-        for (const listener of [...listeners]) listener({ type });
+        for (const listener of [...listeners]) listener({ type, sessionKey });
       });
   }
 
@@ -178,6 +178,7 @@ export function createTokenStore(
         await storage.set(ENTRY, JSON.stringify({ sessionKey, refreshToken }));
         held = { sessionKey, accessToken, refreshToken };
         tell({ type: 'start', sessionKey });
+        return sessionKey;
       }),
 
     rotate: (tokens, sessionKey) =>

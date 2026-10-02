@@ -143,6 +143,12 @@ describe('token store', () => {
     expect(second).not.toBe(first);
   });
 
+  it('answers the key it made, so the session layer knows which sign-in it holds', async () => {
+    const store = createTokenStore(sharedStorage().open(), { randomKey: () => 'key-1' });
+    expect(await store.start(pair)).toBe('key-1');
+    expect((await store.get())?.sessionKey).toBe('key-1');
+  });
+
   it('reads storage each time: after a refresh in another tab, this one has no token', async () => {
     const shared = sharedStorage();
     const tabA = createTokenStore(shared.open(), { channel: null });
@@ -228,7 +234,7 @@ describe('token store', () => {
       tabB.start(next(5)),
       tabA.rotate(next(2), 'key-1'),
     ]);
-    expect(started).toBeUndefined();
+    expect(started).toBe('key-2');
     expect(rotated).toBe(false);
     expect(await tabB.get()).toEqual({
       sessionKey: 'key-2',
@@ -305,7 +311,7 @@ describe('token store across tabs', () => {
       accessToken: 'a2',
     });
     expect(heardA).toEqual([]);
-    expect(heardB).toEqual([{ type: 'start' }]);
+    expect(heardB).toEqual([{ type: 'start', sessionKey: 'key-1' }]);
   });
 
   it('tells this tab when another tab signs in or out, and forgets its access token', async () => {
@@ -313,11 +319,14 @@ describe('token store across tabs', () => {
     await tabB.start(next(7));
     await tabA.start(pair);
     await settle();
-    expect(heardB).toEqual([{ type: 'start' }]);
+    expect(heardB).toEqual([{ type: 'start', sessionKey: 'key-2' }]);
     expect(tabB.peekAccess()).toBeNull();
     await tabA.clear();
     await settle();
-    expect(heardB).toEqual([{ type: 'start' }, { type: 'clear' }]);
+    expect(heardB).toEqual([
+      { type: 'start', sessionKey: 'key-2' },
+      { type: 'clear', sessionKey: 'key-2' },
+    ]);
     expect(await tabB.get()).toBeNull();
   });
 
@@ -332,12 +341,12 @@ describe('token store across tabs', () => {
       refreshToken: 'r1',
       accessToken: 'a1',
     });
-    expect(heardB).toEqual([{ type: 'start' }]);
+    expect(heardB).toEqual([{ type: 'start', sessionKey: 'key-2' }]);
     await tabB.clear('key-1'); // no longer stored: nothing happens, nothing is said
     await tabB.start(next(8)); // key-3
     bus.post({ type: 'clear', sessionKey: 'key-2' }); // late news of a sign-out
     await settle();
-    expect(heardA).toEqual([{ type: 'start' }]);
+    expect(heardA).toEqual([{ type: 'start', sessionKey: 'key-3' }]);
   });
 
   it('keeps its own pair when another tab refreshes a session it no longer holds', async () => {
