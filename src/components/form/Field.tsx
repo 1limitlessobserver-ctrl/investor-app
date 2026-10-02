@@ -46,6 +46,12 @@ export interface FieldProps {
   hint?: ReactNode;
   /** A message that marks the control invalid and is announced; null or '' for none. */
   error?: ReactNode;
+  /**
+   * Which attempt the error answers (a count of submits, say). A new key makes the error a new
+   * alert, so the same message coming back from another try is announced again; while the key
+   * holds, the error is not read again on every render.
+   */
+  errorKey?: string | number | undefined;
   /** The control's id; one is made up when it is left out. Set it here, not on the control. */
   id?: string | undefined;
   /** Label and control on one row (a Switch), hint and error below. */
@@ -59,9 +65,18 @@ export interface FieldProps {
  * A labelled form field. It names its control with the label and describes it with the hint and
  * error (`aria-describedby`, `aria-invalid`); the controls in this folder pick that up on their
  * own. The error is a `role="alert"`, so a screen should not show the same message in another
- * alert.
+ * alert; give it an `errorKey` that changes with each submit so a repeated error is heard again.
  */
-export function Field({ label, hint, error, id, inline = false, className, children }: FieldProps) {
+export function Field({
+  label,
+  hint,
+  error,
+  errorKey,
+  id,
+  inline = false,
+  className,
+  children,
+}: FieldProps) {
   const base = useId();
   const hasHint = hint !== undefined && hint !== null && hint !== '';
   const hasError = error !== undefined && error !== null && error !== '' && error !== false;
@@ -94,7 +109,7 @@ export function Field({ label, hint, error, id, inline = false, className, child
         <FieldContext.Provider value={control}>{children}</FieldContext.Provider>
       </div>
       {hasError && (
-        <p id={errorId} className={styles.error} role="alert">
+        <p key={errorKey} id={errorId} className={styles.error} role="alert">
           {error}
         </p>
       )}

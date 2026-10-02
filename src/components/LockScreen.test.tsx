@@ -104,14 +104,30 @@ describe('LockScreen', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('1 attempt left');
   });
 
-  it('shows a check that could not run, and ignores presses while one runs', async () => {
+  it('shows a check that could not run as its one alert, over the attempts left', () => {
+    renderLock({ error: 'The lock could not be checked. Try again.', attemptsLeft: 2 });
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('The lock could not be checked.');
+  });
+
+  it('announces the same error again after another passcode', async () => {
+    const user = userEvent.setup();
+    const { onPasscode } = renderLock({ error: 'The lock could not be checked. Try again.' });
+    const first = screen.getByRole('alert');
+    await user.type(screen.getByLabelText('Passcode'), '246810');
+    await user.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(onPasscode).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('The lock could not be checked.');
+    expect(screen.getByRole('alert')).not.toBe(first);
+  });
+
+  it('ignores presses while a check runs, with the last error set aside', async () => {
     const user = userEvent.setup();
     const { onPasscode } = renderLock({
       error: 'The lock could not be checked. Try again.',
       busy: true,
     });
-    expect(screen.getAllByRole('alert')).toHaveLength(1);
-    expect(screen.getByRole('alert')).toHaveTextContent('The lock could not be checked.');
+    expect(screen.queryByRole('alert')).toBeNull();
     const unlock = screen.getByRole('button', { name: 'Unlock' });
     expect(unlock).toHaveAttribute('aria-busy', 'true');
     await user.type(screen.getByLabelText('Passcode'), '246810');
@@ -140,6 +156,22 @@ describe('LockScreen', () => {
     expect(screen.getByRole('alert')).toHaveTextContent("That didn't unlock the app.");
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(onUnlock).toHaveBeenCalledTimes(2);
+  });
+
+  it('announces the same device failure again after another try, not while it runs', async () => {
+    const user = userEvent.setup();
+    const failed = { method: 'webauthn' as const, error: "That didn't unlock the app." };
+    const { onUnlock, onPasscode, onSignOut, rerender } = renderLock(failed);
+    const first = screen.getByRole('alert');
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onUnlock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent("That didn't unlock the app.");
+    expect(screen.getByRole('alert')).not.toBe(first);
+
+    const handlers = { onUnlock, onPasscode, onSignOut };
+    rerender(<LockScreen brand={brand} {...failed} busy {...handlers} />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Try again' })).toHaveAttribute('aria-busy', 'true');
   });
 
   it('is wide enough for six 44 px boxes with their gaps', () => {

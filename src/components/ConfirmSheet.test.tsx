@@ -113,6 +113,20 @@ describe('ConfirmSheet', () => {
     expect(screen.getByRole('alert')).toHaveTextContent("That didn't confirm it.");
   });
 
+  it.each([
+    ['the device prompt', 'webauthn' as const, ''],
+    ['a passcode', 'passcode' as const, '246810'],
+  ])('announces the same error again after another try with %s', async (_, method, code) => {
+    const user = userEvent.setup();
+    const { onConfirm } = renderConfirm({ method, error: "That didn't confirm it. Try again." });
+    const first = screen.getByRole('alert');
+    if (code !== '') await user.type(screen.getByLabelText('Passcode'), code);
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent("That didn't confirm it.");
+    expect(screen.getByRole('alert')).not.toBe(first);
+  });
+
   it('offers to set up a lock first, and still confirms plainly', async () => {
     const user = userEvent.setup();
     const onSetUpLock = vi.fn();
@@ -125,7 +139,12 @@ describe('ConfirmSheet', () => {
 
   it('ignores Confirm while a check runs, but can always be cancelled', async () => {
     const user = userEvent.setup();
-    const { onConfirm, onCancel } = renderConfirm({ method: 'webauthn', busy: true });
+    const { onConfirm, onCancel } = renderConfirm({
+      method: 'webauthn',
+      busy: true,
+      error: "That didn't confirm it. Try again.",
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('button', { name: 'Confirm' })).toHaveAttribute('aria-busy', 'true');
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(onConfirm).not.toHaveBeenCalled();

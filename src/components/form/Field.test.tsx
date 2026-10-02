@@ -57,6 +57,21 @@ describe('Field', () => {
     );
   });
 
+  it('announces the same error again when a new attempt brings it back', () => {
+    const field = (attempt: number) => (
+      <Field label="Email" error="Wrong email or password." errorKey={attempt}>
+        <Input type="email" />
+      </Field>
+    );
+    const { rerender } = render(field(1));
+    const first = screen.getByRole('alert');
+    rerender(field(1));
+    expect(screen.getByRole('alert')).toBe(first);
+    rerender(field(2));
+    expect(screen.getByRole('alert')).not.toBe(first);
+    expect(screen.getByRole('alert')).toHaveTextContent('Wrong email or password.');
+  });
+
   it('treats an empty error as none', () => {
     render(
       <Field label="City" error="">

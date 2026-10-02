@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Dialog as RadixDialog } from 'radix-ui';
 import type { LockMethod } from '../platform/types';
 import { BrandMark, type BrandIdentity } from './BrandMark';
@@ -12,11 +13,15 @@ export interface LockScreenProps {
   method: LockMethod;
   /** The company's mark and name; null when the brand is not known yet. */
   brand: BrandIdentity | null;
-  /** A check is running: Unlock shows it and ignores presses. */
+  /**
+   * A check is running: Unlock shows it and ignores presses, and the last error steps aside until
+   * the check answers.
+   */
   busy?: boolean | undefined;
   /**
    * What went wrong, as the screen's one alert: a cancelled or failed device prompt (Unlock then
-   * reads "Try again"), or a check that could not run. It wins over `attemptsLeft`.
+   * reads "Try again"), or a check that could not run. It wins over `attemptsLeft`. Each try makes
+   * it a new alert, so the same message coming back is announced again.
    */
   error?: string | undefined;
   /** After a wrong passcode, the tries left: "That passcode didn't match. 4 attempts left." */
@@ -37,15 +42,24 @@ function DeviceUnlock({
   error,
   onUnlock,
 }: Pick<LockScreenProps, 'busy' | 'error' | 'onUnlock'>) {
+  // Presses so far: each one's message is a new alert, so the same failure is heard again.
+  const [tries, setTries] = useState(0);
   return (
     <div className={styles.unlock}>
       <p className={styles.lead}>Unlock with your face, fingerprint or device PIN.</p>
-      {error && (
-        <p className={styles.alert} role="alert">
+      {error && !busy && (
+        <p key={tries} className={styles.alert} role="alert">
           {error}
         </p>
       )}
-      <Button size="lg" loading={busy} onClick={onUnlock}>
+      <Button
+        size="lg"
+        loading={busy}
+        onClick={() => {
+          setTries((count) => count + 1);
+          onUnlock();
+        }}
+      >
         {error ? 'Try again' : 'Unlock'}
       </Button>
     </div>

@@ -1,4 +1,4 @@
-import { useId, useRef } from 'react';
+import { useId, useRef, useState } from 'react';
 import { format } from '../lib/format';
 import type { LockMethod } from '../platform/types';
 import { Button } from './form/Button';
@@ -23,9 +23,15 @@ export interface ConfirmSheetProps {
   /** No device lock yet: the sheet suggests one, with "Set up the lock" (`onSetUpLock`). */
   needsSetup?: boolean | undefined;
   onSetUpLock?: (() => void) | undefined;
-  /** A check is running: Confirm shows it and ignores presses; Cancel still works. */
+  /**
+   * A check is running: Confirm shows it and ignores presses (Cancel still works), and the last
+   * error steps aside until the check answers.
+   */
   busy?: boolean | undefined;
-  /** What went wrong, as the sheet's one alert. It wins over `attemptsLeft`. */
+  /**
+   * What went wrong, as the sheet's one alert. It wins over `attemptsLeft`. Each try makes it a
+   * new alert, so the same message coming back is announced again.
+   */
   error?: string | undefined;
   /** After a wrong passcode, the tries left. */
   attemptsLeft?: number | undefined;
@@ -62,6 +68,8 @@ export function ConfirmSheet({
   const amountId = useId();
   const reasonId = useId();
   const cancelButton = useRef<HTMLButtonElement>(null);
+  // Presses of Confirm so far: each one's message is a new alert, so a repeat is heard again.
+  const [tries, setTries] = useState(0);
   const message =
     error ??
     (attemptsLeft !== undefined && attemptsLeft > 0
@@ -130,12 +138,19 @@ export function ConfirmSheet({
                 You&apos;ll be asked for your face, fingerprint or device PIN.
               </p>
             )}
-            {message && (
-              <p className={styles.alert} role="alert">
+            {message && !busy && (
+              <p key={tries} className={styles.alert} role="alert">
                 {message}
               </p>
             )}
-            <Button size="lg" loading={busy} onClick={() => onConfirm()}>
+            <Button
+              size="lg"
+              loading={busy}
+              onClick={() => {
+                setTries((count) => count + 1);
+                onConfirm();
+              }}
+            >
               Confirm
             </Button>
             {cancel}
