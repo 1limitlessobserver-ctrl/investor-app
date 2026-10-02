@@ -11,14 +11,23 @@
 //  - The lock is on once the investor sets one up, until they turn it off (app.lockEnabled); with
 //    no choice stored, a lock that is set up counts as on ("Not now" stores none). It locks after
 //    five minutes hidden while on; launch, lock() and confirmations ask whatever it says.
-//    The device's lock is read afresh before each of these, and when another tab changes it.
-//  - Nothing left to check the investor (the app locked, or the lock on, and no lock on the
-//    device): the session ends here, at launch or on any of these, without telling the platform,
-//    as this tab may be behind a newer sign-in made elsewhere.
+//    The device's lock is read afresh before each of these, and when another tab changes it; a
+//    read that fails decides nothing (a confirmation is then refused, and the investor told).
+//  - Nothing left to check the investor (the app locked, the lock on, or a lock the session knew,
+//    and no lock on the device): the session ends here, at launch or on any of these, without
+//    telling the platform, as this tab may be behind a newer sign-in made elsewhere. The last
+//    wrong passcode signs out, whatever became of its sheet.
 //  - Sign-out: the platform first (waited for 3 s at most), then the store, the lock, push, the
 //    cache and the flag. The client's onSignedOut (and the sample's) ends the session the same
 //    way without the platform, and nothing else does: a rejected call never signs out on its own.
+//    A session that ends other than by the investor says why on the sign-in screen.
+//  - The session knows the key of the sign-in it holds, and ends only that one in the store. Each
+//    change of session moves a generation: a step that answers after it moved (a read, a sign-out
+//    waiting on the platform, an end waiting on push) stops there, and a decision made on what
+//    was read before (a lock found gone, another tab's sign-out, the platform's onSignedOut, an
+//    unlock) looks at the store again first: a newer sign-in found there is followed, not ended.
 //  - Storage this device cannot read means signing in again, after a reset when its key is lost.
+//    Every failure the app carries on from is reported to the console (src/lib/report.ts).
 
 import { hashKey, onlineManager, type QueryClient } from '@tanstack/react-query';
 import { MobileApiError } from '../api/MobileApiError';
