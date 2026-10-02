@@ -221,6 +221,49 @@ describe('LockScreen', () => {
     expect(rem(column['max-width'])).toBeGreaterThanOrEqual(6 * 2.75 + 5 * 0.5);
   });
 
+  it('never lets Tab or Shift+Tab reach a control behind it', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button>Withdraw</button>
+        <LockScreen
+          method="webauthn"
+          brand={brand}
+          onUnlock={vi.fn()}
+          onPasscode={vi.fn()}
+          onSignOut={vi.fn()}
+        />
+      </>,
+    );
+    const behind = screen.getByRole('button', { name: 'Withdraw', hidden: true });
+    expect(screen.getByRole('button', { name: 'Unlock' })).toHaveFocus();
+    for (const shift of [false, false, false, true, true, true]) {
+      await user.tab({ shift });
+      expect(behind).not.toHaveFocus();
+    }
+  });
+
+  it('brings back focus sent to a control behind it', async () => {
+    render(
+      <>
+        <button>Withdraw</button>
+        <LockScreen
+          method="webauthn"
+          brand={brand}
+          onUnlock={vi.fn()}
+          onPasscode={vi.fn()}
+          onSignOut={vi.fn()}
+        />
+      </>,
+    );
+    const behind = screen.getByRole('button', { name: 'Withdraw', hidden: true });
+    behind.focus(); // a script, or assistive technology, moves focus behind the lock
+    await waitFor(() => expect(behind).not.toHaveFocus());
+    expect(screen.getByRole('dialog', { name: 'Locked' })).toContainElement(
+      document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    );
+  });
+
   it('offers to sign out instead', async () => {
     const { onSignOut } = renderLock({ method: 'webauthn', brand: null });
     await userEvent.setup().click(screen.getByRole('button', { name: 'Sign out instead' }));
