@@ -608,10 +608,12 @@ export function createSessionController(deps: SessionDeps) {
         await queryClient.fetchQuery({ ...me, staleTime: 0, retry: false, networkMode: 'always' });
       } catch (error) {
         // A session this device cannot read never opens: the cache's failure handler has already
-        // ended it. Any other failure opens on what the app has (a revoked session has ended
-        // through onSignedOut).
+        // ended it. Any other failure opens on what the app has: a revoked session has ended
+        // through onSignedOut, and the rest is reported.
         if (MobileApiError.is(error) && error.code === 'storage_error') return false;
-        reportProblem('unlocking: asking the platform', error);
+        if (!(MobileApiError.is(error) && error.code === 'session_revoked')) {
+          reportProblem('unlocking: asking the platform', error);
+        }
       }
     }
     if (gen !== generation || state.status !== 'locked') return false;

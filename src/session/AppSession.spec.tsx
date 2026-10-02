@@ -1326,6 +1326,7 @@ describe('AppSession: setting up the lock', () => {
   });
 
   it('opens on the device’s word when the platform cannot be reached', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const api = createSampleApi({ latencyMs: 0 });
     vi.spyOn(api, 'me').mockRejectedValue(MobileApiError.network());
     const user = await launch(api);
@@ -1334,6 +1335,10 @@ describe('AppSession: setting up the lock', () => {
     await user.click(screen.getByText('lock now'));
     await user.click(screen.getByText('unlock'));
     await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] unlocking: asking the platform:',
+      expect.objectContaining({ code: 'network' }),
+    );
   });
 });
 
