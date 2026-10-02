@@ -45,14 +45,17 @@ import type { MobileTokens, SessionView } from './types';
 /**
  * What the token store answers. A sign-in's pair is stored by the session layer under a new
  * sessionKey; the client's rotate() replaces the tokens under that key, and its clear() forgets
- * the session. accessToken is null when this page has none yet (after a restart): the next
- * signed-in call refreshes first.
+ * the session. accessToken is null when this page has none it may send: after a restart, or once
+ * another tab has refreshed. The next signed-in call then refreshes first.
  */
 export type StoredSession = {
   /** Names the sign-in this session came from; random per sign-in, unchanged by a refresh. */
   readonly sessionKey: string;
   readonly refreshToken: string;
-  /** This page's access token for this very sign-in, or null; never one from another sign-in. */
+  /**
+   * This page's access token, only while the stored refresh token is still the one it was stored
+   * with: never one from another sign-in, nor one from before another tab's refresh. Else null.
+   */
   readonly accessToken: string | null;
 };
 
@@ -68,7 +71,8 @@ export type StoredSession = {
 export type TokenStore = {
   /**
    * Reads the shared part (sessionKey, refresh token) from storage every time; never a copy in
-   * memory.
+   * memory. It answers this page's access token only while the stored refresh token is the one
+   * that access token came with, and null once another tab has rotated it.
    */
   get(): Promise<StoredSession | null>;
   /**

@@ -71,7 +71,7 @@ function setup(
      * lands: the race that the store's own compare of the session's key closes.
      */
     cutIn?: StoredSession | null;
-    /** Holds the store's nth read (counting from 1) until `until` settles, as a slow store would. */
+    /** Holds the store's nth read (from 1) until `until` settles, as a slow store would. */
     slowRead?: { n: number; until: Promise<void> };
     /** Replaces what setup passes, such as a callback. */
     config?: Partial<LiveApiConfig>;
@@ -1332,6 +1332,24 @@ describe('the session a request belongs to', () => {
     },
   );
 
+  it('refreshes first, with the refresh token another tab rotated before the call began', async () => {
+    // Another tab refreshed the same sign-in (k1) before this call read the store, which answers
+    // its new refresh token and, this page's a1 being from before it, no access token. Sending a1
+    // would hear session_revoked, and that would end the session for every tab.
+    const t = setup((c) => (isRefresh(c) ? json(200, pair(10)) : json(200, { id: 'u1' })), {
+      sessionKey: 'k1',
+      refreshToken: 'r9',
+      accessToken: null,
+    });
+    expect((await t.api.me()).id).toBe('u1');
+    expect(t.calls.map((c) => `${path(c)} ${bearer(c)}`)).toEqual([
+      '/auth/refresh null',
+      '/me Bearer a10',
+    ]);
+    expect(bodyOf(t.calls[0]!)).toEqual({ refreshToken: 'r9' });
+    expect([t.signedOut, t.tokens()]).toEqual([[], session(10)]);
+  });
+
   // Another tab signed out and signed in as another investor (k2): the store now answers that
   // investor's refresh token with no access token (as StoredSession asks) or, from a store that
   // does not keep to that, beside this tab's old one. A call this tab sent as k1 must not be
@@ -1635,7 +1653,7 @@ describe('the session a request belongs to', () => {
   );
 
   it('ends the session before it reads the store, so a refresh landing meanwhile is not retried with', async () => {
-    // The fourth read is logout()'s, held as a slow store would; the call's refresh lands during it.
+    // The fourth read is logout()'s, held as a slow store would; the refresh lands during it.
     const started = gate();
     const landed = gate();
     const slow = gate();
