@@ -1,6 +1,8 @@
+import { join } from 'node:path';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { cssRule, rem } from '../test/cssRules';
 import { Sheet, SheetContent, SheetTitle } from './form/Sheet';
 import { LockScreen, type LockScreenProps } from './LockScreen';
 
@@ -138,6 +140,12 @@ describe('LockScreen', () => {
     expect(screen.getByRole('alert')).toHaveTextContent("That didn't unlock the app.");
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(onUnlock).toHaveBeenCalledTimes(2);
+  });
+
+  it('is wide enough for six 44 px boxes with their gaps', () => {
+    // Six 2.75rem boxes and five 0.5rem gaps: 19rem.
+    const column = cssRule(join(import.meta.dirname, 'LockScreen.module.css'), '.content');
+    expect(rem(column['max-width'])).toBeGreaterThanOrEqual(6 * 2.75 + 5 * 0.5);
   });
 
   it('offers to sign out instead', async () => {
