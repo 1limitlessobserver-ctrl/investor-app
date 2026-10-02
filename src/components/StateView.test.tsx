@@ -56,8 +56,14 @@ describe('StateView', () => {
     expect(status).toHaveTextContent("This appears as soon as you're back online.");
   });
 
-  it('uses the words it is given over its own', () => {
+  it('has its own words for an empty list', () => {
     render(<StateView kind="empty" />);
     expect(screen.getByText('Nothing here yet')).toBeInTheDocument();
+  });
+
+  it('uses the words it is given over its own', () => {
+    render(<StateView kind="error" title="Statements did not load" />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Statements did not load');
+    expect(screen.queryByText("This didn't load")).toBeNull();
   });
 });

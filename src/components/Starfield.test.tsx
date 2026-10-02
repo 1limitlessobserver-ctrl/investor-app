@@ -17,7 +17,9 @@ function fakeContext() {
 }
 
 let context: ReturnType<typeof fakeContext>;
-let frames: FrameRequestCallback[];
+/** The frames the starfield has asked for and not cancelled, by id. */
+let pending: Map<number, FrameRequestCallback>;
+let lastFrameId: number;
 
 function setVisibility(state: DocumentVisibilityState) {
   Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
@@ -26,17 +28,20 @@ function setVisibility(state: DocumentVisibilityState) {
   });
 }
 
-/** Runs the frame the starfield asked for last, at `time` ms. */
+/** Runs the one frame the starfield is waiting for, at `time` ms. */
 function runFrame(time: number) {
-  const next = frames.pop();
-  expect(next).toBeDefined();
-  next?.(time);
+  expect(pending.size).toBe(1);
+  const [id, callback] = [...pending][0] ?? [];
+  if (id === undefined || callback === undefined) return;
+  pending.delete(id);
+  callback(time);
 }
 
 describe('Starfield', () => {
   beforeEach(() => {
     context = fakeContext();
-    frames = [];
+    pending = new Map();
+    lastFrameId = 0;
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
       () => context as unknown as CanvasRenderingContext2D,
     );
@@ -46,9 +51,16 @@ describe('Starfield', () => {
     vi.stubGlobal('devicePixelRatio', 2);
     vi.stubGlobal(
       'requestAnimationFrame',
-      vi.fn((callback: FrameRequestCallback) => frames.push(callback)),
+      vi.fn((callback: FrameRequestCallback) => {
+        lastFrameId += 1;
+        pending.set(lastFrameId, callback);
+        return lastFrameId;
+      }),
     );
-    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    vi.stubGlobal(
+      'cancelAnimationFrame',
+      vi.fn((id: number) => pending.delete(id)),
+    );
   });
 
   afterEach(() => {
@@ -87,18 +99,15 @@ describe('Starfield', () => {
 
     context.arc.mockClear();
     runFrame(1000);
-    runFrame(1016);
+    runFrame(1040);
     expect(context.arc).toHaveBeenCalledTimes(240);
-    expect(frames).toHaveLength(1);
+    expect(pending.size).toBe(1);
 
     setVisibility('hidden');
-    expect(cancelAnimationFrame).toHaveBeenCalledTimes(1);
-    const requested = vi.mocked(requestAnimationFrame).mock.calls.length;
-    frames = [];
-    expect(vi.mocked(requestAnimationFrame).mock.calls.length).toBe(requested);
+    expect(pending.size).toBe(0);
 
     setVisibility('visible');
-    expect(vi.mocked(requestAnimationFrame).mock.calls.length).toBe(requested + 1);
+    expect(pending.size).toBe(1);
   });
 
   it('moves the stars only while it animates', () => {

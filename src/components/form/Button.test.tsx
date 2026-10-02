@@ -101,6 +101,8 @@ describe('Button', () => {
     expect(rem(cssRule(CSS, '.button')['min-width'])).toBeGreaterThanOrEqual(2.75);
     for (const value of cssValues(CSS, 'min-height'))
       expect(rem(value)).toBeGreaterThanOrEqual(2.75);
-    for (const size of ['.sm', '.md', '.lg']) expect(cssRule(CSS, size)).toBeTruthy();
+    for (const size of ['.sm', '.md', '.lg']) {
+      expect(rem(cssRule(CSS, size)['min-height'])).toBeGreaterThanOrEqual(2.75);
+    }
   });
 });
