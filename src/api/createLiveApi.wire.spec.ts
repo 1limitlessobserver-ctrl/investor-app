@@ -1,7 +1,8 @@
 // What the plan's twelve cases (createLiveApi.spec.ts) leave open: every method's request and
-// answer as the platform sends them, the error envelope read defensively, sign-in and sign-out,
-// the refresh rules and their races, a failing token store or callback, and timeouts. All of it
-// runs through a fake fetchImpl and a fake store; nothing inside the client is mocked.
+// answer as the platform sends them, the answers and errors as the client takes them, sign-in and
+// sign-out, the refresh rules and their races, a failing token store or callback, and timeouts.
+// All of it runs through a fake fetchImpl and a fake store; nothing inside the client is mocked.
+// How an envelope or an answer is read on its own is liveEnvelope.spec.ts's.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createLiveApi,
@@ -570,72 +571,6 @@ describe('the routes', () => {
 });
 
 describe('the error envelope', () => {
-  it('treats a body that is not a JSON object as an empty envelope', async () => {
-    const page = (status: number) => () => new Response('<html>Bad gateway</html>', { status });
-    const gateway = await failure(setup(page(502)).api.me());
-    expect([gateway.code, gateway.status, gateway.message]).toEqual([
-      'server_error',
-      502,
-      new MobileApiError('server_error', 502).message,
-    ]);
-    const missing = await failure(setup(page(404)).api.me());
-    expect([missing.code, missing.status]).toEqual(['request_failed', 404]);
-    // A host's own 429 page still means slow down.
-    const busy = setup(
-      () =>
-        new Response('<html>Slow down</html>', { status: 429, headers: { 'Retry-After': '9' } }),
-    );
-    const limited = await failure(busy.api.me());
-    expect([limited.code, limited.retryAfterSeconds]).toEqual(['rate_limited', 9]);
-    const empty = await failure(setup(() => new Response(null, { status: 500 })).api.me());
-    expect([empty.code, empty.status]).toEqual(['server_error', 500]);
-    // JSON that is not an object has no envelope to read either.
-    for (const raw of ['null', '[]', '"oops"', '42']) {
-      const e = await failure(setup(() => new Response(raw, { status: 503 })).api.me());
-      expect([e.code, e.status]).toEqual(['server_error', 503]);
-    }
-  });
-
-  it('reads only what has the right type from the envelope', async () => {
-    const wrong = await failure(
-      setup(() =>
-        json(409, { error: 7, message: 42, fields: ['x'], detail: 'x', retryAfterSeconds: 'soon' }),
-      ).api.me(),
-    );
-    expect([
-      wrong.code,
-      wrong.message,
-      wrong.fields,
-      wrong.detail,
-      wrong.retryAfterSeconds,
-    ]).toEqual(['request_failed', new MobileApiError('request_failed', 409).message, {}, [], null]);
-    // An empty code is no code either.
-    const nameless = await failure(setup(() => json(500, { error: '' })).api.me());
-    expect(nameless.code).toBe('server_error');
-    const mixed = await failure(
-      setup(() =>
-        json(400, {
-          error: 'invalid_input',
-          fields: { amountCents: 'Use whole cents.', rate: 3, note: null },
-          detail: ['one', 'two'],
-        }),
-      ).api.me(),
-    );
-    expect([mixed.fields, mixed.detail]).toEqual([
-      { amountCents: 'Use whole cents.' },
-      ['one', 'two'],
-    ]);
-    const notStrings = await failure(
-      setup(() => json(400, { error: 'weak_password', detail: ['one', 2] })).api.me(),
-    );
-    expect(notStrings.detail).toEqual([]);
-  });
-
-  it('falls back on a blank message', async () => {
-    const e = await failure(setup(() => json(403, { error: 'forbidden', message: '  ' })).api.me());
-    expect(e.message).toBe(new MobileApiError('forbidden', 403).message);
-  });
-
   // The platform keys a ticket's fields `body` and `ticketId`; the interface, the sample and the
   // forms call them `message` and `id`, so a screen maps `fields` onto the form fields it owns.
   it("names openTicket's field errors as the interface does, and no other call's", async () => {
@@ -658,37 +593,6 @@ describe('the error envelope', () => {
     );
     const e = await failure(t.api.replyTicket({ id: '', message: '' }));
     expect(e.fields).toEqual({ id: 'Required', message: 'Say more.', extra: 'As it is.' });
-  });
-
-  it('takes Retry-After from the body, else from the header as seconds or as a date', async () => {
-    vi.setSystemTime(new Date('2026-10-01T12:00:00.400Z'));
-    const wait = async (body: object, headers: Record<string, string> = {}) =>
-      (await failure(setup(() => json(429, body, headers)).api.me())).retryAfterSeconds;
-    const limited = { error: 'rate_limited' };
-    expect(await wait({ ...limited, retryAfterSeconds: 12 }, { 'Retry-After': '30' })).toBe(12);
-    expect(await wait({ ...limited, retryAfterSeconds: 'soon' }, { 'Retry-After': '7' })).toBe(7);
-    // The body's value is read as the header's: whole seconds rounded up, never below 0.
-    expect(await wait({ ...limited, retryAfterSeconds: -5 }, { 'Retry-After': '30' })).toBe(30);
-    expect(await wait({ ...limited, retryAfterSeconds: 1.5 }, { 'Retry-After': '30' })).toBe(2);
-    expect(await wait(limited, { 'Retry-After': '45' })).toBe(45);
-    // A date counts the whole seconds until then, rounded up so a retry is never early, and not
-    // below 0 once it has passed.
-    expect(await wait(limited, { 'Retry-After': 'Thu, 01 Oct 2026 12:01:30 GMT' })).toBe(90);
-    expect(await wait(limited, { 'Retry-After': 'Thu, 01 Oct 2026 11:59:00 GMT' })).toBe(0);
-    // 309 digits overflow to Infinity, which is no wait either.
-    for (const unusable of ['soon', '-5', '1.5', '', 'Thu, soon', '9'.repeat(309)]) {
-      expect(await wait(limited, { 'Retry-After': unusable })).toBeNull();
-    }
-    expect(await wait(limited)).toBeNull();
-    // A Retry-After on another answer, such as a 503, is read as well.
-    const busy = setup(() => json(503, { error: 'server_error' }, { 'Retry-After': '120' }));
-    expect((await failure(busy.api.me())).retryAfterSeconds).toBe(120);
-    // JSON can spell a number too big to be finite (1e999); that is no wait either.
-    const huge = '{"error":"rate_limited","retryAfterSeconds":1e999}';
-    const overflow = setup(
-      () => new Response(huge, { status: 429, headers: { 'Retry-After': '7' } }),
-    );
-    expect((await failure(overflow.api.me())).retryAfterSeconds).toBe(7);
   });
 
   it('tells onUpgradeRequired the version a 426 names, or an empty one, and still throws', async () => {
@@ -828,26 +732,23 @@ describe('sign-in and sign-out', () => {
     expect(t.tokens()).toBeNull();
   });
 
-  // The session layer stores what sign-in answers, so it must be a session to store.
+  // The session layer stores what sign-in answers, so each step checks its answer with its guard
+  // (liveEnvelope.spec.ts holds the guards' cases): one answer that is no session, for each.
   it.each([
-    ['loginTwoFactor', 'nothing', {}],
-    ['loginTwoFactor', 'an empty access token', { ...pair(3), accessToken: '' }],
-    ['loginTwoFactor', 'another token type', { ...pair(3), tokenType: 'MAC' }],
-    ['login', 'nothing', {}],
-    ['login', 'no tokens', { requiresTwoFactor: false }],
-    ['login', 'no requiresTwoFactor', { ...pair(3) }],
-    ['login', 'an empty refresh token', { requiresTwoFactor: false, ...pair(3), refreshToken: '' }],
-    ['login', 'no challenge', { requiresTwoFactor: true }],
-    ['login', 'an empty challenge', { requiresTwoFactor: true, challenge: '' }],
-  ] as const)('turns a %s answer with %s into a server error', async (method, _what, answer) => {
-    const t = setup(() => json(200, answer), null);
-    const ask =
-      method === 'login'
-        ? t.api.login(credentials)
-        : t.api.loginTwoFactor({ challenge: 'c1', code: '123456' });
-    const e = await failure(ask);
-    expect([e.code, e.status]).toEqual(['server_error', 200]);
-  });
+    ['login', { requiresTwoFactor: false }],
+    ['loginTwoFactor', {}],
+  ] as const)(
+    'turns a %s answer that is no session into a server error',
+    async (method, answer) => {
+      const t = setup(() => json(200, answer), null);
+      const ask =
+        method === 'login'
+          ? t.api.login(credentials)
+          : t.api.loginTwoFactor({ challenge: 'c1', code: '123456' });
+      const e = await failure(ask);
+      expect([e.code, e.status]).toEqual(['server_error', 200]);
+    },
+  );
 
   it.each([
     [401, 'invalid_credentials'],
