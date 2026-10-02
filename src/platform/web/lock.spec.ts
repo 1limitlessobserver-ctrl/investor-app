@@ -1171,3 +1171,32 @@ describe('device lock: the browser defaults', () => {
     expect(auth.get.mock.calls[0]![0].publicKey.rpId).toBe('localhost');
   });
 });
+
+describe('device lock: its queue of changes', () => {
+  it('lets a change that nobody waits for reject unhandled, and goes on after it', async () => {
+    const secure = secureStorage();
+    let broken = false;
+    const flaky: SecureStorage = {
+      ...secure,
+      remove: (key) => (broken ? Promise.reject(new Error('disk error')) : secure.remove(key)),
+    };
+    const lock = createLock({ storage: flaky, credentials: undefined });
+    await lock.enrollPasscode('246810');
+    const unhandled: unknown[] = [];
+    const collect = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', collect); // Vitest leaves a rejection with a listener to it
+    try {
+      broken = true;
+      void lock.clear();
+      await vi.waitFor(() => expect(unhandled).toHaveLength(1));
+    } finally {
+      process.off('unhandledRejection', collect);
+    }
+    expect(unhandled[0]).toEqual(new Error('disk error'));
+    broken = false;
+    await lock.clear();
+    expect(await lock.enrolled()).toBeNull();
+  });
+});

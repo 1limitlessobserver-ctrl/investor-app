@@ -52,12 +52,19 @@ export function createLock(opts: {
 
   // Within this page, changes to the stored enrolments run one at a time, so that two checks of
   // the passcode made together each count, and none writes back a count over a newer passcode.
-  // Another tab has its own queue.
+  // Another tab has its own queue. The queue goes on after a change that failed, and only the
+  // caller sees the failure: a change that nobody waits for still rejects unhandled.
   let queue: Promise<unknown> = Promise.resolve();
   function exclusive<T>(task: () => Promise<T>): Promise<T> {
-    const run = queue.then(task);
-    queue = run.catch(() => undefined);
-    return run;
+    const settled = queue.then(task).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    queue = settled;
+    return settled.then((outcome) => {
+      if (outcome.ok) return outcome.value;
+      throw outcome.error;
+    });
   }
 
   /**
