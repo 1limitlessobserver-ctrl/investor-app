@@ -1,0 +1,322 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { createWebNotifications } from './notifications';
+import { base64url } from '../../lib/base64url';
+
+describe('web notifications', () => {
+  it('subscribes with the VAPID key and returns the platform payload', async () => {
+    const sub = {
+      endpoint: 'https://push.example/abc',
+      toJSON: () => ({ endpoint: 'https://push.example/abc', keys: { p256dh: 'P', auth: 'A' } }),
+      unsubscribe: vi.fn(() => Promise.resolve(true)),
+    };
+    const pushManager = {
+      getSubscription: vi.fn(() => Promise.resolve(null)),
+      subscribe: vi.fn<(options: unknown) => Promise<typeof sub>>(() => Promise.resolve(sub)),
+    };
+    (globalThis as { Notification?: unknown }).Notification = {
+      permission: 'granted',
+      requestPermission: () => Promise.resolve('granted'),
+    };
+    const n = createWebNotifications({
+      registration: () =>
+        Promise.resolve({
+          pushManager,
+          showNotification: vi.fn(),
+        } as unknown as ServiceWorkerRegistration),
+    });
+    const key =
+      'BPhdfj-y8kOzT3Sd9yXMbWcQ4T1jg0tQmxNCDsB6cYbm3wLsgT4eUKL6vK9Qh0z7u6MkW6iSsO5l1YV7Jq6fCnM';
+    const out = await n.subscribe(key);
+    expect(out).toEqual({
+      endpoint: 'https://push.example/abc',
+      keys: { p256dh: 'P', auth: 'A' },
+      platform: 'web',
+    });
+    const arg = pushManager.subscribe.mock.calls[0]![0] as {
+      userVisibleOnly: boolean;
+      applicationServerKey: Uint8Array;
+    };
+    expect(arg.userVisibleOnly).toBe(true);
+    expect(arg.applicationServerKey).toBeInstanceOf(Uint8Array);
+    expect(arg.applicationServerKey.length).toBe(65);
+    expect(await n.unsubscribe()).toBe('https://push.example/abc');
+    expect(sub.unsubscribe).toHaveBeenCalled();
+  });
+  it('reports unsupported without a service worker or Notification API', () => {
+    delete (globalThis as { Notification?: unknown }).Notification;
+    expect(createWebNotifications({ registration: undefined }).permission()).toBe('unsupported');
+  });
+});
+
+const vapidKey =
+  'BPhdfj-y8kOzT3Sd9yXMbWcQ4T1jg0tQmxNCDsB6cYbm3wLsgT4eUKL6vK9Qh0z7u6MkW6iSsO5l1YV7Jq6fCnM';
+
+/** The VAPID key's bytes, and another valid key's: the platform's key after a rotation. */
+const vapidKeyBytes = () => base64url.decode(vapidKey);
+const rotatedKeyBytes = () => {
+  const bytes = base64url.decode(vapidKey);
+  bytes[64]! ^= 0x01;
+  return bytes;
+};
+
+/** A push subscription answering `json`, made for `applicationServerKey` (null: not known). */
+function subscription(json: object, applicationServerKey: ArrayBuffer | null = null) {
+  return {
+    endpoint: 'https://push.example/abc',
+    options: { applicationServerKey, userVisibleOnly: true },
+    toJSON: () => json,
+    unsubscribe: vi.fn(() => Promise.resolve(true)),
+  };
+}
+type FakeSubscription = ReturnType<typeof subscription>;
+
+/** A service worker registration whose push manager holds `existing` and creates `created`. */
+function fakeRegistration(existing: FakeSubscription | null, created?: FakeSubscription) {
+  const pushManager = {
+    getSubscription: vi.fn(() => Promise.resolve(existing)),
+    subscribe: vi.fn<(options: PushSubscriptionOptionsInit) => Promise<unknown>>(() =>
+      Promise.resolve(created),
+    ),
+  };
+  const showNotification = vi.fn(() => Promise.resolve());
+  const registration = () =>
+    Promise.resolve({ pushManager, showNotification } as unknown as ServiceWorkerRegistration);
+  return { pushManager, showNotification, registration };
+}
+
+/** A browser with Web Push (jsdom has no PushManager); afterEach takes it away again. */
+const pushSupported = () => vi.stubGlobal('PushManager', class PushManager {});
+
+function notificationApi(permission: NotificationPermission, answer = permission) {
+  const requestPermission = vi.fn(() => Promise.resolve(answer));
+  vi.stubGlobal('Notification', { permission, requestPermission });
+  return requestPermission;
+}
+
+describe('web notifications: permission, subscriptions and local notifications', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports the browser's permission while push is supported", () => {
+    pushSupported();
+    const { registration } = fakeRegistration(null);
+    for (const permission of ['default', 'granted', 'denied'] as const) {
+      notificationApi(permission);
+      expect(createWebNotifications({ registration }).permission()).toBe(permission);
+    }
+  });
+
+  it('asks for permission, and counts a prompt closed without an answer as denied', async () => {
+    pushSupported();
+    const { registration } = fakeRegistration(null);
+    const answers = [
+      ['granted', 'granted'],
+      ['denied', 'denied'],
+      ['default', 'denied'],
+    ] as const;
+    for (const [answer, expected] of answers) {
+      const requestPermission = notificationApi('default', answer);
+      expect(await createWebNotifications({ registration }).request()).toBe(expected);
+      expect(requestPermission).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('is unsupported without a registration, even where the Notification API exists', async () => {
+    const requestPermission = notificationApi('granted');
+    for (const n of [
+      createWebNotifications(),
+      createWebNotifications({ registration: undefined }),
+    ]) {
+      expect(n.permission()).toBe('unsupported');
+      expect(await n.request()).toBe('unsupported');
+      await expect(n.subscribe(vapidKey)).rejects.toThrow('not supported');
+      expect(await n.unsubscribe()).toBeNull();
+      await expect(n.show({ title: 'Deposit received' })).rejects.toThrow('not supported');
+    }
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('is unsupported without the Notification API, even with a registration', async () => {
+    vi.stubGlobal('Notification', undefined);
+    const n = createWebNotifications({ registration: fakeRegistration(null).registration });
+    expect(n.permission()).toBe('unsupported');
+    expect(await n.request()).toBe('unsupported');
+  });
+
+  it('is unsupported without a PushManager, as in Safari 15 on macOS', async () => {
+    const requestPermission = notificationApi('granted');
+    const n = createWebNotifications({ registration: fakeRegistration(null).registration });
+    expect('PushManager' in globalThis).toBe(false); // jsdom has none
+    expect(n.permission()).toBe('unsupported');
+    expect(await n.request()).toBe('unsupported');
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('cannot subscribe through a worker without push, and has nothing to end there', async () => {
+    const showNotification = vi.fn(() => Promise.resolve());
+    const n = createWebNotifications({
+      registration: () =>
+        Promise.resolve({ showNotification } as unknown as ServiceWorkerRegistration),
+    });
+    await expect(n.subscribe(vapidKey)).rejects.toThrow(
+      'Notifications are not supported in this browser.',
+    );
+    expect(await n.unsubscribe()).toBeNull();
+  });
+
+  it('reuses the subscription the browser holds for the same key', async () => {
+    const keys = { p256dh: 'P', auth: 'A' };
+    const held = subscription(
+      { endpoint: 'https://push.example/abc', keys },
+      vapidKeyBytes().buffer,
+    );
+    const { pushManager, registration } = fakeRegistration(held);
+    expect(await createWebNotifications({ registration }).subscribe(vapidKey)).toEqual({
+      endpoint: 'https://push.example/abc',
+      keys,
+      platform: 'web',
+    });
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+    expect(held.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('ends a subscription for another key, or an unknown one, and subscribes anew', async () => {
+    const keys = { p256dh: 'P', auth: 'A' };
+    for (const heldFor of [rotatedKeyBytes().buffer, null]) {
+      const held = subscription({ endpoint: 'https://push.example/old', keys }, heldFor);
+      const made = subscription({ endpoint: 'https://push.example/new', keys });
+      const { pushManager, registration } = fakeRegistration(held, made);
+      expect(await createWebNotifications({ registration }).subscribe(vapidKey)).toEqual({
+        endpoint: 'https://push.example/new',
+        keys,
+        platform: 'web',
+      });
+      expect(held.unsubscribe).toHaveBeenCalledTimes(1);
+      expect(pushManager.subscribe).toHaveBeenCalledTimes(1);
+      const [ended] = held.unsubscribe.mock.invocationCallOrder;
+      const [subscribed] = pushManager.subscribe.mock.invocationCallOrder;
+      expect(ended).toBeLessThan(subscribed!); // the browser keeps one subscription at a time
+    }
+  });
+
+  it('refuses a push key that is not a P-256 public key, and touches no subscription', async () => {
+    const keys = { p256dh: 'P', auth: 'A' };
+    const held = subscription(
+      { endpoint: 'https://push.example/abc', keys },
+      vapidKeyBytes().buffer,
+    );
+    const { pushManager, registration } = fakeRegistration(held);
+    const n = createWebNotifications({ registration });
+    const point = vapidKeyBytes();
+    const malformed = [
+      'not base64url!',
+      '',
+      base64url.encode(point.slice(0, 64)),
+      base64url.encode(new Uint8Array([...point, 0])),
+      base64url.encode(new Uint8Array([0x02, ...point.slice(1)])), // 65 bytes, but not uncompressed
+    ];
+    for (const key of malformed) {
+      await expect(n.subscribe(key), key).rejects.toThrow(
+        'The push key (vapidPublicKey) is not a valid P-256 public key.',
+      );
+    }
+    expect(pushManager.getSubscription).not.toHaveBeenCalled();
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+    expect(held.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('hands the browser the push key byte for byte: an uncompressed P-256 point', async () => {
+    const keys = { p256dh: 'P', auth: 'A' };
+    const made = subscription({ endpoint: 'https://push.example/abc', keys });
+    const { pushManager, registration } = fakeRegistration(null, made);
+    await createWebNotifications({ registration }).subscribe(vapidKey);
+    const { applicationServerKey } = pushManager.subscribe.mock.calls[0]![0];
+    const bytes = new Uint8Array(applicationServerKey as Uint8Array);
+    expect(Array.from(bytes)).toEqual(Array.from(vapidKeyBytes()));
+    expect(bytes[0]).toBe(0x04);
+  });
+
+  it('refuses a subscription that comes without its endpoint or keys', async () => {
+    const incomplete = [
+      { endpoint: 'https://push.example/abc' },
+      { endpoint: 'https://push.example/abc', keys: { p256dh: 'P' } },
+      { endpoint: 'https://push.example/abc', keys: { auth: 'A' } },
+      { keys: { p256dh: 'P', auth: 'A' } },
+    ];
+    for (const json of incomplete) {
+      const { registration } = fakeRegistration(null, subscription(json));
+      await expect(
+        createWebNotifications({ registration }).subscribe(vapidKey),
+        JSON.stringify(json),
+      ).rejects.toThrow('The push subscription came without its endpoint or keys.');
+    }
+  });
+
+  it('answers null from unsubscribe, and rejects the rest, with no worker registered', async () => {
+    notificationApi('granted');
+    const n = createWebNotifications({ registration: () => Promise.resolve(undefined) });
+    expect(await n.unsubscribe()).toBeNull();
+    await expect(n.subscribe(vapidKey)).rejects.toThrow('No service worker is registered.');
+    await expect(n.show({ title: 'Deposit received' })).rejects.toThrow(
+      'No service worker is registered.',
+    );
+  });
+
+  it('passes on a failure to look the worker up, from every call', async () => {
+    notificationApi('granted');
+    const failure = new DOMException('The document is in an invalid state.', 'InvalidStateError');
+    const n = createWebNotifications({ registration: () => Promise.reject(failure) });
+    await expect(n.unsubscribe()).rejects.toBe(failure);
+    await expect(n.subscribe(vapidKey)).rejects.toBe(failure);
+    await expect(n.show({ title: 'Deposit received' })).rejects.toBe(failure);
+  });
+
+  it('answers null when there is no subscription to end', async () => {
+    const { registration } = fakeRegistration(null);
+    expect(await createWebNotifications({ registration }).unsubscribe()).toBeNull();
+  });
+
+  it('ends the subscription the browser holds, even one made before this page loaded', async () => {
+    const held = subscription({ endpoint: 'https://push.example/abc', keys: {} });
+    const { registration } = fakeRegistration(held);
+    expect(await createWebNotifications({ registration }).unsubscribe()).toBe(
+      'https://push.example/abc',
+    );
+    expect(held.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends the subscription it made only once', async () => {
+    const made = subscription({
+      endpoint: 'https://push.example/abc',
+      keys: { p256dh: 'P', auth: 'A' },
+    });
+    const { registration } = fakeRegistration(null, made);
+    const n = createWebNotifications({ registration });
+    await n.subscribe(vapidKey);
+    expect(await n.unsubscribe()).toBe('https://push.example/abc');
+    expect(await n.unsubscribe()).toBeNull();
+    expect(made.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a notification with the app icon and badge', async () => {
+    const { showNotification, registration } = fakeRegistration(null);
+    const n = createWebNotifications({ registration });
+    await n.show({ title: 'Deposit received', body: 'It is in your wallet.', tag: 'al_1' });
+    await n.show({ title: 'Statement ready' });
+    await n.show({ title: 'Statement ready', body: undefined, tag: undefined });
+    expect(showNotification.mock.calls).toStrictEqual([
+      [
+        'Deposit received',
+        {
+          body: 'It is in your wallet.',
+          tag: 'al_1',
+          icon: '/icons/icon-192.png',
+          badge: '/icons/badge-96.png',
+        },
+      ],
+      ['Statement ready', { icon: '/icons/icon-192.png', badge: '/icons/badge-96.png' }],
+      ['Statement ready', { icon: '/icons/icon-192.png', badge: '/icons/badge-96.png' }],
+    ]);
+  });
+});
