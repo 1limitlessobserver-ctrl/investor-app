@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createWebNotifications } from './notifications';
+import { base64url } from '../../lib/base64url';
 
 describe('web notifications', () => {
   it('subscribes with the VAPID key and returns the platform payload', async () => {
@@ -50,9 +51,19 @@ describe('web notifications', () => {
 const vapidKey =
   'BPhdfj-y8kOzT3Sd9yXMbWcQ4T1jg0tQmxNCDsB6cYbm3wLsgT4eUKL6vK9Qh0z7u6MkW6iSsO5l1YV7Jq6fCnM';
 
-function subscription(json: object) {
+/** The VAPID key's bytes, and another valid key's: the platform's key after a rotation. */
+const vapidKeyBytes = () => base64url.decode(vapidKey);
+const rotatedKeyBytes = () => {
+  const bytes = base64url.decode(vapidKey);
+  bytes[64]! ^= 0x01;
+  return bytes;
+};
+
+/** A push subscription answering `json`, made for `applicationServerKey` (null: not known). */
+function subscription(json: object, applicationServerKey: ArrayBuffer | null = null) {
   return {
     endpoint: 'https://push.example/abc',
+    options: { applicationServerKey, userVisibleOnly: true },
     toJSON: () => json,
     unsubscribe: vi.fn(() => Promise.resolve(true)),
   };
@@ -63,7 +74,9 @@ type FakeSubscription = ReturnType<typeof subscription>;
 function fakeRegistration(existing: FakeSubscription | null, created?: FakeSubscription) {
   const pushManager = {
     getSubscription: vi.fn(() => Promise.resolve(existing)),
-    subscribe: vi.fn(() => Promise.resolve(created)),
+    subscribe: vi.fn<(options: PushSubscriptionOptionsInit) => Promise<unknown>>(() =>
+      Promise.resolve(created),
+    ),
   };
   const showNotification = vi.fn(() => Promise.resolve());
   const registration = () =>
@@ -152,9 +165,12 @@ describe('web notifications: permission, subscriptions and local notifications',
     expect(await n.unsubscribe()).toBeNull();
   });
 
-  it('reuses the subscription the browser already holds', async () => {
+  it('reuses the subscription the browser holds for the same key', async () => {
     const keys = { p256dh: 'P', auth: 'A' };
-    const held = subscription({ endpoint: 'https://push.example/abc', keys });
+    const held = subscription(
+      { endpoint: 'https://push.example/abc', keys },
+      vapidKeyBytes().buffer,
+    );
     const { pushManager, registration } = fakeRegistration(held);
     expect(await createWebNotifications({ registration }).subscribe(vapidKey)).toEqual({
       endpoint: 'https://push.example/abc',
@@ -162,6 +178,63 @@ describe('web notifications: permission, subscriptions and local notifications',
       platform: 'web',
     });
     expect(pushManager.subscribe).not.toHaveBeenCalled();
+    expect(held.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('ends a subscription for another key, or an unknown one, and subscribes anew', async () => {
+    const keys = { p256dh: 'P', auth: 'A' };
+    for (const heldFor of [rotatedKeyBytes().buffer, null]) {
+      const held = subscription({ endpoint: 'https://push.example/old', keys }, heldFor);
+      const made = subscription({ endpoint: 'https://push.example/new', keys });
+      const { pushManager, registration } = fakeRegistration(held, made);
+      expect(await createWebNotifications({ registration }).subscribe(vapidKey)).toEqual({
+        endpoint: 'https://push.example/new',
+        keys,
+        platform: 'web',
+      });
+      expect(held.unsubscribe).toHaveBeenCalledTimes(1);
+      expect(pushManager.subscribe).toHaveBeenCalledTimes(1);
+      const [ended] = held.unsubscribe.mock.invocationCallOrder;
+      const [subscribed] = pushManager.subscribe.mock.invocationCallOrder;
+      expect(ended).toBeLessThan(subscribed!); // the browser keeps one subscription at a time
+    }
+  });
+
+  it('refuses a push key that is not a P-256 public key, and touches no subscription', async () => {
+    const keys = { p256dh: 'P', auth: 'A' };
+    const held = subscription(
+      { endpoint: 'https://push.example/abc', keys },
+      vapidKeyBytes().buffer,
+    );
+    const { pushManager, registration } = fakeRegistration(held);
+    const n = createWebNotifications({ registration });
+    const point = vapidKeyBytes();
+    const malformed = [
+      'not base64url!',
+      '',
+      base64url.encode(point.slice(0, 64)),
+      base64url.encode(new Uint8Array([...point, 0])),
+      base64url.encode(new Uint8Array([0x02, ...point.slice(1)])), // 65 bytes, but not uncompressed
+    ];
+    for (const key of malformed) {
+      await expect(n.subscribe(key), key).rejects.toThrow(
+        'The push key (vapidPublicKey) is not a valid P-256 public key.',
+      );
+    }
+    expect(pushManager.getSubscription).not.toHaveBeenCalled();
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+    expect(held.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('hands the browser the push key byte for byte: an uncompressed P-256 point', async () => {
+    const keys = { p256dh: 'P', auth: 'A' };
+    const made = subscription({ endpoint: 'https://push.example/abc', keys });
+    const { pushManager, registration } = fakeRegistration(null, made);
+    await createWebNotifications({ registration }).subscribe(vapidKey);
+    const { applicationServerKey } = pushManager.subscribe.mock.calls[0]![0];
+    const bytes = new Uint8Array(applicationServerKey as Uint8Array);
+    expect(Array.from(bytes)).toEqual(Array.from(vapidKeyBytes()));
+    expect(bytes[0]).toBe(0x04);
   });
 
   it('refuses a subscription that comes without its endpoint or keys', async () => {

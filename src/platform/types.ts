@@ -69,7 +69,10 @@ export interface NotificationsAdapter {
   request(): Promise<'granted' | 'denied' | 'unsupported'>;
   /**
    * This browser's push subscription for the platform's VAPID key (base64url), in the form
-   * POST /push/subscribe takes. Rejects where no service worker is registered, or it has no push.
+   * POST /push/subscribe takes: the one it holds for that key, else a new one (one held for another
+   * key is ended first). Rejects with `Error('The push key (vapidPublicKey) is not a valid P-256
+   * public key.')` for any key but 65 bytes from 0x04, touching nothing, and where no service
+   * worker is registered, or it has no push.
    */
   subscribe(vapidPublicKey: string): Promise<PushSubscriptionInput>;
   /**

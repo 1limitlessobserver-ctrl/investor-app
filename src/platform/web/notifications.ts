@@ -1,7 +1,8 @@
 // Web Push and local notifications through the app's service worker. The push subscription is
-// made for the platform's VAPID key and handed to the platform as PushSubscriptionInput; a local
-// notification shows the app's own icon and badge. Without the Notification API, a service worker
-// registration or a PushManager, there is no push: permission() says 'unsupported'.
+// made for the platform's VAPID key (one the browser holds for another key is ended and made anew)
+// and handed to the platform as PushSubscriptionInput; a local notification shows the app's own
+// icon and badge. Without the Notification API, a service worker registration or a PushManager,
+// there is no push: permission() says 'unsupported'.
 
 import type { PushSubscriptionInput } from '../../api/types';
 import { base64url } from '../../lib/base64url';
@@ -48,14 +49,21 @@ export function createWebNotifications(
     },
 
     async subscribe(vapidPublicKey) {
+      const applicationServerKey = pushKey(vapidPublicKey);
       const { pushManager } = await serviceWorker();
       if (!pushManager) throw new Error(UNSUPPORTED); // a worker without push (Safari before 16)
-      const subscription =
-        (await pushManager.getSubscription()) ??
-        (await pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: base64url.decode(vapidPublicKey),
-        }));
+      const held = await pushManager.getSubscription();
+      if (held && madeFor(held, applicationServerKey)) {
+        made = held;
+        return subscriptionInput(held);
+      }
+      // The browser keeps one subscription at a time: end one made for another key (the platform
+      // rotated it) first. The platform prunes the old endpoint once pushes to it fail.
+      if (held) await held.unsubscribe();
+      const subscription = await pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
       made = subscription;
       return subscriptionInput(subscription);
     },
@@ -80,6 +88,25 @@ export function createWebNotifications(
       await (await serviceWorker()).showNotification(title, options);
     },
   };
+}
+
+/** The VAPID key's bytes: an uncompressed P-256 point, 65 bytes from 0x04. */
+function pushKey(vapidPublicKey: string): Uint8Array<ArrayBuffer> {
+  try {
+    const bytes = base64url.decode(vapidPublicKey);
+    if (bytes.length === 65 && bytes[0] === 0x04) return bytes;
+  } catch {
+    // Not base64url: refused below.
+  }
+  throw new Error('The push key (vapidPublicKey) is not a valid P-256 public key.');
+}
+
+/** Whether the subscription was made for this key; false when the browser does not say. */
+function madeFor(subscription: PushSubscription, key: Uint8Array): boolean {
+  const held = subscription.options?.applicationServerKey;
+  if (!held) return false;
+  const bytes = new Uint8Array(held);
+  return bytes.length === key.length && bytes.every((byte, i) => byte === key[i]);
 }
 
 function subscriptionInput(subscription: PushSubscription): PushSubscriptionInput {
