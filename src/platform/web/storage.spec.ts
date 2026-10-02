@@ -323,3 +323,24 @@ describe('secure storage: a stored key that cannot be read', () => {
     expect(await createSecureStorage({ db, keyStore }).get('b')).toBe('2');
   });
 });
+
+describe('secure storage: removing many entries', () => {
+  it('tries every removal of clear() and reset(), then reports the failures together', async () => {
+    const memory = memoryKvStore();
+    const setup = createSecureStorage({ db: memory });
+    for (const name of ['a', 'b', 'c']) await setup.set(name, name);
+    const db: KvStore = {
+      ...memory,
+      del: (key) =>
+        key === 'secure:a' ? Promise.reject(new Error('disk error')) : memory.del(key),
+    };
+    const storage = createSecureStorage({ db });
+    await expect(storage.clear()).rejects.toMatchObject({
+      message: 'Could not remove 1 of 3 secure entries.',
+      cause: new Error('disk error'),
+    });
+    expect([...memory.raw.keys()].sort()).toEqual(['secure:a', 'secure:key']);
+    await expect(storage.reset()).rejects.toThrow('Could not remove 1 of 2 secure entries.');
+    expect([...memory.raw.keys()]).toEqual(['secure:a']);
+  });
+});

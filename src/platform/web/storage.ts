@@ -119,19 +119,31 @@ export function createSecureStorage(
     clear: () =>
       inOrder(async () => {
         await theKey();
-        for (const entry of await db.keys()) {
-          if (entry.startsWith(PREFIX) && entry !== KEY_ENTRY) await db.del(entry);
-        }
+        const entries = (await db.keys()).filter((entry) => isEntry(entry) && entry !== KEY_ENTRY);
+        await allRemoved(entries.map((entry) => db.del(entry)));
       }),
     reset: () =>
       inOrder(async () => {
         key = undefined;
-        for (const entry of await db.keys()) {
-          if (entry.startsWith(PREFIX)) await db.del(entry);
-        }
-        if (keyStore !== db) await keyStore.del(KEY_ENTRY);
+        const removals = (await db.keys()).filter(isEntry).map((entry) => db.del(entry));
+        if (keyStore !== db) removals.push(keyStore.del(KEY_ENTRY));
+        await allRemoved(removals);
       }),
   };
+}
+
+const isEntry = (name: string) => name.startsWith(PREFIX);
+
+/** Waits for every removal, even after one fails, then reports the failures in one error. */
+async function allRemoved(removals: Promise<void>[]): Promise<void> {
+  const failed = (await Promise.allSettled(removals)).filter(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (failed.length > 0) {
+    throw new Error(`Could not remove ${failed.length} of ${removals.length} secure entries.`, {
+      cause: failed[0]?.reason,
+    });
+  }
 }
 
 /** Where a value is kept. `key` is refused: its entry would be the key's own. */
