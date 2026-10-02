@@ -37,6 +37,27 @@ export function StartingUp() {
 }
 
 /**
+ * A route that failed to render, in place of the router's own error page: a calm message and a
+ * reload. The router still reports the error to the console.
+ */
+export function RouteError() {
+  const { mode } = useAppSession();
+  return (
+    <>
+      {mode === 'sample' && <SampleRibbon />}
+      <main className={styles.starting}>
+        <StateView
+          kind="error"
+          title="Something went wrong"
+          detail="This screen couldn't be shown. Reload the app to try again."
+          action={{ label: 'Reload', onClick: () => window.location.reload() }}
+        />
+      </main>
+    </>
+  );
+}
+
+/**
  * The routes that need a session. A signed-out visitor goes to sign-in, and comes back after. An
  * app the platform no longer serves shows the update screen instead (sign-out still works). A
  * locked app keeps its screen beneath the lock, which covers it, takes focus and hides it from

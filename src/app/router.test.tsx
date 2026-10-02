@@ -1,7 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createMemoryRouter } from 'react-router';
+import { createSampleApi } from '../api/createSampleApi';
+import { fakePlatform } from '../test/fakePlatform';
 import { renderWithApp } from '../test/renderWithApp';
+import { App } from './App';
+import { AppProviders } from './providers';
+import { routes } from './router';
 
 beforeEach(() => {
   localStorage.clear();
@@ -67,5 +73,31 @@ describe('the routes', () => {
       await screen.findByRole('button', { name: 'Explore with sample data' }),
     ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/sign-in');
+  });
+
+  it('says plainly when a screen fails, never with the router’s own page', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    function Broken(): never {
+      throw new Error('a screen that cannot render');
+    }
+    // The app's own top route, with a screen that fails beneath it.
+    const [top] = routes;
+    const router = createMemoryRouter([
+      {
+        element: top?.element,
+        errorElement: top?.errorElement,
+        children: [{ path: '/', element: <Broken /> }],
+      },
+    ]);
+    render(
+      <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
+        <App router={router} />
+      </AppProviders>,
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(screen.queryByText(/Unexpected Application Error/)).toBeNull();
+    expect(logged).toHaveBeenCalled(); // the error still reaches the console
+    logged.mockRestore();
   });
 });
