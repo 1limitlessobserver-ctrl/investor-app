@@ -66,12 +66,22 @@ function setup(
     baseUrl?: string;
     app?: AppIdentity;
     faults?: Faults;
+    /**
+     * What another tab writes into the store just before the client's first rotate or clear
+     * lands: the race that the store's own compare of the session's key closes.
+     */
+    cutIn?: StoredSession | null;
     /** Replaces what setup passes, such as a callback. */
     config?: Partial<LiveApiConfig>;
   } = {},
 ) {
   const calls: Call[] = [];
   let tokens = initial;
+  let cutIn = options.cutIn;
+  const landCutIn = () => {
+    if (cutIn !== undefined) tokens = cutIn;
+    cutIn = undefined;
+  };
   /** Every write the client asked for (a rotation's pair, null for a clear), failed ones too. */
   const writes: (MobileTokens | null)[] = [];
   const signedOut: string[] = [];
@@ -84,20 +94,27 @@ function setup(
         const fault = options.faults?.get?.();
         return fault === undefined ? Promise.resolve(tokens) : Promise.reject(fault);
       },
-      rotate: (t) => {
+      // Each write compares the key it names with the stored one, as one step, as the real
+      // store does inside its transaction.
+      rotate: (t, key) => {
         writes.push(t);
+        landCutIn();
         const fault = options.faults?.rotate?.(t);
         if (fault !== undefined) return Promise.reject(fault);
-        // The pair replaces the tokens under the session's own key; a rotation starts nothing.
-        if (tokens !== null) tokens = { sessionKey: tokens.sessionKey, ...t };
-        return Promise.resolve();
+        if (tokens?.sessionKey !== key) return Promise.resolve(false);
+        tokens = { sessionKey: key, ...t };
+        return Promise.resolve(true);
       },
-      clear: () => {
+      clear: (key) => {
         writes.push(null);
+        landCutIn();
         const fault = options.faults?.clear?.();
         if (fault !== undefined) return Promise.reject(fault);
+        if (tokens === null || (key !== undefined && tokens.sessionKey !== key)) {
+          return Promise.resolve(false);
+        }
         tokens = null;
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
     },
     app: options.app ?? APP,
@@ -202,8 +219,8 @@ describe('the request as it goes out', () => {
         baseUrl: BASE,
         tokenStore: {
           get: () => Promise.resolve(null),
-          rotate: () => Promise.resolve(),
-          clear: () => Promise.resolve(),
+          rotate: () => Promise.resolve(false),
+          clear: () => Promise.resolve(false),
         },
         app: APP,
         ...change,
@@ -251,8 +268,8 @@ describe('the request as it goes out', () => {
       baseUrl: BASE,
       tokenStore: {
         get: () => Promise.resolve(null),
-        rotate: () => Promise.resolve(),
-        clear: () => Promise.resolve(),
+        rotate: () => Promise.resolve(false),
+        clear: () => Promise.resolve(false),
       },
       app: APP,
     });
@@ -808,6 +825,18 @@ describe('sign-in and sign-out', () => {
     expect([t.tokens(), t.writes, t.calls.map(path)]).toEqual([null, [null], ['/auth/logout']]);
   });
 
+  it('clears whatever the store holds, even a sign-in that lands as it logs out', async () => {
+    // logout() names no session to clear: this device signs out, whoever signed in last.
+    const t = setup(() => json(200, { ok: true }), session(1), { cutIn: session(5, 'k2') });
+    await t.api.logout();
+    expect([t.tokens(), t.writes]).toEqual([null, [null]]);
+    // The platform hears of the session the logout read.
+    expect([bearer(t.calls[0]!), bodyOf(t.calls[0]!)]).toEqual([
+      'Bearer a1',
+      { refreshToken: 'r1' },
+    ]);
+  });
+
   it.each(['session_revoked', 'unauthorized'])(
     'neither refreshes nor reports a sign-out for a call that hears %s during a logout',
     async (code) => {
@@ -1179,6 +1208,15 @@ describe('the refresh and its edges', () => {
       expect(t.tokens()).toEqual(now);
       expect(t.signedOut).toEqual([]);
     });
+  });
+
+  it('rotates under the key it read, which the store turns away once another sign-in is in', async () => {
+    // Another tab signs in after the client's own check and before its rotate() lands: only the
+    // store's compare can see it. The callers still get the pair, and nothing failed to report.
+    const t = setup(() => json(200, pair(2)), session(1), { cutIn: session(5, 'k2') });
+    expect(await t.api.refresh()).toEqual(pair(2));
+    expect([t.tokens(), t.writes]).toEqual([session(5, 'k2'), [pair(2)]]);
+    expect([t.storageErrors, t.signedOut]).toEqual([[], []]);
   });
 
   it('refreshes first when only the refresh token survived, once for concurrent calls', async () => {

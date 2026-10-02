@@ -22,7 +22,8 @@ function setup(
   initial: MobileTokens | null = pair(1),
 ) {
   const calls: Call[] = [];
-  // The session a sign-in stored under its key; a rotation keeps the key and replaces the pair.
+  // The session a sign-in stored under its key. A write applies only to the key it names (clear()
+  // without one to whatever is stored), and resolves whether it did.
   let tokens: StoredSession | null = initial === null ? null : { sessionKey: 'k1', ...initial };
   const signedOut: string[] = [];
   const upgrades: string[] = [];
@@ -30,13 +31,17 @@ function setup(
     baseUrl: 'https://platform.test/api/mobile/v1',
     tokenStore: {
       get: () => Promise.resolve(tokens),
-      rotate: (t) => {
-        if (tokens !== null) tokens = { sessionKey: tokens.sessionKey, ...t };
-        return Promise.resolve();
+      rotate: (t, key) => {
+        if (tokens?.sessionKey !== key) return Promise.resolve(false);
+        tokens = { sessionKey: key, ...t };
+        return Promise.resolve(true);
       },
-      clear: () => {
+      clear: (key) => {
+        if (tokens === null || (key !== undefined && tokens.sessionKey !== key)) {
+          return Promise.resolve(false);
+        }
         tokens = null;
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
     },
     app: { version: '1.2.0', platform: 'web', deviceId: 'device-0001', deviceName: 'Ada’s laptop' },
