@@ -9,6 +9,11 @@ const DRIFT = 0.0035;
 const ACCENT_EVERY = 8;
 /** The longest step between frames counted, so a stalled tab does not jump the field. */
 const MAX_STEP_SECONDS = 0.1;
+/**
+ * The shortest gap between drawn frames: about 30 a second (a little under 33 ms, so a 30 Hz
+ * display still draws every frame); the slow drift needs no more.
+ */
+const MIN_FRAME_MS = 32;
 
 interface Star {
   /** Position as a fraction of the width and height. */
@@ -109,10 +114,11 @@ export interface StarfieldProps {
 
 /**
  * A faint living starfield on a canvas that fills its container: stars drift slowly and
- * twinkle. One animation frame loop runs while useMotion allows it; under reduced motion or
- * while the app is hidden it holds a still frame. It draws at the device's pixel ratio,
- * follows the container's size and the theme's colours, and allocates nothing per frame.
- * `data-starfield` marks the canvas for the motion audit.
+ * twinkle. One animation frame loop runs while useMotion allows it, drawing about 30 frames a
+ * second; under reduced motion or while the app is hidden it holds a still frame. It draws at
+ * the device's pixel ratio (following zoom and moves between screens), follows the container's
+ * size and the theme's colours, and allocates nothing per frame. `data-starfield` marks the
+ * canvas for the motion audit.
  */
 export function Starfield({ count = 120, className }: StarfieldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -148,10 +154,29 @@ export function Starfield({ count = 120, className }: StarfieldProps) {
       attributeFilter: ['data-theme', 'style'],
     });
 
+    // The pixel ratio changes with zoom or a move to another screen, which leaves the canvas's
+    // CSS size alone: a query for the current ratio says when it no longer holds.
+    let ratio = window.devicePixelRatio || 1;
+    let ratioQuery: MediaQueryList | null = null;
+    const onRatio = () => {
+      const next = window.devicePixelRatio || 1;
+      if (next === ratio) return;
+      ratio = next;
+      onResize();
+      watchRatio();
+    };
+    function watchRatio() {
+      ratioQuery?.removeEventListener('change', onRatio);
+      ratioQuery = window.matchMedia(`(resolution: ${ratio}dppx)`);
+      ratioQuery.addEventListener('change', onRatio);
+    }
+    watchRatio();
+
     return () => {
       sizes?.disconnect();
       window.removeEventListener('resize', onResize);
       theme.disconnect();
+      ratioQuery?.removeEventListener('change', onRatio);
       sceneRef.current = null;
     };
   }, [count]);
@@ -162,10 +187,11 @@ export function Starfield({ count = 120, className }: StarfieldProps) {
     let frame = 0;
     let last = -1;
     const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      if (last >= 0 && now - last < MIN_FRAME_MS) return;
       if (last >= 0) elapsed.current += Math.min((now - last) / 1000, MAX_STEP_SECONDS);
       last = now;
       scene.draw(elapsed.current);
-      frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);

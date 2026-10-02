@@ -82,6 +82,31 @@ describe('Starfield', () => {
     expect(requestAnimationFrame).not.toHaveBeenCalled();
   });
 
+  it('redraws sharply when the pixel ratio changes (zoom, another screen)', () => {
+    const media = stubMatchMedia(true);
+    const { container } = render(<Starfield />);
+    const canvas = container.querySelector('canvas');
+    expect(media.matchMedia).toHaveBeenCalledWith('(resolution: 2dppx)');
+    vi.stubGlobal('devicePixelRatio', 3);
+    media.change(true);
+    expect(canvas?.width).toBe(1200);
+    expect(canvas?.height).toBe(900);
+    expect(context.setTransform).toHaveBeenLastCalledWith(3, 0, 0, 3, 0, 0);
+  });
+
+  it('draws at most about 30 frames a second', () => {
+    stubMatchMedia(false);
+    render(<Starfield count={10} />);
+    context.arc.mockClear();
+    runFrame(1000);
+    expect(context.arc).toHaveBeenCalledTimes(10);
+    runFrame(1016);
+    expect(context.arc).toHaveBeenCalledTimes(10);
+    runFrame(1033);
+    expect(context.arc).toHaveBeenCalledTimes(20);
+    expect(pending.size).toBe(1);
+  });
+
   it('places the same stars every time it mounts', () => {
     stubMatchMedia(true);
     const { unmount } = render(<Starfield count={20} />);
