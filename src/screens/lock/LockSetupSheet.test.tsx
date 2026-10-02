@@ -10,7 +10,9 @@ function renderSheet(available: LockMethod, extra: { busy?: boolean; error?: str
     onPasscode: vi.fn(),
     onNotNow: vi.fn(),
   };
-  render(<LockSetupSheet open available={available} {...extra} {...props} />);
+  render(
+    <LockSetupSheet open available={available} email="ada@example.com" {...extra} {...props} />,
+  );
   return props;
 }
 
@@ -24,6 +26,20 @@ describe('LockSetupSheet', () => {
       screen.getByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
     );
     expect(onUseDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the device’s own lock waiting until the investor’s email can name it', async () => {
+    const user = userEvent.setup();
+    const handlers = { onUseDevice: vi.fn(), onPasscode: vi.fn(), onNotNow: vi.fn() };
+    const { rerender } = render(<LockSetupSheet open available="webauthn" {...handlers} />);
+    const device = screen.getByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' });
+    expect(device).toHaveAttribute('aria-busy', 'true');
+    await user.click(device);
+    expect(handlers.onUseDevice).not.toHaveBeenCalled();
+    rerender(<LockSetupSheet open available="webauthn" email="ada@example.com" {...handlers} />);
+    expect(device).not.toHaveAttribute('aria-busy');
+    await user.click(device);
+    expect(handlers.onUseDevice).toHaveBeenCalledTimes(1);
   });
 
   it('offers only a passcode where the device has no lock of its own', () => {

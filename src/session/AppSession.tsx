@@ -153,6 +153,11 @@ function Session({ controller, children }: { controller: SessionController; chil
   const signedIn = state.status === 'signed-in';
   const meResult = useQuery({ ...meQuery(api), enabled: signedIn });
   const me = signedIn || state.status === 'locked' ? (meResult.data ?? null) : null;
+  // The device's own lock is named after the investor, so it waits for their email; while that
+  // cannot be had (offline, or the platform cannot say, or names none), the passcode alone is
+  // offered.
+  const email = me?.email || undefined;
+  const noEmail = email === undefined && (me !== null || !state.online || meResult.isError);
   const theme = themeFor(state.themeChoice, brand);
   const accent = accentFor(brand, appConfig.accentFallback);
   useLayoutEffect(() => {
@@ -206,7 +211,8 @@ function Session({ controller, children }: { controller: SessionController; chil
       />
       <LockSetupSheet
         open={lockSetup !== null && updateRequired === null}
-        available={lockSetup?.available ?? 'passcode'}
+        available={lockSetup === null || noEmail ? 'passcode' : lockSetup.available}
+        email={email}
         busy={lockSetup?.busy}
         error={lockSetup?.error}
         onUseDevice={controller.enrolDevice}

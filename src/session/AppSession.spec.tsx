@@ -70,11 +70,18 @@ const urlOf = (input: RequestInfo | URL) =>
   typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 const UNREADABLE = 'The secure storage key cannot be read.';
 
+/** The setup's "Use Face ID / Touch ID / Windows Hello", once it takes a press (email in). */
+async function deviceButton() {
+  const button = await screen.findByRole('button', {
+    name: 'Use Face ID / Touch ID / Windows Hello',
+  });
+  await waitFor(() => expect(button).not.toHaveAttribute('aria-busy'));
+  return button;
+}
+
 /** Takes the lock a fresh sign-in offers: the device's own prompt, which the fake grants. */
 async function setUpDeviceLock(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(
-    await screen.findByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
-  );
+  await user.click(await deviceButton());
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 }
 
@@ -1317,9 +1324,7 @@ describe('AppSession: setting up the lock', () => {
     );
     await user.click(screen.getByText('enter'));
     const me = await createSampleApi({ latencyMs: 0 }).me();
-    await user.click(
-      await screen.findByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
-    );
+    await user.click(await deviceButton());
     const digest = await crypto.subtle.digest(
       'SHA-256',
       new TextEncoder().encode('install_1-abcdef'),
@@ -1344,9 +1349,7 @@ describe('AppSession: setting up the lock', () => {
       }),
     );
     await user.click(screen.getByText('enter'));
-    await user.click(
-      await screen.findByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
-    );
+    await user.click(await deviceButton());
     expect(await screen.findByRole('alert')).toHaveTextContent('Set a passcode instead.');
     expect(screen.queryByRole('button', { name: /Face ID/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Set a passcode' })).toBeInTheDocument();
@@ -1386,9 +1389,7 @@ describe('AppSession: setting up the lock', () => {
       }),
     );
     await user.click(screen.getByText('enter'));
-    await user.click(
-      await screen.findByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
-    );
+    await user.click(await deviceButton());
     expect(await screen.findByRole('alert')).toHaveTextContent(
       "That didn't go through. Try again, or set a passcode.",
     );
@@ -1469,10 +1470,11 @@ describe('AppSession: setting up the lock', () => {
   it('opens on the device’s word when the platform cannot be reached', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const api = createSampleApi({ latencyMs: 0 });
-    vi.spyOn(api, 'me').mockRejectedValue(MobileApiError.network());
+    const me = vi.spyOn(api, 'me');
     const user = await launch(api);
     await user.click(screen.getByText('enter'));
     await setUpDeviceLock(user);
+    me.mockRejectedValue(MobileApiError.network()); // from now on the platform cannot be reached
     await user.click(screen.getByText('lock now'));
     await user.click(screen.getByText('unlock'));
     await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
@@ -1727,6 +1729,12 @@ function openTab(
 async function storedKey(device: Platform) {
   const raw = await device.storage.get('session');
   return raw === null ? null : (JSON.parse(raw) as { sessionKey: string }).sessionKey;
+}
+
+/** Waits for the investor's email in the tab's cache: the device's credential is named after it. */
+async function emailIn(tab: Pick<ReturnType<typeof openTab>, 'session' | 'queryClient'>) {
+  const { queryKey } = meQuery(tab.session.api);
+  await waitFor(() => expect(tab.queryClient.getQueryData(queryKey)).toBeDefined());
 }
 
 /** A promise that waits until release(), as a slow step of the device does. */
@@ -2158,6 +2166,7 @@ describe('AppSession: two tabs on one device', () => {
     await waitFor(() => expect(a.status()).toBe('signed-out'));
     await a.session.signIn(pairOf(1));
     await waitFor(() => expect(a.session.getSnapshot().lockSetup).not.toBeNull());
+    await emailIn(a);
     a.session.enrolDevice(); // the investor sets up the device's own lock
     await waitFor(() => expect(a.session.getSnapshot().lockMethod).toBe('webauthn'));
     // Another tab, unheard, signs out and in again: the lock and its setting go.
@@ -2513,6 +2522,7 @@ describe('AppSession: ending and starting sessions in one visit', () => {
     const tab = await signedInTab(fakePlatform({ lock: { verify } }));
     const settingUp = tab.session.setLockEnabled(true); // the investor sets up the device's lock
     await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    await emailIn(tab);
     tab.session.enrolDevice();
     expect(await settingUp).toBe(true);
     const first = tab.session.confirm('Send $10.00 to $grace');
@@ -2738,6 +2748,7 @@ describe('AppSession: unlocking a live session', () => {
     await waitFor(() => expect(a.status()).toBe('signed-out'));
     await a.session.signIn(pairOf(1));
     await waitFor(() => expect(a.session.getSnapshot().lockSetup).not.toBeNull());
+    await emailIn(a);
     a.session.enrolDevice();
     await waitFor(() => expect(a.session.getSnapshot().lockMethod).toBe('webauthn'));
     a.session.lock();
@@ -2868,6 +2879,7 @@ describe('AppSession: unlocking a live session', () => {
     await waitFor(() => expect(a.status()).toBe('signed-out'));
     await a.session.signIn(pairOf(1));
     await waitFor(() => expect(a.session.getSnapshot().lockSetup).not.toBeNull());
+    await emailIn(a);
     a.session.enrolDevice();
     await waitFor(() => expect(a.session.getSnapshot().lockMethod).toBe('webauthn'));
     a.session.lock();
@@ -3083,6 +3095,7 @@ describe('AppSession: unlocking', () => {
     await waitFor(() => expect(tab.status()).toBe('signed-out'));
     await tab.session.enterSample();
     await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    await emailIn(tab);
     tab.session.enrolDevice(); // the device's own lock
     await waitFor(() => expect(tab.session.getSnapshot().lockMethod).toBe('webauthn'));
     const before = await createSampleApi({ latencyMs: 0 }).me();
@@ -3326,7 +3339,7 @@ describe('AppSession: a session still stored when its end is done', () => {
     await waitFor(() => expect(tab.status()).toBe('signed-out'));
     await tab.session.signIn(pairOf(1));
     await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
-    await waitFor(() => expect(tab.queryClient.getQueryData(['live', 'me'])).toBeDefined());
+    await emailIn(tab);
     tab.session.enrolDevice();
     await waitFor(() => expect(tab.session.getSnapshot().lockMethod).toBe('webauthn'));
     return { ...tab, endedByPlatform: () => wired?.events.onSignedOut('session_revoked') };
@@ -3481,5 +3494,120 @@ describe('AppSession: a session still stored when its end is done', () => {
     closePage();
     const reopened = openTab(device, liveOver());
     await waitFor(() => expect(reopened.status()).toBe('locked'));
+  });
+});
+
+describe('AppSession: the name of the device’s credential', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A sample api whose GET /me waits for answer(), and the investor it then answers. */
+  async function meOnHold() {
+    const api = createSampleApi({ latencyMs: 0 });
+    const investor = await createSampleApi({ latencyMs: 0 }).me();
+    const held: { answer?: () => void } = {};
+    vi.spyOn(api, 'me').mockImplementation(
+      () => new Promise((resolve) => (held.answer = () => resolve(investor))),
+    );
+    return { api, investor, answer: () => held.answer?.() };
+  }
+
+  it('waits for the investor’s email before it offers the device’s own lock', async () => {
+    const { api, investor, answer } = await meOnHold();
+    const enrollWebAuthn = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AppSessionProvider api={api} platform={fakePlatform({ lock: { enrollWebAuthn } })}>
+        <Probe />
+      </AppSessionProvider>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await user.click(screen.getByText('enter'));
+    const name = 'Use Face ID / Touch ID / Windows Hello';
+    const device = await screen.findByRole('button', { name });
+    expect(device).toHaveAttribute('aria-busy', 'true');
+    await user.click(device);
+    expect(enrollWebAuthn).not.toHaveBeenCalled();
+    answer();
+    await waitFor(() => expect(device).not.toHaveAttribute('aria-busy'));
+    await user.click(device);
+    expect(enrollWebAuthn).toHaveBeenCalledWith(
+      expect.objectContaining({ id: investor.id, email: investor.email }),
+    );
+  });
+
+  it('makes no device credential while the investor’s email is unknown', async () => {
+    const { api, investor, answer } = await meOnHold();
+    const enrollWebAuthn = vi.fn(() => Promise.resolve());
+    const tab = openTab(fakePlatform({ lock: { enrollWebAuthn } }), () => api);
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    tab.session.enrolDevice();
+    expect(enrollWebAuthn).not.toHaveBeenCalled();
+    answer();
+    await emailIn(tab);
+    tab.session.enrolDevice();
+    expect(enrollWebAuthn).toHaveBeenCalledWith(
+      expect.objectContaining({ id: investor.id, email: investor.email }),
+    );
+  });
+
+  it('makes no device credential for an investor the platform names no email for', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    const me = api.me.bind(api);
+    vi.spyOn(api, 'me').mockImplementation(async () => ({ ...(await me()), email: '' }));
+    const enrollWebAuthn = vi.fn(() => Promise.resolve());
+    const tab = openTab(fakePlatform({ lock: { enrollWebAuthn } }), () => api);
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    await emailIn(tab);
+    tab.session.enrolDevice();
+    expect(enrollWebAuthn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'offline',
+      (api: SampleApi) => {
+        Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+        return api;
+      },
+    ],
+    [
+      'when the platform cannot say who they are',
+      (api: SampleApi) => {
+        vi.spyOn(api, 'me').mockRejectedValue(new MobileApiError('server_error', 400));
+        return api;
+      },
+    ],
+    [
+      'when the platform names none',
+      (api: SampleApi) => {
+        const me = api.me.bind(api);
+        vi.spyOn(api, 'me').mockImplementation(async () => ({ ...(await me()), email: '' }));
+        return api;
+      },
+    ],
+  ])('offers only a passcode while the investor’s email cannot be had, %s', async (_, set) => {
+    const api = set(createSampleApi({ latencyMs: 0 }));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AppSessionProvider api={api} platform={fakePlatform()}>
+        <Probe />
+      </AppSessionProvider>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await user.click(screen.getByText('enter'));
+    await screen.findByRole('dialog', { name: 'Lock the app on this device' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Face ID/ })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Set a passcode' })).toBeInTheDocument();
   });
 });

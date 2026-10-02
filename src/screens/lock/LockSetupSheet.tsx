@@ -18,6 +18,11 @@ export interface LockSetupSheetProps {
   /** What this device offers: its own lock (face, fingerprint, device PIN) or a passcode only. */
   available: LockMethod;
   /**
+   * The investor's email, which names the device's credential in its prompt and among their
+   * passkeys: until it is known, the device's own lock waits (its button busy).
+   */
+  email?: string | undefined;
+  /**
    * A setup is under way: its button shows it and ignores presses, and so do "Not now", Escape and
    * a press outside, until the setup answers.
    */
@@ -45,6 +50,7 @@ type Step =
 export function LockSetupSheet({
   open,
   available,
+  email,
   busy = false,
   error,
   onUseDevice,
@@ -71,6 +77,7 @@ export function LockSetupSheet({
         </SheetHeader>
         <Steps
           available={available}
+          email={email}
           busy={busy}
           error={error}
           onUseDevice={onUseDevice}
@@ -85,6 +92,7 @@ export function LockSetupSheet({
 /** The sheet's body; it starts afresh at "choose" each time the sheet opens. */
 function Steps({
   available,
+  email,
   busy,
   error,
   onUseDevice,
@@ -119,7 +127,7 @@ function Steps({
           </p>
         )}
         {available === 'webauthn' && (
-          <Button size="lg" loading={busy} onClick={onUseDevice}>
+          <Button size="lg" loading={busy || !email} onClick={onUseDevice}>
             Use Face ID / Touch ID / Windows Hello
           </Button>
         )}

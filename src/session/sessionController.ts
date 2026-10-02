@@ -898,16 +898,16 @@ export function createSessionController(deps: SessionDeps) {
     });
   }
 
-  /** "Use Face ID / Touch ID / Windows Hello": the browser's prompt, inside the tap. */
+  /**
+   * "Use Face ID / Touch ID / Windows Hello": the browser's prompt, inside the tap. The investor's
+   * email names the credential, so none is made before it is known (the sheet's button waits).
+   */
   function enrolDevice(): void {
     const offer = state.lockSetup;
     if (offer === null || offer.busy) return;
     const me = queryClient.getQueryData(meQuery(api).queryKey);
-    const enrolling = platform.lock.enrollWebAuthn({
-      id: me?.id ?? '',
-      email: me?.email ?? '',
-      handle,
-    });
+    if (me === undefined || me.email === '') return;
+    const enrolling = platform.lock.enrollWebAuthn({ id: me.id, email: me.email, handle });
     set({ lockSetup: { ...offer, busy: true, error: undefined } });
     const gen = generation;
     enrolling.then(
