@@ -15,10 +15,6 @@ export interface ShellProps {
   unread: number;
   /** False shows the offline banner. */
   online: boolean;
-  /** A new version of the app is waiting: "Update available" with Reload. */
-  updateReady?: boolean | undefined;
-  /** What Reload does. */
-  onReload?: (() => void) | undefined;
   /** The screen: the route's `<Outlet />`. */
   children: ReactNode;
 }
@@ -29,7 +25,7 @@ export interface ShellProps {
  * above: the rail (brand, the five, Alerts, Oracle) beside the screen, with the banners on top.
  * Render it inside the router; the screen brings its own `<h1>`.
  */
-export function AppShell({ brand, unread, online, updateReady, onReload, children }: ShellProps) {
+export function AppShell({ brand, unread, online, children }: ShellProps) {
   const layout = useLayout();
   const phone = layout === 'phone';
   return (
@@ -45,7 +41,7 @@ export function AppShell({ brand, unread, online, updateReady, onReload, childre
           </div>
         ) : null
       }
-      banners={<StatusBanners online={online} updateReady={updateReady} onReload={onReload} />}
+      banners={<StatusBanners online={online} />}
       footer={phone ? <TabBar /> : null}
     >
       {children}

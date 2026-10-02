@@ -3,6 +3,7 @@ import { Navigate, useSearchParams } from 'react-router';
 import { MobileApiError } from '../../api/MobileApiError';
 import { nextPathFrom } from '../../app/nextPath';
 import { BrandMark } from '../../components/BrandMark';
+import { InstallButton } from '../../components/InstallButton';
 import { Button } from '../../components/form/Button';
 import { Field } from '../../components/form/Field';
 import { Input } from '../../components/form/Input';
@@ -49,10 +50,11 @@ function linksFor(brand: { links: { forgotPassword: string; register: string } }
  * Sign-in with the platform's own account: email and password, then the two-factor step when the
  * account has it (the six-digit code, or a backup code). Creating an account and resetting a
  * password happen on the company's website. In sample mode, "Explore with sample data" signs in to
- * the sample world. A signed-in visitor goes on to where they were going (`?next=`).
+ * the sample world. Last comes the offer to install the app, where the browser has a way to. A
+ * signed-in visitor goes on to where they were going (`?next=`).
  */
 export function SignInScreen() {
-  const { status, mode, api, signIn, enterSample } = useAppSession();
+  const { status, mode, api, platform, signIn, enterSample } = useAppSession();
   const brandQuery = useBrand();
   const [params] = useSearchParams();
   const [step, setStep] = useState<Step>({ name: 'password' });
@@ -329,6 +331,8 @@ export function SignInScreen() {
             </a>
           </p>
         )}
+
+        <InstallButton placement="sign-in" install={platform.install} />
       </div>
       <span id={newTabId} hidden>
         Opens in a new tab

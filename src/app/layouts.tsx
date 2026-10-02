@@ -6,6 +6,7 @@ import { SpaceBackdrop } from '../components/SpaceBackdrop';
 import { StateView } from '../components/StateView';
 import { UpdateRequired } from '../components/UpdateRequired';
 import { themes } from '../design/themes';
+import { applyWaitingUpdate } from '../pwa/applyWaitingUpdate';
 import { useAlerts } from '../queries/alerts';
 import { useAppSession } from '../session/AppSession';
 import { signInPath } from './nextPath';
@@ -75,10 +76,12 @@ export function RouteError() {
 
 /**
  * The routes that need a session. A signed-out visitor goes to sign-in, and comes back after. An
- * app the platform no longer serves shows the update screen instead (sign-out still works). A
- * locked app keeps its screen beneath the lock, which covers it, takes focus and hides it from
- * assistive technology, and gives focus back once unlocked. A locked app with no lock left to open
- * it shows nothing of the app while the session ends (the session ends it here).
+ * app the platform no longer serves shows the update screen instead (sign-out still works), whose
+ * Reload takes the new version through the service worker: a plain reload would open the
+ * precached one again. A locked app keeps its screen beneath the lock, which covers it, takes
+ * focus and hides it from assistive technology, and gives focus back once unlocked. A locked app
+ * with no lock left to open it shows nothing of the app while the session ends (the session ends
+ * it here).
  */
 export function RequireSession() {
   const session = useAppSession();
@@ -91,6 +94,7 @@ export function RequireSession() {
       <UpdateRequired
         brand={brand}
         minVersion={updateRequired}
+        onReload={() => applyWaitingUpdate()}
         onSignOut={() => void session.signOut()}
       />
     );

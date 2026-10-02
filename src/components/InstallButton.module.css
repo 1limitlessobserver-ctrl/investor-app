@@ -1,0 +1,35 @@
+/*
+ * Installing the app: a quiet outline button, or Safari's steps as one muted line with the menu's
+ * own glyph. On sign-in it is centred under the form, a third thing to do after signing in and
+ * the sample world; in Profile it takes the row's width.
+ */
+
+.button[data-placement='sign-in'] {
+  justify-self: center;
+}
+
+.button[data-placement='profile'] {
+  width: 100%;
+}
+
+.steps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.steps[data-placement='sign-in'] {
+  justify-content: center;
+  text-align: center;
+}
+
+.icon {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+}

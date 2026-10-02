@@ -1,11 +1,10 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.sw.tsbuildinfo",
     "target": "ES2022",
-    "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "WebWorker"],
     "module": "ESNext",
-    "types": ["vite/client", "vite-plugin-pwa/react", "node"],
+    "types": [],
     "skipLibCheck": true,
 
     /* Bundler mode */
@@ -14,7 +13,6 @@
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
-    "jsx": "react-jsx",
 
     /* Strictness */
     "strict": true,
@@ -29,7 +27,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "scripts", "tests", "vitest.setup.ts"],
-  // The service worker has its own project (tsconfig.sw.json): the WebWorker library, not the DOM.
-  "exclude": ["src/sw.ts", "src/sw.spec.ts"]
+  "include": ["src/sw.ts", "src/sw.spec.ts"]
 }

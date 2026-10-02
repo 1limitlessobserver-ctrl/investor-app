@@ -9,7 +9,7 @@
 // two-factor step, whose code is 123456; the password-gated actions take "sample".
 import { MobileApiError } from './MobileApiError';
 import type { PlatformApi } from './PlatformApi';
-import { sampleData, type SampleState } from '../sample/sampleData';
+import { sampleData, type SampleCompany, type SampleState } from '../sample/sampleData';
 import { createContext } from '../sample/handlers/context';
 import * as account from '../sample/handlers/account';
 import * as alerts from '../sample/handlers/alerts';
@@ -27,6 +27,11 @@ export interface SampleApiOptions {
   now?: () => Date;
   /** The overflow audit's world: a 40-character company name and a $12,345,678.90 wallet. */
   stress?: boolean;
+  /**
+   * The deploying company's name and accent for the brand, outside the stress world; the sample
+   * world's own (Everest Reserve) where they are not given.
+   */
+  company?: SampleCompany | undefined;
   /**
    * What GET /brand reports as the minimum app version: "0.0.0" (none) unless set, so the app,
    * whatever its version, is outdated in the sample world only when asked (?sampleMinVersion).
@@ -54,10 +59,11 @@ export function createSampleApi(options: SampleApiOptions = {}): SampleApi {
     latencyMs = 450,
     now = () => new Date(),
     stress = false,
+    company,
     minSupportedAppVersion = '0.0.0',
     onSignedOut,
   } = options;
-  const state = sampleData.createState({ now: now(), stress });
+  const state = sampleData.createState({ now: now(), stress, company });
   state.brand.minSupportedAppVersion = minSupportedAppVersion;
   return createSampleApiFor(state, { latencyMs, now, onSignedOut });
 }

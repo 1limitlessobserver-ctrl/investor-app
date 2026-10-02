@@ -38,6 +38,31 @@ describe('createAppApi', () => {
     expect(wired.events.onSignedOut).toHaveBeenCalledWith('session_revoked');
   });
 
+  it('gives the sample world the company the build was made for', async () => {
+    const api = createAppApi(wiring(), {
+      config: readAppConfig(
+        { VITE_PRODUCT_NAME: 'Northwind Invest', VITE_ACCENT_FALLBACK: '#123456' },
+        '0.1.0',
+      ),
+      search: '?sampleLatency=0',
+      userAgent: CHROME_ON_WINDOWS,
+    });
+    const brand = await api.brand();
+    expect(brand.name).toBe('Northwind Invest');
+    expect(brand.accentHex).toBe('#123456');
+  });
+
+  it('keeps the sample world’s own company for a build that names none', async () => {
+    const api = createAppApi(wiring(), {
+      config: readAppConfig({}, '0.1.0'),
+      search: '?sampleLatency=0',
+      userAgent: CHROME_ON_WINDOWS,
+    });
+    const brand = await api.brand();
+    expect(brand.name).toBe('Everest Reserve');
+    expect(brand.accentHex).toBe('#1F9E76');
+  });
+
   it('talks to the company’s platform, naming the app and this device', async () => {
     localStorage.setItem('app.deviceId', 'install-id-1234');
     const fetch = vi.fn(() =>

@@ -27,8 +27,6 @@ export function FlowShell({
   brand,
   unread,
   online,
-  updateReady,
-  onReload,
   title,
   onBack,
   actions,
@@ -56,7 +54,7 @@ export function FlowShell({
           {layout === 'phone' && <HeaderActions unread={unread} className={styles.shellActions} />}
         </div>
       }
-      banners={<StatusBanners online={online} updateReady={updateReady} onReload={onReload} />}
+      banners={<StatusBanners online={online} />}
     >
       {children}
     </ShellFrame>

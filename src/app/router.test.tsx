@@ -3,13 +3,20 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, type RouteObject } from 'react-router';
 import { createSampleApi } from '../api/createSampleApi';
+import { format } from '../lib/format';
 import type { LockMethod } from '../platform/types';
 import { stubRadixBrowserApis } from '../test/browserStubs';
 import { FAKE_PASSCODE, fakePlatform } from '../test/fakePlatform';
 import { renderWithApp } from '../test/renderWithApp';
+import { applyWaitingUpdate } from '../pwa/applyWaitingUpdate';
 import { App } from './App';
 import { AppProviders } from './providers';
 import { routes } from './router';
+
+// The update screen's Reload takes the new version through the service worker, which jsdom lacks.
+vi.mock('../pwa/applyWaitingUpdate', () => ({
+  applyWaitingUpdate: vi.fn(() => Promise.resolve()),
+}));
 
 beforeEach(() => {
   localStorage.clear();
@@ -69,6 +76,29 @@ describe('the routes', () => {
     const { router } = renderWithApp({ route: '/nowhere', signedIn: true });
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/');
+  });
+
+  it('sends a notification’s address home until the alerts screen arrives', async () => {
+    // The service worker opens /alerts?open=<id> on a notification's tap (Task 15 adds /alerts).
+    const { router } = renderWithApp({ route: '/alerts?open=al_1', signedIn: true });
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/');
+  });
+
+  it('shows the projected portfolio value on Home, hidden while offline', async () => {
+    const { api } = renderWithApp({ route: '/', signedIn: true });
+    await screen.findByRole('heading', { name: 'Home' });
+    const { totals } = await api.dashboard();
+    const value = format.money(totals.portfolioValueCents);
+    await waitFor(() => expect(document.querySelector('[data-amount]')).toHaveTextContent(value));
+    expect(screen.getByText(/Projected portfolio value/)).toContainElement(
+      document.querySelector('[data-amount]'),
+    );
+    act(() => {
+      Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+      window.dispatchEvent(new Event('offline'));
+    });
+    expect(document.querySelector('[data-amount]')).toHaveTextContent('•••');
   });
 
   it('shows the screens in the tab layout', async () => {
@@ -194,6 +224,18 @@ describe('the routes', () => {
       await screen.findByRole('button', { name: 'Explore with sample data' }),
     ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/sign-in');
+  });
+
+  it('takes the new version, not the precached one, on the update screen’s Reload', async () => {
+    // Taking the new version can wait on the worker for a while: Reload shows it is under way.
+    vi.mocked(applyWaitingUpdate).mockReturnValue(new Promise<void>(() => {}));
+    renderWithApp({ route: '/', signedIn: true, sample: { minSupportedAppVersion: '99.0.0' } });
+    await screen.findByRole('heading', { name: 'Update the app' });
+    expect(applyWaitingUpdate).not.toHaveBeenCalled();
+    const reload = screen.getByRole('button', { name: 'Reload' });
+    await userEvent.setup().click(reload);
+    expect(applyWaitingUpdate).toHaveBeenCalledTimes(1);
+    expect(reload).toHaveAttribute('aria-busy', 'true');
   });
 
   it('ends a locked app whose lock is gone here, showing nothing of it meanwhile', async () => {

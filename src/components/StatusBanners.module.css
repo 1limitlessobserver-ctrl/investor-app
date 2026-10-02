@@ -1,7 +1,7 @@
 /*
- * Notices are slim glass strips tinted by meaning: the warning colour for offline, the accent for
- * an update. The regions have no box of their own, so they take no space while empty (and are
- * not shown); they keep `display: block`, as `contents` can drop a live region in some browsers.
+ * The notice is a slim glass strip in the warning colour. Its region has no box of its own, so it
+ * takes no space while empty (and is not shown); it keeps `display: block`, as `contents` can drop
+ * a live region in some browsers.
  */
 
 .banners {
@@ -30,22 +30,8 @@
   color: var(--warning);
 }
 
-.update {
-  border-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-text) 10%, var(--card));
-}
-
-.update .icon {
-  color: var(--accent-text);
-}
-
 .icon {
   flex: none;
   width: 1.125rem;
   height: 1.125rem;
-}
-
-.message {
-  flex: 1;
-  min-width: 0;
 }

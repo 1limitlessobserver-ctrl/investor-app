@@ -1,5 +1,15 @@
 import type { ManifestOptions } from 'vite-plugin-pwa';
-import type { CompanyConfig } from './company-config';
+import type { CompanyConfig } from './company-config.ts';
+
+/**
+ * The manifest's screenshots, which let Chrome show its richer install dialog: Home in the sample
+ * world on a phone and on a desktop, each a viewport in CSS pixels at a device scale. They are
+ * taken by scripts/screenshots.ts into public/screenshots/, and their sizes follow from these.
+ */
+export const SCREENSHOTS = [
+  { file: 'phone-home.png', width: 360, height: 640, scale: 3, formFactor: 'narrow' },
+  { file: 'desktop-home.png', width: 1920, height: 1080, scale: 1, formFactor: 'wide' },
+] as const;
 
 export function buildManifest(config: CompanyConfig): Partial<ManifestOptions> {
   return {
@@ -25,21 +35,12 @@ export function buildManifest(config: CompanyConfig): Partial<ManifestOptions> {
         purpose: 'maskable',
       },
     ],
-    screenshots: [
-      {
-        src: '/screenshots/phone-home.png',
-        sizes: '1080x1920',
-        type: 'image/png',
-        form_factor: 'narrow',
-        label: 'Home',
-      },
-      {
-        src: '/screenshots/desktop-home.png',
-        sizes: '1920x1080',
-        type: 'image/png',
-        form_factor: 'wide',
-        label: 'Home',
-      },
-    ],
+    screenshots: SCREENSHOTS.map(({ file, width, height, scale, formFactor }) => ({
+      src: `/screenshots/${file}`,
+      sizes: `${width * scale}x${height * scale}`,
+      type: 'image/png',
+      form_factor: formFactor,
+      label: 'Home',
+    })),
   };
 }

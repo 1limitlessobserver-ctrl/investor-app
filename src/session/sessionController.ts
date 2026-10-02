@@ -18,11 +18,14 @@
 //    and no lock on the device): the session ends here, at launch or on any of these, without
 //    telling the platform, as this tab may be behind a newer sign-in made elsewhere. The last
 //    wrong passcode signs out, whatever became of its sheet.
-//  - Sign-out: the platform first, told of this tab's sign-in only (waited for 3 s at most), then
-//    the store, the lock, push, the cache and the flag. The client's onSignedOut (and the
-//    sample's) ends the session the same way without the platform, and nothing else does: a
-//    rejected call never signs out on its own. A session that ends other than by the investor
-//    says why on the sign-in screen.
+//  - Push: once a session opens signed in (a sign-in, a launch straight in, or the unlock that
+//    follows a launch that opened locked), this browser's push subscription is handed to the
+//    platform where push can be on (src/session/push.ts), once per session.
+//  - Sign-out: the platform first: that push ends, then that this tab's sign-in does (each waited
+//    for 3 s at most); then the store, the lock, the browser's push, the cache and the flag. The
+//    client's onSignedOut (and the sample's) ends the session the same way without the platform,
+//    and nothing else does: a rejected call never signs out on its own. A session that ends
+//    other than by the investor says why on the sign-in screen.
 //  - The session knows the key of the sign-in it holds, and ends only that one in the store. Each
 //    change of session moves a generation: a step that answers after it moved (a read, a sign-out
 //    waiting on the platform, an end waiting on push) stops there, and a decision made on what
@@ -40,10 +43,12 @@ import type { ThemeId } from '../design/themes';
 import { reportProblem } from '../lib/report';
 import { isBelowMinimum } from '../lib/semver';
 import type { LockMethod, Platform } from '../platform/types';
+import { workerReady as serviceWorkerReady } from '../pwa/workerReady';
 import { brandQuery, meQuery } from '../queries/identity';
 import { themeChoice } from './brand';
 import { deviceHandle } from './deviceId';
 import { lockPreference, sampleFlag } from './localFlags';
+import { createPushRegistration } from './push';
 import type { SessionTokenStore, TokenStoreEvent } from './tokens';
 
 /** How long the app may stay hidden before it locks. */
@@ -53,6 +58,8 @@ export const LOCK_AFTER_MS = 5 * 60_000;
  * session before it sends, so the sign-out can go on without the answer.
  */
 const LOGOUT_WAIT_MS = 3_000;
+/** How long a sign-out waits for the platform to hear that this browser's push ends. */
+const PUSH_UNREGISTER_WAIT_MS = 3_000;
 /** How long a sign-out waits for the push subscription to end. */
 const UNSUBSCRIBE_WAIT_MS = 3_000;
 /** The sample world signs in any email; this one, and its two-factor code where it asks. */
@@ -156,6 +163,11 @@ export interface SessionDeps {
   queryClient: QueryClient;
   tokenStore: SessionTokenStore;
   appVersion: string;
+  /**
+   * Whether the app's service worker is active, which push needs: the browser's own (waited for
+   * five seconds at most) unless a spec says.
+   */
+  workerReady?: (() => Promise<boolean>) | undefined;
 }
 
 type Check = { ok: boolean; attemptsLeft?: number | undefined };
@@ -254,6 +266,12 @@ export function createSessionController(deps: SessionDeps) {
   const api = deps.makeApi({ events, tokenStore });
   const live = api.mode === 'live';
   const brandHash = hashKey(brandQuery(api).queryKey);
+  const push = createPushRegistration({
+    api,
+    notifications: platform.notifications,
+    brand: () => queryClient.ensureQueryData(brandQuery(api)),
+    workerReady: deps.workerReady ?? (() => serviceWorkerReady()),
+  });
 
   let state: SessionState = {
     status: 'loading',
@@ -281,6 +299,8 @@ export function createSessionController(deps: SessionDeps) {
   let ending: Ending | null = null;
   // The investor's lock choice when this device could not save it: it holds for this visit.
   let unsavedChoice: boolean | null = null;
+  // The generation whose session push was last turned on for: once per session.
+  let pushedFor: number | null = null;
   // The user handle of this install's device credentials, made now so that the tap that enrols
   // one asks the browser at once (its prompt needs the tap).
   let handle: Uint8Array | undefined;
@@ -347,6 +367,7 @@ export function createSessionController(deps: SessionDeps) {
         await endUnlessMoved('lock_gone', gen);
       } else {
         set({ status: 'signed-in', lockMethod: null, lockChoice: choice });
+        turnOnPush(gen);
       }
     } catch (error) {
       reportProblem('opening the session', error);
@@ -369,7 +390,18 @@ export function createSessionController(deps: SessionDeps) {
     if (gen !== generation) return;
     sessionKey = key;
     set({ status: 'signed-in', lockMethod: null, lockChoice: null, unlocking: IDLE });
+    turnOnPush(gen);
     void offerLockAfterSignIn(gen);
+  }
+
+  /**
+   * Turns push on for the session open now (generation `gen`), once: a lock and an unlock keep
+   * the session, and what it handed over. A step that answers once the session moved on stops.
+   */
+  function turnOnPush(gen: number): void {
+    if (pushedFor === gen) return;
+    pushedFor = gen;
+    void push.register(() => gen === generation);
   }
 
   /** Wipes the device lock and its setting; storage whose key is lost is reset, lock and all. */
@@ -430,6 +462,12 @@ export function createSessionController(deps: SessionDeps) {
     // The platform hears of this tab's sign-in only: one another tab made since is not this tap's.
     const key = sessionKey ?? undefined;
     const done = (async () => {
+      // The platform hears that this browser's push ends while the session can still say so.
+      try {
+        await settled(push.unregister(), PUSH_UNREGISTER_WAIT_MS);
+      } catch (error) {
+        reportProblem('signing out: telling the platform push ends', error);
+      }
       try {
         await settled(api.logout(key), LOGOUT_WAIT_MS);
       } catch (error) {
@@ -459,6 +497,7 @@ export function createSessionController(deps: SessionDeps) {
     closeFlows();
     const gen = ++generation;
     const key = sessionKey;
+    push.forget(); // what this session handed over is not the next one's to take back
     const moved = () => gen !== generation;
     const done = (async () => {
       const left = await leaveStore(key, reason);
@@ -722,6 +761,7 @@ export function createSessionController(deps: SessionDeps) {
     // The store, as it is now: emptied or replaced by another tab unheard, it is followed instead.
     if (live && !(await stillStored(gen))) return false;
     set({ status: 'signed-in', unlocking: IDLE });
+    turnOnPush(gen); // a session that opened locked turns push on once first unlocked
     return true;
   }
 
@@ -1027,6 +1067,7 @@ export function createSessionController(deps: SessionDeps) {
   function follow(): void {
     closeFlows();
     queryClient.clear();
+    push.forget();
     void launch();
   }
 

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { UpdateRequired } from './UpdateRequired';
@@ -20,6 +20,24 @@ describe('UpdateRequired', () => {
     expect(onReload).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole('button', { name: 'Sign out' }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows Reload busy while its reload is under way, and takes no second press', async () => {
+    const user = userEvent.setup();
+    let reloaded!: () => void;
+    const onReload = vi.fn(() => new Promise<void>((resolve) => (reloaded = resolve)));
+    render(
+      <UpdateRequired brand={brand} minVersion="1.4.0" onReload={onReload} onSignOut={() => {}} />,
+    );
+    const reload = screen.getByRole('button', { name: 'Reload' });
+    expect(reload).not.toHaveAttribute('aria-busy');
+    await user.click(reload);
+    expect(reload).toHaveAttribute('aria-busy', 'true');
+    await user.click(reload);
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeEnabled(); // still works
+    act(() => reloaded());
+    await waitFor(() => expect(reload).not.toHaveAttribute('aria-busy'));
   });
 
   it('links to the store when there is one, in a new tab', () => {

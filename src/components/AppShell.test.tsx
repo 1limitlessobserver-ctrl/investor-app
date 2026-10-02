@@ -30,15 +30,13 @@ describe('AppShell', () => {
     );
   });
 
-  it('shows the offline banner and the update notice when told', () => {
-    const onReload = vi.fn();
+  it('shows the offline banner when told', () => {
     renderInRouter(
-      <AppShell brand={brand} unread={0} online={false} updateReady onReload={onReload}>
+      <AppShell brand={brand} unread={0} online={false}>
         <h1>Home</h1>
       </AppShell>,
     );
     expect(screen.getByRole('status', { name: 'Connection' })).toHaveTextContent("You're offline");
-    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
   });
 
   it('at 900 px and above: the rail of seven instead of tabs, bell and orb', () => {
