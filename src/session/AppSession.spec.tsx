@@ -1884,6 +1884,62 @@ describe('AppSession: two tabs on one device', () => {
     expect(a.status()).toBe('signed-out');
   });
 
+  it('keeps a second sign-out under way when the first stops waiting', async () => {
+    const device = fakePlatform();
+    const a = openTab(device, liveOver({ slowLogout: true }));
+    const logout = vi.spyOn(a.session.api, 'logout');
+    const otherTab = createTokenStore(device.storage);
+    stops.push(otherTab.subscribe(() => {}));
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    void a.session.signOut(); // the platform does not answer: it is waited for 3 s
+    await waitFor(async () => expect(await storedKey(device)).toBeNull());
+    await otherTab.start(pairOf(2));
+    await waitFor(() => expect(a.status()).toBe('signed-in')); // this tab follows
+    await vi.advanceTimersByTimeAsync(1_500);
+    const leaving = a.session.signOut(); // the investor signs out of it, 1.5 s later
+    await vi.advanceTimersByTimeAsync(1_600); // the first stops waiting; this one still waits
+    expect(a.status()).toBe('signed-in');
+    const asked = a.session.confirm('Send $10.00 to $grace');
+    const shown = vi.advanceTimersByTimeAsync(50).then(() => 'shown');
+    expect(await Promise.race([asked, shown])).toBe(false); // nothing is asked meanwhile
+    expect(a.session.signOut()).toBe(leaving); // another tap joins it
+    await vi.advanceTimersByTimeAsync(1_500);
+    await leaving;
+    expect(a.status()).toBe('signed-out');
+    expect(logout).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a later end under way when an earlier one stops waiting', async () => {
+    const device = fakePlatform();
+    const unsubscribe = vi.fn(() => new Promise<null>(() => {})); // each end waits on push 3 s
+    const a = openTab(
+      { ...device, notifications: { ...device.notifications, unsubscribe } },
+      liveOver(),
+    );
+    const logout = vi.spyOn(a.session.api, 'logout');
+    const otherTab = createTokenStore(device.storage);
+    stops.push(otherTab.subscribe(() => {}));
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    void a.session.signOut(); // ends here, then waits on push
+    await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1));
+    const key = await otherTab.start(pairOf(2)); // the investor signs in again elsewhere
+    await waitFor(() => expect(a.status()).toBe('signed-in')); // this tab follows
+    await vi.advanceTimersByTimeAsync(1_500);
+    await otherTab.clear(key); // and signs out there, 1.5 s later: this tab's end begins
+    await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(1_600); // the first end stops waiting; this one still waits
+    expect(a.status()).toBe('signed-in');
+    const asked = a.session.confirm('Send $10.00 to $grace');
+    const shown = vi.advanceTimersByTimeAsync(50).then(() => 'shown');
+    expect(await Promise.race([asked, shown])).toBe(false); // nothing is asked meanwhile
+    void a.session.signOut(); // a tap of Sign out joins the end: the platform is not told
+    await vi.advanceTimersByTimeAsync(1_500);
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    expect(logout).toHaveBeenCalledTimes(1);
+  });
+
   it('clears only the sign-in it holds, never a newer one stored by another tab', async () => {
     const device = fakePlatform();
     // This tab hears nothing of the other: its store has no channel.
@@ -2347,10 +2403,19 @@ describe('AppSession: ending and starting sessions in one visit', () => {
 
   it('clears the device once when the platform ends the session twice over', async () => {
     const device = fakePlatform();
-    const tab = await signedInTab(device);
-    const clear = vi.spyOn(device.lock, 'clear');
+    const held = gate();
+    let holding = false;
+    const clear = vi.fn(async () => {
+      if (holding) await held.opened; // the device takes its time to remove the lock
+      await device.lock.clear();
+    });
+    const tab = await signedInTab({ ...device, lock: { ...device.lock, clear } });
+    clear.mockClear(); // the sign-in's own wipe
+    holding = true;
     tab.onSignedOut();
-    tab.onSignedOut();
+    await waitFor(() => expect(clear).toHaveBeenCalled());
+    tab.onSignedOut(); // again, while the first end is under way
+    held.release();
     await waitFor(() => expect(tab.status()).toBe('signed-out'));
     expect(clear).toHaveBeenCalledTimes(1);
   });
