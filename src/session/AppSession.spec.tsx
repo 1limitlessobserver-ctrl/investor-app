@@ -1960,6 +1960,40 @@ describe('AppSession: two tabs on one device', () => {
     expect(await storedKey(device)).toBe(otherKey);
   });
 
+  it('names its own sign-in when it tells the platform of a sign-out', async () => {
+    const device = fakePlatform();
+    const a = openTab(device, liveOver());
+    const logout = vi.spyOn(a.session.api, 'logout');
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    const mine = await storedKey(device);
+    await a.session.signOut();
+    expect(logout).toHaveBeenCalledWith(mine);
+  });
+
+  it('signs out of its own sign-in only: one another tab made since stays, untold', async () => {
+    const device = fakePlatform();
+    const sent: string[] = [];
+    const a = openTab(
+      device,
+      liveOver({
+        answer: (path) => {
+          sent.push(path);
+          return undefined;
+        },
+      }),
+      createTokenStore(device.storage, { channel: null }), // hears nothing of the other tab
+    );
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    const newer = await createTokenStore(device.storage, { channel: null }).start(pairOf(2));
+    sent.length = 0;
+    await a.session.signOut();
+    expect(a.status()).toBe('signed-out');
+    expect(await storedKey(device)).toBe(newer);
+    expect(sent).not.toContain('/auth/logout');
+  });
+
   it('follows a newer sign-in it finds stored when the platform ends its own', async () => {
     const device = fakePlatform();
     let wired: ApiWiring | undefined;

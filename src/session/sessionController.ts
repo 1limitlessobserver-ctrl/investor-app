@@ -18,10 +18,11 @@
 //    and no lock on the device): the session ends here, at launch or on any of these, without
 //    telling the platform, as this tab may be behind a newer sign-in made elsewhere. The last
 //    wrong passcode signs out, whatever became of its sheet.
-//  - Sign-out: the platform first (waited for 3 s at most), then the store, the lock, push, the
-//    cache and the flag. The client's onSignedOut (and the sample's) ends the session the same
-//    way without the platform, and nothing else does: a rejected call never signs out on its own.
-//    A session that ends other than by the investor says why on the sign-in screen.
+//  - Sign-out: the platform first, told of this tab's sign-in only (waited for 3 s at most), then
+//    the store, the lock, push, the cache and the flag. The client's onSignedOut (and the
+//    sample's) ends the session the same way without the platform, and nothing else does: a
+//    rejected call never signs out on its own. A session that ends other than by the investor
+//    says why on the sign-in screen.
 //  - The session knows the key of the sign-in it holds, and ends only that one in the store. Each
 //    change of session moves a generation: a step that answers after it moved (a read, a sign-out
 //    waiting on the platform, an end waiting on push) stops there, and a decision made on what
@@ -426,9 +427,11 @@ export function createSessionController(deps: SessionDeps) {
     if (ending?.gen === generation) return ending.done;
     closeFlows(); // an open confirmation ends at once
     const gen = ++generation;
+    // The platform hears of this tab's sign-in only: one another tab made since is not this tap's.
+    const key = sessionKey ?? undefined;
     const done = (async () => {
       try {
-        await settled(api.logout(), LOGOUT_WAIT_MS);
+        await settled(api.logout(key), LOGOUT_WAIT_MS);
       } catch (error) {
         // Only a store that fails makes logout reject; ending the session here clears it anyway.
         reportProblem('signing out: telling the platform', error);
