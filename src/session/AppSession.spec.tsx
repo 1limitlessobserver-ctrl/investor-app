@@ -680,6 +680,24 @@ describe('AppSession: a lock whose record is lost', () => {
     expect(logout).not.toHaveBeenCalled();
   });
 
+  it('ends the session here when the lock is found gone, though turned off', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    const logout = vi.spyOn(api, 'logout');
+    const platform = fakePlatform();
+    const user = await launch(api, platform);
+    await user.click(screen.getByText('enter'));
+    await setUpDeviceLock(user);
+    await user.click(screen.getByText('lock off')); // confirmations still ask for the lock
+    await user.click(await screen.findByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(screen.getByTestId('lock')).toHaveTextContent('false'));
+    await platform.lock.clear(); // its record is lost behind the session's back
+    await user.click(screen.getByText('confirm'));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(logout).not.toHaveBeenCalled();
+  });
+
   it('ends the session here on Lock now', async () => {
     const { user, logout } = await lockLost();
     await user.click(screen.getByText('lock now'));

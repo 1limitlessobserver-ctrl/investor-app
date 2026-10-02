@@ -490,13 +490,14 @@ export function createSessionController(deps: SessionDeps) {
   /**
    * Reads the lock as the device has it now: another tab may have set one up, turned it off or
    * removed it, so the session never goes by what it saw at launch. When nothing can check the
-   * investor any more (a locked app, or the lock on, with no lock left on the device) the session
-   * ends here, as at launch, without telling the platform. Resolves whether the session still
-   * stands. A lock that cannot be read keeps what the session knew, except a lost key, which
-   * signs out.
+   * investor any more (a locked app, the lock on, or a lock this session knew, with no lock left
+   * on the device) the session ends here, as at launch, without telling the platform. Resolves
+   * whether the session still stands. A lock that cannot be read keeps what the session knew,
+   * except a lost key, which signs out.
    */
   async function refreshLock(): Promise<boolean> {
     const gen = generation;
+    const knew = state.lockMethod !== null;
     let method = state.lockMethod;
     try {
       method = await platform.lock.enrolled();
@@ -512,7 +513,9 @@ export function createSessionController(deps: SessionDeps) {
     if (method !== state.lockMethod || choice !== state.lockChoice) {
       set({ lockMethod: method, lockChoice: choice });
     }
-    if (method === null && (state.status === 'locked' || lockEnabled())) {
+    // A lock that was there and is gone ends the session whatever the lock's setting says: the
+    // last wrong passcode wipes it, and a confirmation must never then go through unasked.
+    if (method === null && (knew || state.status === 'locked' || lockEnabled())) {
       void endUnlessMoved('lock_gone', gen);
       return false;
     }
