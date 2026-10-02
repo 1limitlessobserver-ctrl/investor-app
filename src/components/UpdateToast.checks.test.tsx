@@ -171,6 +171,80 @@ describe('UpdateToast, as a waiting version takes over', () => {
   });
 });
 
+/** The browser's service workers, for a tab whose take-over the plugin never reports. */
+function fakeWorkers() {
+  const listeners = new Set<() => void>();
+  const workers = {
+    addEventListener: (type: string, listener: () => void) => {
+      if (type === 'controllerchange') listeners.add(listener);
+    },
+  };
+  Object.defineProperty(navigator, 'serviceWorker', { value: workers, configurable: true });
+  /** The new version controls the page now. */
+  return () => {
+    for (const listener of [...listeners]) listener();
+  };
+}
+
+/** The browser answers the registration, with or without a worker waiting. */
+function registerWith(waiting: boolean) {
+  const registration = {
+    update: () => Promise.resolve(),
+    waiting: waiting ? { state: 'installed' } : null,
+  } as unknown as ServiceWorkerRegistration;
+  act(() => registered.options?.onRegisteredSW?.('/sw.js', registration));
+}
+
+describe('UpdateToast, in a tab no worker controlled when it registered', () => {
+  // workbox-window decides `isUpdate` at registration, so the plugin never calls onNeedReload here.
+  beforeEach(() => {
+    registered.options = undefined;
+    registered.waiting = true;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(navigator, 'serviceWorker');
+  });
+
+  it('hands over on the first tap, and reloads once the new version controls the page', async () => {
+    const reload = watchReloads();
+    const takeOver = fakeWorkers();
+    const update = vi.fn(() => Promise.resolve());
+    registered.updateServiceWorker = update;
+    render(<UpdateToast />);
+    registerWith(true);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+    expect(update).toHaveBeenCalledWith(true);
+    expect(reload).not.toHaveBeenCalled();
+    takeOver();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads plainly when no worker waits to be handed over any more', async () => {
+    const reload = watchReloads();
+    fakeWorkers();
+    const update = vi.fn(() => Promise.resolve());
+    registered.updateServiceWorker = update;
+    render(<UpdateToast />);
+    registerWith(false);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('reloads once though both the plugin and the browser say the new version took over', async () => {
+    const reload = watchReloads();
+    const takeOver = fakeWorkers();
+    registered.updateServiceWorker = () => Promise.resolve();
+    render(<UpdateToast />);
+    registerWith(true);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+    act(() => registered.options?.onNeedReload?.());
+    takeOver();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('UpdateToast, while the app is sending a change', () => {
   beforeEach(() => {
     registered.waiting = true;
