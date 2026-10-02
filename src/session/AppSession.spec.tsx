@@ -1863,7 +1863,7 @@ describe('AppSession: a step that answers after the session changed', () => {
     },
   );
 
-  it('never shows the lock when the launch’s look at it answers after the session ended', async () => {
+  it('never shows the lock when the launch’s look at it answers after the end', async () => {
     sessionStorage.setItem('app.sample', '1'); // a session from before the reload
     let answer!: (method: 'webauthn') => void;
     const enrolled = () => new Promise<'webauthn'>((resolve) => (answer = resolve));
@@ -1880,7 +1880,7 @@ describe('AppSession: a step that answers after the session changed', () => {
     expect(a.status()).toBe('signed-out');
   });
 
-  it('leaves the app signed out when the session ends while a sign-in wipes the old lock', async () => {
+  it('stays signed out when the session ends while a sign-in wipes the old lock', async () => {
     const held = gate();
     let first = true;
     const clear = () => {
@@ -1958,7 +1958,7 @@ describe('AppSession: a step that answers after the session changed', () => {
     },
   );
 
-  it('never opens when the platform answers the unlock’s check while the investor signs out', async () => {
+  it('never opens when the platform answers the unlock during a sign-out', async () => {
     sessionStorage.setItem('app.sample', '1');
     const api = createSampleApi({ latencyMs: 0 });
     const me = await api.me();
@@ -1977,7 +1977,7 @@ describe('AppSession: a step that answers after the session changed', () => {
     expect(a.status()).toBe('locked');
   });
 
-  it('never shows the lock’s error when its check fails while the investor signs out', async () => {
+  it('never shows the lock’s error when its check fails during a sign-out', async () => {
     sessionStorage.setItem('app.sample', '1');
     let fail!: (error: Error) => void;
     const verify = () => new Promise<boolean>((_, reject) => (fail = reject));
@@ -1992,7 +1992,7 @@ describe('AppSession: a step that answers after the session changed', () => {
     expect(a.session.getSnapshot().unlocking.error).toBeUndefined();
   });
 
-  it('offers no lock once the investor signs out while the device is asked what it offers', async () => {
+  it('offers no lock when the device answers what it offers during a sign-out', async () => {
     let offer!: (method: 'webauthn') => void;
     const available = () => new Promise<'webauthn'>((resolve) => (offer = resolve));
     const api = createSampleApi({ latencyMs: 0 });
