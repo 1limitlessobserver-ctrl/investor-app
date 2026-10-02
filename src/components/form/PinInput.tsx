@@ -128,8 +128,9 @@ export function PinInput({
       return;
     }
     // A keystroke reports just its own character; autofill and fillers report the whole value.
-    const data = (event.nativeEvent as Partial<InputEvent>).data;
-    const typed = digitsOf(typeof data === 'string' && data !== '' ? data : raw);
+    const native = event.nativeEvent;
+    const data = 'data' in native && typeof native.data === 'string' ? native.data : '';
+    const typed = digitsOf(data !== '' ? data : raw);
     if (typed !== '') write(index, typed);
   }
 

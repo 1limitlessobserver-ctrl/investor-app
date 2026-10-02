@@ -108,6 +108,18 @@ describe('PinInput', () => {
     expect(first).toHaveFocus();
   });
 
+  it('takes only the key typed when the caret sits beside a digit, not over it', async () => {
+    const user = userEvent.setup();
+    render(<PinInput length={4} aria-label="Transfer PIN" defaultValue="1234" />);
+    const second = boxes()[1];
+    if (!second) throw new Error('No second box.');
+    await user.click(second);
+    // A second press inside a focused box drops the selection and leaves the caret after "2".
+    second.setSelectionRange(1, 1);
+    await user.keyboard('9');
+    expect(values()).toBe('1934');
+  });
+
   it('sends focus to the first empty box rather than leaving a gap', async () => {
     const user = userEvent.setup();
     render(<PinInput length={6} aria-label="Code" />);
@@ -204,7 +216,7 @@ describe('PinInput', () => {
     expect(boxes()[2]).toHaveAccessibleDescription("That passcode didn't match. 4 attempts left.");
   });
 
-  it('keeps a real outline on keyboard focus, and focus wins over a filled box and the error', () => {
+  it('keeps a real outline on keyboard focus, winning over a filled box and the error', () => {
     const css = join(import.meta.dirname, 'PinInput.module.css');
     expect(cssRule(css, '.box:focus-visible')).toMatchObject({
       outline: '2px solid var(--accent-text)',
