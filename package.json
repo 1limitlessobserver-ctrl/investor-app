@@ -21,7 +21,7 @@
     "apply-company": "tsx scripts/apply-company.ts",
     "icons": "tsx scripts/generate-icons.ts",
     "screenshots": "tsx scripts/screenshots.ts",
-    "lhci": "lhci autorun",
+    "lhci": "lhci autorun --config=lighthouserc.json",
     "audit:deps": "npm audit --audit-level=high",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
   },
