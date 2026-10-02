@@ -481,16 +481,18 @@ export function createSessionController(deps: SessionDeps) {
       }
       return false;
     }
-    try {
-      await queryClient.fetchQuery({
-        ...meQuery(api),
-        staleTime: 0,
-        retry: false,
-        networkMode: 'always',
-      });
-    } catch {
-      // Offline, or the platform failed: the app opens on what it has. A revoked session has
-      // signed out through onSignedOut meanwhile.
+    // Does the platform still know the session? Asked only while online: offline, the app opens on
+    // what it has (a fetch of `me` paused offline would never answer). A fetch already under way
+    // is set aside, so the answer is a fresh one.
+    if (state.online) {
+      const me = meQuery(api);
+      try {
+        await queryClient.cancelQueries({ queryKey: me.queryKey });
+        await queryClient.fetchQuery({ ...me, staleTime: 0, retry: false, networkMode: 'always' });
+      } catch {
+        // The platform failed: the app opens on what it has. A revoked session has signed out
+        // through onSignedOut meanwhile.
+      }
     }
     if (gen !== generation || state.status !== 'locked') return false;
     set({ status: 'signed-in', unlocking: IDLE });

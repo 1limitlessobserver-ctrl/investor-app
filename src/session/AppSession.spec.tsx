@@ -8,6 +8,7 @@ import { createLiveApi } from '../api/createLiveApi';
 import { MobileApiError } from '../api/MobileApiError';
 import type { PlatformApi } from '../api/PlatformApi';
 import type { Platform } from '../platform/types';
+import { createQueryClient } from '../queries/client';
 import { fakePlatform } from '../test/fakePlatform';
 import { createTokenStore } from './tokens';
 
@@ -830,6 +831,45 @@ describe('AppSession: setting up the lock', () => {
     await user.type(screen.getByLabelText('Passcode'), '246810');
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(document.title).toBe('confirmed'));
+  });
+
+  it('unlocks offline at once, never waiting on a fetch the network holds back', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    const queryClient = createQueryClient();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AppSessionProvider api={api} platform={fakePlatform()} queryClient={queryClient}>
+        <Probe />
+      </AppSessionProvider>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await user.click(screen.getByText('enter'));
+    await setUpDeviceLock(user);
+    const me = vi.spyOn(api, 'me');
+    const fetchOfMe = () => queryClient.getQueryState(['sample', 'me'])?.fetchStatus;
+    try {
+      // Offline, and back to the app a while later: the investor's details, now stale, are
+      // fetched again on focus, and that fetch waits for the network.
+      act(() => {
+        Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+        window.dispatchEvent(new Event('offline'));
+        vi.advanceTimersByTime(31_000);
+        document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+      });
+      await waitFor(() => expect(fetchOfMe()).toBe('paused'));
+      await user.click(screen.getByText('lock now'));
+      expect(status()).toHaveTextContent('locked');
+      me.mockClear();
+      await user.click(screen.getByText('unlock'));
+      await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+      expect(me).not.toHaveBeenCalled(); // offline, the platform is not asked
+    } finally {
+      act(() => {
+        Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+        window.dispatchEvent(new Event('online'));
+      });
+      await waitFor(() => expect(fetchOfMe()).toBe('idle'));
+    }
   });
 
   it('opens on the device’s word when the platform cannot be reached', async () => {
