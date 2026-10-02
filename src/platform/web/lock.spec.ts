@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createLock, verifyAssertion } from './lock';
 import { createSecureStorage, type KvStore } from './storage';
 import { base64url } from '../../lib/base64url';
+import { memoryKvStore } from '../../test/memoryKvStore';
 import type { SecureStorage } from '../types';
 
 function memoryStore(): KvStore {
@@ -238,6 +239,9 @@ describe('webauthn lock', () => {
   });
 });
 
+/** Storage over the shared memory store, for the describes below; storage() serves the plan's. */
+const secureStorage = () => createSecureStorage({ db: memoryKvStore() });
+
 /** Signs as a platform authenticator would, with ES256, over client data and flags we choose. */
 async function signAssertion(
   keyPair: CryptoKeyPair,
@@ -376,7 +380,7 @@ describe('verifyAssertion: every check, and malformed input', () => {
 
 describe('passcode lock: what it keeps and how it counts', () => {
   it('keeps a PBKDF2-SHA-256 hash under a random 16-byte salt, never the passcode', async () => {
-    const secure = storage();
+    const secure = secureStorage();
     const lock = createLock({ storage: secure, credentials: undefined });
     await lock.enrollPasscode('246810');
     const stored = (await secure.get('lock:passcode'))!;
@@ -404,7 +408,7 @@ describe('passcode lock: what it keeps and how it counts', () => {
   });
 
   it('keeps the count of wrong attempts across a reload, and a success resets it', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const reload = () =>
       createLock({ storage: createSecureStorage({ db }), credentials: undefined });
     const first = reload();
@@ -417,19 +421,19 @@ describe('passcode lock: what it keeps and how it counts', () => {
   });
 
   it('counts wrong attempts made at the same time once each', async () => {
-    const lock = createLock({ storage: storage(), credentials: undefined });
+    const lock = createLock({ storage: secureStorage(), credentials: undefined });
     await lock.enrollPasscode('246810');
     const answers = await Promise.all([1, 2, 3].map(() => lock.verifyPasscode('000000')));
     expect(answers.map((answer) => answer.attemptsLeft)).toEqual([4, 3, 2]);
   });
 
   it('answers attemptsLeft 0 when no passcode is enrolled', async () => {
-    const lock = createLock({ storage: storage(), credentials: undefined });
+    const lock = createLock({ storage: secureStorage(), credentials: undefined });
     expect(await lock.verifyPasscode('246810')).toEqual({ ok: false, attemptsLeft: 0 });
   });
 
   it('checks no passcode whose attempt cannot be counted, so nothing answers ok', async () => {
-    const secure = storage();
+    const secure = secureStorage();
     let full = false;
     const flaky: SecureStorage = {
       ...secure,
@@ -451,7 +455,7 @@ describe('passcode lock: what it keeps and how it counts', () => {
   });
 
   it('stays locked, without checking, when the fifth wrong attempt could not wipe it', async () => {
-    const secure = storage();
+    const secure = secureStorage();
     let stuck = false;
     const flaky: SecureStorage = {
       ...secure,
@@ -474,7 +478,7 @@ describe('passcode lock: what it keeps and how it counts', () => {
   });
 
   it('refuses anything but exactly six digits, and enrols nothing', async () => {
-    const lock = createLock({ storage: storage(), credentials: undefined });
+    const lock = createLock({ storage: secureStorage(), credentials: undefined });
     for (const code of [
       '',
       '12345',
@@ -535,7 +539,7 @@ async function fakeAuthenticator(origin = 'http://localhost:3000') {
   };
 }
 
-const lockOver = (credentials: CredentialsContainer | undefined, secure = storage()) =>
+const lockOver = (credentials: CredentialsContainer | undefined, secure = secureStorage()) =>
   createLock({ storage: secure, credentials, rpId: 'localhost', origin: 'http://localhost:3000' });
 const ada = { id: 'u1', email: 'ada@example.com' };
 
@@ -562,7 +566,7 @@ describe('webauthn lock: availability, enrolment and verification', () => {
   it('enrols a platform credential and keeps its id and public key', async () => {
     document.title = 'Northwind Invest';
     const auth = await fakeAuthenticator();
-    const secure = storage();
+    const secure = secureStorage();
     const lock = lockOver(auth.credentials, secure);
     await lock.enrollWebAuthn(ada);
     const { publicKey } = auth.create.mock.calls[0]![0];

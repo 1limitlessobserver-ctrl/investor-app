@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { clear, createStore, get } from 'idb-keyval';
 import { createSecureStorage, type KvStore } from './storage';
+import { memoryKvStore } from '../../test/memoryKvStore';
 
 function memoryStore(): KvStore & { raw: Map<string, unknown> } {
   const raw = new Map<string, unknown>();
@@ -60,7 +61,7 @@ type Sealed = { iv: Uint8Array; data: Uint8Array };
 
 describe('secure storage: the key and the sealed entries', () => {
   it('seals each value with a fresh 12-byte IV: the same text never looks the same', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const storage = createSecureStorage({ db });
     await storage.set('a', 'same');
     const first = db.raw.get('secure:a') as Sealed;
@@ -74,7 +75,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('binds each value to its name: moved, it reads as null and is removed', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const storage = createSecureStorage({ db });
     await storage.set('a', 'r-secret');
     db.raw.set('secure:b', db.raw.get('secure:a'));
@@ -84,18 +85,18 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('reads a value sealed under a lost key as null, and removes it', async () => {
-    const db = memoryStore();
-    const keyStore = memoryStore();
+    const db = memoryKvStore();
+    const keyStore = memoryKvStore();
     await createSecureStorage({ db, keyStore }).set('a', '1');
     expect(keyStore.raw.get('secure:key')).toBeInstanceOf(CryptoKey);
     expect(db.raw.has('secure:key')).toBe(false);
-    const afterKeyLoss = createSecureStorage({ db, keyStore: memoryStore() });
+    const afterKeyLoss = createSecureStorage({ db, keyStore: memoryKvStore() });
     expect(await afterKeyLoss.get('a')).toBeNull();
     expect(db.raw.has('secure:a')).toBe(false);
   });
 
   it('reads a tampered or malformed entry as null, and removes it', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const storage = createSecureStorage({ db });
     await storage.set('a', '1');
     const sealed = db.raw.get('secure:a') as Sealed;
@@ -108,7 +109,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('fails a call whose key cannot be read, keeps the value and retries the key', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     await createSecureStorage({ db }).set('a', '1');
     let unreadable = true;
     const keyStore: KvStore = {
@@ -123,7 +124,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('generates one key, even when the first calls start together', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const storage = createSecureStorage({ db });
     await Promise.all([storage.set('a', '1'), storage.set('b', '2')]);
     const again = createSecureStorage({ db });
@@ -131,7 +132,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('keeps one key when two instances first use the store at the same time', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const first = createSecureStorage({ db });
     const second = createSecureStorage({ db });
     await Promise.all([first.set('a', '1'), second.set('b', '2')]);
@@ -141,7 +142,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('adopts a key stored after its own instead of removing what that key sealed', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const first = createSecureStorage({ db });
     await first.set('a', '1');
     db.raw.delete('secure:key'); // the key is lost, and another instance stores a new one
@@ -153,7 +154,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('runs its calls in call order: a clear is never overtaken by a set in flight', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const storage = createSecureStorage({ db });
     await Promise.all([storage.set('a', '1'), storage.clear()]);
     expect(await storage.get('a')).toBeNull();
@@ -163,7 +164,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('clear keeps the key and entries that are not its own', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const storage = createSecureStorage({ db });
     await storage.set('a', '1');
     const key = db.raw.get('secure:key');
@@ -176,7 +177,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('refuses the name its own key is kept under', async () => {
-    const db = memoryStore();
+    const db = memoryKvStore();
     const storage = createSecureStorage({ db });
     await storage.set('a', '1');
     const key = db.raw.get('secure:key');
