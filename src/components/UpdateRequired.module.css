@@ -1,0 +1,55 @@
+/* A calm, centred page on the theme's background with the accent's dawn above the brand. */
+
+.screen {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: calc(var(--safe-top) + var(--space-8)) max(var(--space-4), var(--safe-right))
+    calc(var(--safe-bottom) + var(--space-8)) max(var(--space-4), var(--safe-left));
+  background:
+    radial-gradient(
+      circle at 50% 22%,
+      color-mix(in srgb, var(--accent-text) 12%, transparent),
+      transparent 42%
+    ),
+    var(--background);
+  color: var(--foreground);
+}
+
+.content {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 24rem;
+  text-align: center;
+}
+
+.brand {
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-4xl);
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+}
+
+.detail {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.55;
+}
+
+.actions {
+  justify-self: stretch;
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
