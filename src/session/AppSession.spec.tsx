@@ -10,9 +10,12 @@ import { createLiveApi } from '../api/createLiveApi';
 import { MobileApiError } from '../api/MobileApiError';
 import type { PlatformApi } from '../api/PlatformApi';
 import type { Platform } from '../platform/types';
+import { createLock } from '../platform/web/lock';
+import { createSecureStorage } from '../platform/web/storage';
 import { createQueryClient } from '../queries/client';
 import { cssRule } from '../test/cssRules';
 import { fakePlatform } from '../test/fakePlatform';
+import { memoryKvStore } from '../test/memoryKvStore';
 import { createSessionController } from './sessionController';
 import { createTokenStore, type TokenStoreEvent } from './tokens';
 
@@ -473,6 +476,41 @@ describe('AppSession: confirming with the lock', () => {
     expect(document.title).toBe('');
     expect(status()).toHaveTextContent('signed-in');
   });
+
+  it('signs out after a fifth wrong passcode, even one cancelled while it is checked', async () => {
+    // The device's real lock: the fifth wrong passcode in a row wipes the passcode.
+    const storage = createSecureStorage({ db: memoryKvStore() });
+    const lock = createLock({ storage, rpId: 'localhost', origin: 'http://localhost' });
+    const user = await launch(createSampleApi({ latencyMs: 0 }), {
+      ...fakePlatform(),
+      storage,
+      lock,
+    });
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Set a passcode' }));
+    await user.type(screen.getByLabelText('Passcode'), '246810');
+    await user.type(await screen.findByLabelText('Repeat passcode'), '246810');
+    await user.click(screen.getByRole('button', { name: 'Save passcode' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), { timeout: 5_000 });
+    await user.click(screen.getByText('confirm')); // someone else tries passcodes on it
+    for (let left = 4; left >= 1; left -= 1) {
+      await user.type(await screen.findByLabelText('Passcode'), '000000');
+      await user.click(screen.getByRole('button', { name: 'Confirm' }));
+      const attempts = left === 1 ? 'attempt' : 'attempts';
+      await screen.findByText(`That passcode didn't match. ${left} ${attempts} left.`, undefined, {
+        timeout: 5_000,
+      });
+    }
+    await user.type(screen.getByLabelText('Passcode'), '000000');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' })); // while the fifth is checked
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'), { timeout: 5_000 });
+    expect(document.title).toBe('cancelled');
+    expect(await lock.enrolled()).toBeNull();
+    document.title = '';
+    await user.click(screen.getByText('confirm')); // and nothing is confirmed from here
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+  }, 30_000); // seven passcode checks, each a 310 000-round stretch
 
   it('cancels, and signs out, after the last wrong passcode', async () => {
     const verifyPasscode = vi.fn(() => Promise.resolve({ ok: false, attemptsLeft: 0 }));
@@ -2118,5 +2156,61 @@ describe('AppSession: ending and starting sessions in one visit', () => {
     tab.session.confirmWith();
     answers[1]?.(true);
     expect(await second).toBe(true);
+  });
+});
+
+describe('AppSession: the passcode’s last attempt', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ['a newer confirmation replaces it', 'replace'],
+    ['the app locks', 'lock'],
+  ] as const)('signs out after the fifth wrong passcode, though %s meanwhile', async (_, then) => {
+    let answer!: (result: { ok: boolean; attemptsLeft: number }) => void;
+    const device = fakePlatform({ lock: { available: () => Promise.resolve('passcode') } });
+    const tab = openTab(device, () => createSampleApi({ latencyMs: 0 }));
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    tab.session.enrolPasscode('246810'); // the investor sets a passcode
+    await waitFor(() => expect(tab.session.getSnapshot().lockMethod).toBe('passcode'));
+    device.lock.verifyPasscode = () => new Promise((resolve) => (answer = resolve));
+    const first = tab.session.confirm('Send $10.00 to $grace');
+    await waitFor(() => expect(tab.session.getSnapshot().confirmation).not.toBeNull());
+    tab.session.confirmWith('000000'); // the fifth wrong passcode in a row is checked
+    if (then === 'replace') void tab.session.confirm('Send $20.00 to $grace');
+    else tab.session.lock();
+    expect(await first).toBe(false);
+    answer({ ok: false, attemptsLeft: 0 });
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+  });
+
+  it('never signs out a sign-in it followed while the last passcode was checked', async () => {
+    let answer!: (result: { ok: boolean; attemptsLeft: number }) => void;
+    const device = fakePlatform({ lock: { available: () => Promise.resolve('passcode') } });
+    const tab = openTab(device, liveOver());
+    const otherTab = createTokenStore(device.storage);
+    stops.push(otherTab.subscribe(() => {}));
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.signIn(pairOf(1));
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    tab.session.enrolPasscode('246810');
+    await waitFor(() => expect(tab.session.getSnapshot().lockMethod).toBe('passcode'));
+    device.lock.verifyPasscode = () => new Promise((resolve) => (answer = resolve));
+    void tab.session.confirm('Send $10.00 to $grace');
+    await waitFor(() => expect(tab.session.getSnapshot().confirmation).not.toBeNull());
+    tab.session.confirmWith('000000');
+    await otherTab.start(pairOf(2)); // a new sign-in in another tab: this one follows it
+    await waitFor(() => expect(tab.status()).toBe('locked'));
+    answer({ ok: false, attemptsLeft: 0 }); // the old check answers late
+    await vi.advanceTimersByTimeAsync(50);
+    expect(tab.status()).toBe('locked');
   });
 });

@@ -651,16 +651,21 @@ export function createSessionController(deps: SessionDeps) {
     else if (passcode === undefined) return;
     else check = platform.lock.verifyPasscode(passcode);
     set({ confirmation: { ...shown, busy: true, error: undefined } });
+    const gen = generation;
     const current = () => (state.confirmation?.id === shown.id ? state.confirmation : null);
     check.then(
       (result) => {
+        // The last wrong passcode signs out whatever became of the sheet meanwhile (a newer
+        // confirmation, the lock): the device's limit cannot be cancelled away.
+        if (!result.ok && method === 'passcode' && (result.attemptsLeft ?? 0) <= 0) {
+          if (current() !== null) settle(false);
+          if (gen === generation) void signOut();
+          return;
+        }
         const now = current();
         if (now === null) return;
         if (result.ok) settle(true);
-        else if (method === 'passcode' && (result.attemptsLeft ?? 0) <= 0) {
-          settle(false);
-          void signOut();
-        } else {
+        else {
           set({
             confirmation: {
               ...now,
