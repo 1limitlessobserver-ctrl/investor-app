@@ -404,3 +404,26 @@ describe('secure storage: values that no longer decrypt', () => {
     }
   });
 });
+
+describe('secure storage: the values it keeps', () => {
+  it('round-trips an empty value, non-ASCII text and a long value', async () => {
+    const storage = createSecureStorage({ db: memoryKvStore() });
+    for (const value of ['', 'Zoë – 日本語 – 😀', 'x'.repeat(100_000)]) {
+      await storage.set('v', value);
+      expect(await storage.get('v')).toBe(value);
+    }
+  });
+
+  it('keeps no plain copy of the value in the bytes it stores', async () => {
+    const db = memoryKvStore();
+    const secret = 'r-secret-123';
+    await createSecureStorage({ db }).set('t', secret);
+    const { iv, data } = db.raw.get('secure:t') as Sealed;
+    const plain = Array.from(new TextEncoder().encode(secret));
+    const holds = (bytes: Uint8Array) =>
+      bytes.some((_, at) => plain.every((byte, i) => bytes[at + i] === byte));
+    expect(holds(data)).toBe(false);
+    expect(holds(iv)).toBe(false);
+    expect(data).toHaveLength(plain.length + 16); // the ciphertext, then GCM's 16-byte tag
+  });
+});
