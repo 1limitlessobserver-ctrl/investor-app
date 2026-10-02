@@ -202,9 +202,11 @@ export function createTokenStore(
 
     clear: (sessionKey) =>
       exclusive(async () => {
+        // Forgotten first: this page's pair of the sign-in it clears goes, whatever storage holds
+        // or does next (another sign-in, none, a failure), so it sends that access token no more.
+        if (sessionKey === undefined || held?.sessionKey === sessionKey) held = null;
         const stored = await read();
         if (sessionKey !== undefined && stored?.sessionKey !== sessionKey) return false;
-        // Forgotten first: whatever storage does next, this page sends the access token no more.
         held = null;
         if (stored === null) return false;
         await storage.remove(ENTRY);

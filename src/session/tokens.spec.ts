@@ -184,6 +184,61 @@ describe('token store', () => {
     expect(await store.get()).toBeNull();
   });
 
+  it('forgets its pair on a keyed clear of its sign-in that finds another one stored', async () => {
+    const shared = sharedStorage();
+    let n = 0;
+    const randomKey = () => `key-${++n}`;
+    const tabA = createTokenStore(shared.open(), { channel: null, randomKey });
+    const tabB = createTokenStore(shared.open(), { channel: null, randomKey });
+    await tabA.start(pair); // key-1
+    await tabB.start(next(5)); // key-2, which tab A never hears of
+    expect(await tabA.clear('key-1')).toBe(false);
+    expect(tabA.peekAccess()).toBeNull();
+    expect(await tabB.get()).toEqual({
+      sessionKey: 'key-2',
+      refreshToken: 'r5',
+      accessToken: 'a5',
+    });
+  });
+
+  it('forgets an older pair it holds once it clears the newer sign-in stored', async () => {
+    const shared = sharedStorage();
+    let n = 0;
+    const randomKey = () => `key-${++n}`;
+    const tabA = createTokenStore(shared.open(), { channel: null, randomKey });
+    const tabB = createTokenStore(shared.open(), { channel: null, randomKey });
+    await tabA.start(pair); // key-1
+    await tabB.start(next(5)); // key-2, which tab A never hears of
+    expect(await tabA.clear('key-2')).toBe(true);
+    expect(tabA.peekAccess()).toBeNull();
+  });
+
+  it('forgets its pair on a keyed clear of its sign-in that finds nothing stored', async () => {
+    const shared = sharedStorage();
+    const store = createTokenStore(shared.open(), { channel: null, randomKey: () => 'key-1' });
+    await store.start(pair);
+    await shared.open().remove('session'); // another tab signed out, unheard
+    expect(await store.clear('key-1')).toBe(false);
+    expect(store.peekAccess()).toBeNull();
+  });
+
+  it.each([
+    ['of its sign-in', 'key-1'],
+    ['given no key', undefined],
+  ])('forgets its pair on a clear %s whose read fails', async (_, key) => {
+    const real = sharedStorage().open();
+    let broken = false;
+    const failing: SecureStorage = {
+      ...real,
+      get: (name) => (broken ? Promise.reject(new Error('disk error')) : real.get(name)),
+    };
+    const store = createTokenStore(failing, { channel: null, randomKey: () => 'key-1' });
+    await store.start(pair);
+    broken = true;
+    await expect(store.clear(key)).rejects.toThrow('disk error');
+    expect(store.peekAccess()).toBeNull();
+  });
+
   it('clears whatever is stored when given no key, and says when there was nothing', async () => {
     const store = createTokenStore(sharedStorage().open());
     expect(await store.clear()).toBe(false);
