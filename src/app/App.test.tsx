@@ -1,10 +1,14 @@
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { App } from './App';
+import { renderWithApp } from '../test/renderWithApp';
 
 describe('App', () => {
-  it('renders the shell placeholder', () => {
-    render(<App />);
-    expect(screen.getByRole('heading', { name: 'Investor App' })).toBeInTheDocument();
+  it('shows a signed-out visitor the sign-in screen', async () => {
+    const { router } = renderWithApp({ route: '/' });
+    expect(
+      await screen.findByRole('button', { name: 'Explore with sample data' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/sign-in');
+    expect(router.state.location.search).toBe('?next=%2F');
   });
 });
