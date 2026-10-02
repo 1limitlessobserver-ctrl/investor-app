@@ -346,3 +346,29 @@ describe('SignInScreen', () => {
     expect(register).toHaveAttribute('rel', 'noopener noreferrer');
   });
 });
+
+describe('SignInScreen: installing the app', () => {
+  it('offers to install the app below the form while the browser can prompt', async () => {
+    const prompt = vi.fn(() => Promise.resolve('dismissed' as const));
+    renderWithApp({ route: '/sign-in', platform: { install: { canPrompt: () => true, prompt } } });
+    const install = await screen.findByRole('button', { name: 'Install app' });
+    const form = screen.getByRole('button', { name: 'Sign in' }).closest('form');
+    expect(form?.compareDocumentPosition(install)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    await userEvent.setup().click(install);
+    expect(prompt).toHaveBeenCalledTimes(1); // the device's adapter, the session's own
+  });
+
+  it('shows Safari’s own steps where the browser has no prompt', async () => {
+    renderWithApp({ route: '/sign-in', platform: { install: { hint: () => 'safari-ios' } } });
+    expect(await screen.findByText(/Share → Add to Home Screen/)).toBeInTheDocument();
+  });
+
+  it('offers nothing to install once the app is installed', async () => {
+    renderWithApp({
+      route: '/sign-in',
+      platform: { install: { canPrompt: () => true, isInstalled: () => true } },
+    });
+    await screen.findByRole('button', { name: 'Explore with sample data' });
+    expect(screen.queryByRole('button', { name: 'Install app' })).toBeNull();
+  });
+});
