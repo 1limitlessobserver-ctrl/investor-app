@@ -34,7 +34,7 @@ export const DialogClose = RadixDialog.Close;
 
 export type DialogContentProps = ComponentProps<typeof RadixDialog.Content> & {
   /** A "Close" button in the corner, on by default; leave it out when the footer has Cancel. */
-  closeButton?: boolean;
+  closeButton?: boolean | undefined;
 };
 
 /** The dialog itself, with the dimmed overlay behind it, in a portal. */

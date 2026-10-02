@@ -84,6 +84,18 @@ describe('Button', () => {
     expect(ref.current).toHaveClass('extra');
   });
 
+  it('lends its look to a link when asked, instead of rendering a button', () => {
+    render(
+      <Button asChild variant="outline" size="lg">
+        <a href="https://example.com/update">Get the update</a>
+      </Button>,
+    );
+    const link = screen.getByRole('link', { name: 'Get the update' });
+    expect(link).toHaveAttribute('href', 'https://example.com/update');
+    expect(link).toHaveClass('button', 'outline', 'lg');
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
   it('keeps a 44 px target at every size', () => {
     expect(rem(cssRule(CSS, '.button')['min-height'])).toBeGreaterThanOrEqual(2.75);
     expect(rem(cssRule(CSS, '.button')['min-width'])).toBeGreaterThanOrEqual(2.75);

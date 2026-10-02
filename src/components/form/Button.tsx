@@ -1,4 +1,5 @@
 import type { ComponentProps, MouseEvent } from 'react';
+import { Slot } from 'radix-ui';
 import { useMotion } from '../../design/useMotion';
 import styles from './Button.module.css';
 
@@ -7,14 +8,19 @@ export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export type ButtonProps = ComponentProps<'button'> & {
   /** Its weight: `primary` (the default) for the one main action, `destructive` for loss. */
-  variant?: ButtonVariant;
+  variant?: ButtonVariant | undefined;
   /** Its scale, `md` by default; every size keeps a 44 px target. */
-  size?: ButtonSize;
+  size?: ButtonSize | undefined;
   /**
    * Work is under way: the label stays, a spinner shows, the button says it is busy and ignores
    * presses (its form does not submit either), and it keeps focus, unlike a disabled one.
    */
-  loading?: boolean;
+  loading?: boolean | undefined;
+  /**
+   * Lends the button's look to its single child, a link say, instead of rendering a `<button>`.
+   * Put the child's own attributes on the child; `loading` and `type` do not apply.
+   */
+  asChild?: boolean | undefined;
 };
 
 function Spinner() {
@@ -32,12 +38,19 @@ export function Button({
   variant = 'primary',
   size = 'md',
   loading = false,
+  asChild = false,
   type = 'button',
   className,
   onClick,
   children,
   ...rest
 }: ButtonProps) {
+  const classes = [styles.button, styles[variant], styles[size], className]
+    .filter(Boolean)
+    .join(' ');
+
+  if (asChild) return <Slot.Root className={classes}>{children}</Slot.Root>;
+
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     if (loading) {
       event.preventDefault();
@@ -52,9 +65,7 @@ export function Button({
       type={type}
       aria-busy={loading || undefined}
       aria-disabled={loading || rest['aria-disabled']}
-      className={[styles.button, styles[variant], styles[size], className]
-        .filter(Boolean)
-        .join(' ')}
+      className={classes}
       onClick={handleClick}
     >
       {loading && <Spinner />}

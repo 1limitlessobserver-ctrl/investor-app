@@ -3,9 +3,9 @@ import styles from './Orb.module.css';
 
 export interface OrbProps {
   /** 1.75rem (header), 2.25rem (rail) or 3.5rem (the tab bar's raised Move button). */
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | undefined;
   /** `solid`: a sphere of the accent (Move); `glass`: a clear sphere with an accent core (Oracle). */
-  tone?: 'solid' | 'glass';
+  tone?: 'solid' | 'glass' | undefined;
   /** An icon to hold, drawn in the accent's readable ink. */
   children?: ReactNode;
   className?: string | undefined;

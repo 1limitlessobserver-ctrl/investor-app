@@ -6,7 +6,7 @@ export interface SpaceBackdropProps {
    * The space scene: the living starfield over a planet's lit horizon. For the themes whose
    * tokens say `starfield` (Orbital and Aurora): `themes.tokens(theme).starfield`.
    */
-  starfield?: boolean;
+  starfield?: boolean | undefined;
   className?: string | undefined;
 }
 

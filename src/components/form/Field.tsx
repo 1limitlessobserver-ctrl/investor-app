@@ -49,7 +49,7 @@ export interface FieldProps {
   /** The control's id; one is made up when it is left out. Set it here, not on the control. */
   id?: string | undefined;
   /** Label and control on one row (a Switch), hint and error below. */
-  inline?: boolean;
+  inline?: boolean | undefined;
   className?: string | undefined;
   /** One control: Input, Textarea, Select's trigger, Switch, Slider or PinInput. */
   children: ReactNode;

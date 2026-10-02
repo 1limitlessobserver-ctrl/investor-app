@@ -30,7 +30,7 @@ export const SheetClose = RadixDialog.Close;
 
 export type SheetContentProps = ComponentProps<typeof RadixDialog.Content> & {
   /** A "Close" button in the corner, on by default; leave it out when there is a Cancel. */
-  closeButton?: boolean;
+  closeButton?: boolean | undefined;
 };
 
 /** The sheet itself, with the dimmed overlay behind it, in a portal. `data-layout` says which. */

@@ -103,7 +103,7 @@ function createScene(canvas: HTMLCanvasElement, context: CanvasRenderingContext2
 
 export interface StarfieldProps {
   /** How many stars; about 120 fill a phone without crowding a desktop. */
-  count?: number;
+  count?: number | undefined;
   className?: string | undefined;
 }
 

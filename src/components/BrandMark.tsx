@@ -9,9 +9,9 @@ export interface BrandMarkProps {
   name: string;
   /** The logo as a data URL, or null for a monogram of the name's first letter. */
   logoDataUrl?: string | null | undefined;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | undefined;
   /** Writes the name beside the logo (the default); without it, the logo or monogram names it. */
-  showName?: boolean;
+  showName?: boolean | undefined;
   className?: string | undefined;
 }
 
