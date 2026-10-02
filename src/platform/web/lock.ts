@@ -1,9 +1,10 @@
 // The device lock for the web: the operating system's own prompt through WebAuthn (Face ID,
 // Touch ID, Windows Hello, Android biometrics), or a six-digit passcode where there is no
 // platform authenticator. It gates the app's screens on this device; the platform session stays
-// the real security, so assertions are verified here, with WebCrypto, against the public key kept
-// at enrolment. Both enrolments live in secure storage, one at a time: `lock:webauthn` holds the
-// credential id and public key, `lock:passcode` a PBKDF2 hash, its salt and the wrong attempts.
+// the real security. No server takes part: each assertion is verified here, with WebCrypto,
+// against the public key kept at enrolment. Both enrolments live in secure storage, one at a time:
+// `lock:webauthn` holds the credential id and public key, `lock:passcode` a PBKDF2 hash, its salt
+// and the count of wrong attempts.
 
 import { base64url } from '../../lib/base64url';
 import type { LockAdapter, SecureStorage } from '../types';

@@ -1,9 +1,10 @@
-// Secure storage for the web. Each value is sealed with AES-GCM under one 256-bit key that is
-// generated on this device as non-extractable, so no script can read or export it, and kept in
-// IndexedDB (idb-keyval: database `investor-app`, store `secure`) under `secure:key`. A value is
-// kept under `secure:<name>` as { iv, data }: a fresh random 12-byte IV and the ciphertext, sealed
-// with its name as additional data so it cannot be moved to another name. A value that no longer
-// decrypts (its key was lost, or it was changed) reads as null and is removed.
+// Secure storage for the web. Each value is sealed with AES-GCM under one 256-bit key generated on
+// this device as non-extractable: the page can use it, but no script can read or export its bytes,
+// so a copied value cannot be decrypted anywhere else. The key is kept in IndexedDB (idb-keyval:
+// database `investor-app`, store `secure`) under `secure:key`, and each value under
+// `secure:<name>` as { iv, data }: a fresh random 12-byte IV and the ciphertext, sealed with its
+// name as additional data so it cannot be moved to another name. A value that no longer decrypts
+// (its key was lost, or it was changed) reads as null and is removed.
 
 import { createStore, del, get, keys, set } from 'idb-keyval';
 import type { SecureStorage } from '../types';
@@ -47,13 +48,14 @@ export function createSecureStorage(
 
   return {
     async get(name) {
-      const entry = await db.get(entryName(name));
-      if (entry === undefined) return null;
+      const entry = entryName(name);
+      const sealed = await db.get(entry);
+      if (sealed === undefined) return null;
       const cryptoKey = await theKey();
       try {
-        return await open(cryptoKey, name, entry);
+        return await open(cryptoKey, name, sealed);
       } catch {
-        await db.del(entryName(name));
+        await db.del(entry);
         return null;
       }
     },
@@ -99,9 +101,9 @@ async function seal(key: CryptoKey, name: string, value: string): Promise<Sealed
   return { iv, data: new Uint8Array(data) };
 }
 
-/** Throws when the entry does not decrypt: the wrong key, another name, or changed bytes. */
-async function open(key: CryptoKey, name: string, entry: unknown): Promise<string> {
-  const { iv, data } = entry as Sealed;
+/** Throws when the value does not decrypt: the wrong key, another name, or changed bytes. */
+async function open(key: CryptoKey, name: string, sealed: unknown): Promise<string> {
+  const { iv, data } = sealed as Sealed;
   const additionalData = new TextEncoder().encode(name);
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData }, key, data);
   return new TextDecoder().decode(plain);

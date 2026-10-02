@@ -24,14 +24,17 @@ export interface LockAdapter {
   enrolled(): Promise<LockMethod | null>;
   /**
    * Creates a platform credential through the operating system's prompt and replaces any passcode.
-   * Throws `Error('This browser cannot enrol a device lock.')` where the browser cannot hand over
-   * the credential's public key; the caller then offers the passcode. A cancelled prompt rejects
-   * with the browser's own error.
+   * Throws `Error('This browser cannot enrol a device lock.')` where the browser has no WebAuthn or
+   * hands over no public key this lock can use; the caller then offers the passcode. A cancelled
+   * prompt rejects with the browser's own error.
    */
   enrollWebAuthn(user: { id: string; email: string }): Promise<void>;
   /** Stores a six-digit passcode (anything else throws) and replaces any WebAuthn credential. */
   enrollPasscode(code: string): Promise<void>;
-  /** Runs the operating system's prompt; false when it is cancelled, fails or does not verify. */
+  /**
+   * Runs the operating system's prompt; false when it is cancelled, fails or does not verify, and
+   * when no credential is enrolled.
+   */
   verify(): Promise<boolean>;
   /**
    * Checks the passcode. The fifth wrong attempt in a row wipes the passcode and answers
