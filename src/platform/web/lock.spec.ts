@@ -544,7 +544,9 @@ const lockOver = (credentials: CredentialsContainer | undefined, secure = secure
 const ada = { id: 'u1', email: 'ada@example.com' };
 
 describe('webauthn lock: availability, enrolment and verification', () => {
+  const title = document.title;
   afterEach(() => {
+    document.title = title;
     vi.unstubAllGlobals();
   });
   const platformAuthenticator = (answer: () => Promise<boolean>) =>
