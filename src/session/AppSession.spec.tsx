@@ -309,6 +309,7 @@ describe('AppSession: launching with a stored session', () => {
   });
 
   it('resets secure storage and shows sign-in when its key cannot be read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const reset = vi.fn(() => Promise.resolve());
     await launch(
       createSampleApi({ latencyMs: 0 }),
@@ -319,9 +320,11 @@ describe('AppSession: launching with a stored session', () => {
     );
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
     expect(reset).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[investor-app] opening the session:', expect.any(Error));
   });
 
   it('ends nothing once the investor signs in again while storage is being reset', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let release!: () => void;
     const reset = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
     let unreadable = true;
@@ -344,6 +347,21 @@ describe('AppSession: launching with a stored session', () => {
     await act(() => vi.advanceTimersByTimeAsync(50));
     expect(status()).toHaveTextContent('signed-in');
     expect(sessionStorage.getItem('app.sample')).toBe('1');
+    expect(warn).toHaveBeenCalledWith('[investor-app] opening the session:', expect.any(Error));
+  });
+
+  it('shows sign-in, and says why, when storage whose key is lost cannot be reset', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failure = new Error('IndexedDB is gone');
+    await launch(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({
+        storage: { reset: () => Promise.reject(failure) },
+        lock: { enrolled: () => Promise.reject(new Error(UNREADABLE)) },
+      }),
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(warn).toHaveBeenCalledWith('[investor-app] resetting secure storage:', failure);
   });
 
   it('counts down a wrong passcode and signs out after the last attempt', async () => {
@@ -799,6 +817,7 @@ describe('AppSession: signing out', () => {
   });
 
   it('says so when signing out cannot remove the lock from this device', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let broken = false;
     const user = await launch(
       createSampleApi({ latencyMs: 0 }),
@@ -816,6 +835,10 @@ describe('AppSession: signing out', () => {
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
     const notice = screen.getByText(/Your session couldn't be fully removed from this device\./);
     expect(notice.closest('[role="status"]')).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] ending the session: removing the lock:',
+      expect.any(Error),
+    );
   });
 
   it('asks nothing while it signs out or ends: a confirmation is refused at once', async () => {
@@ -1021,6 +1044,7 @@ describe('AppSession: signing out', () => {
   });
 
   it('shows sign-in when a call cannot read the session from this device', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     function Failing() {
       useQuery({
         queryKey: ['sample', 'failing'],
@@ -1042,6 +1066,10 @@ describe('AppSession: signing out', () => {
     await user.click(screen.getByText('enter'));
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
     expect(sessionStorage.getItem('app.sample')).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] a call could not read the session:',
+      expect.objectContaining({ code: 'storage_error' }),
+    );
   });
 });
 
@@ -1156,6 +1184,7 @@ describe('AppSession: the platform’s answers', () => {
   });
 
   it('says so when the session could not be saved on this device', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let wired: ApiWiring | undefined;
     await launch((wiring) => {
       wired = wiring;
@@ -1164,6 +1193,7 @@ describe('AppSession: the platform’s answers', () => {
     act(() => wired?.events.onStorageError(new Error('QuotaExceededError')));
     const notice = screen.getByText('Could not save your session on this device.');
     expect(notice.closest('[role="status"]')).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith('[investor-app] saving the session:', expect.any(Error));
   });
 
   it('builds the sample world from the address it was opened at', async () => {
@@ -1276,6 +1306,7 @@ describe('AppSession: setting up the lock', () => {
   });
 
   it('offers the passcode when the browser cannot hold a device lock', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const user = await launch(
       createSampleApi({ latencyMs: 0 }),
       fakePlatform({
@@ -1293,6 +1324,7 @@ describe('AppSession: setting up the lock', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Set a passcode instead.');
     expect(screen.queryByRole('button', { name: /Face ID/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Set a passcode' })).toBeInTheDocument();
+    expect(warn).toHaveBeenCalledWith('[investor-app] setting up the lock:', expect.any(Error));
   });
 
   it('turns the lock back on without asking, while one is set up', async () => {
@@ -1460,6 +1492,7 @@ describe('AppSession: a live session', () => {
   });
 
   it('says so when signing out cannot remove the session from this device', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const device = fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } });
     let broken = false;
     const platform = {
@@ -1486,6 +1519,10 @@ describe('AppSession: a live session', () => {
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
     const notice = screen.getByText(/Your session couldn't be fully removed from this device\./);
     expect(notice.closest('[role="status"]')).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] ending the session: removing the session:',
+      expect.any(Error),
+    );
   });
 
   it('resets storage whose key cannot be read, and keeps the sign-in', async () => {

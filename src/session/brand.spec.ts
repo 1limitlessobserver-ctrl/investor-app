@@ -40,6 +40,7 @@ describe('brandCache', () => {
   });
 
   it('reads anything that is not a whole brand as none', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const cached = (value: unknown) =>
       localStorage.setItem(
         'app.brand',
@@ -57,11 +58,17 @@ describe('brandCache', () => {
       cached(broken);
       expect(brandCache.read()).toBeNull();
     }
+    expect(warn).not.toHaveBeenCalled();
     localStorage.setItem('app.brand', '{not json');
     expect(brandCache.read()).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] reading the cached brand:',
+      expect.any(SyntaxError),
+    );
   });
 
-  it('carries on without the cache when storage is blocked', () => {
+  it('carries on without the cache when storage is blocked, and says so', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new DOMException('blocked', 'SecurityError');
     });
@@ -70,6 +77,11 @@ describe('brandCache', () => {
     });
     expect(() => brandCache.write(brand())).not.toThrow();
     expect(brandCache.read()).toBeNull();
+    expect(warn).toHaveBeenCalledWith('[investor-app] saving app.brand:', expect.any(DOMException));
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] reading app.brand:',
+      expect.any(DOMException),
+    );
   });
 });
 

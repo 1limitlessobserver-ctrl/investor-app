@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getDeviceId } from './deviceId';
 
 /** A Storage stand-in: `failing` makes every call throw, as a blocked localStorage does. */
@@ -43,10 +43,17 @@ describe('getDeviceId', () => {
     }
   });
 
-  it('keeps one id for the page when storage is blocked', () => {
+  it('keeps one id for the page when storage is blocked, and says so once', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const blocked = store({}, true);
     const id = getDeviceId(blocked);
     expect(id).toMatch(PLATFORM_ID);
     expect(getDeviceId(blocked)).toBe(id);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] keeping the device id:',
+      expect.any(DOMException),
+    );
+    warn.mockRestore();
   });
 });

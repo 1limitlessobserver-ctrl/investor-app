@@ -64,6 +64,21 @@ describe('SignInScreen', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('That code is not valid.');
   });
 
+  it('says something went wrong, and reports it, when a sign-in fails unexpectedly', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const user = userEvent.setup();
+    const { api } = renderWithApp({ route: '/sign-in' });
+    const failure = new TypeError('Failed to fetch');
+    vi.spyOn(api, 'login').mockRejectedValue(failure);
+    await user.type(await screen.findByLabelText('Email'), 'investor@sample.app');
+    await user.type(screen.getByLabelText('Password'), 'anything');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Something went wrong. Please try again.',
+    );
+    expect(warn).toHaveBeenCalledWith('[investor-app] signing in:', failure);
+  });
+
   it('puts the platform’s word on the field it refused', async () => {
     const user = userEvent.setup();
     renderWithApp({ route: '/sign-in' });

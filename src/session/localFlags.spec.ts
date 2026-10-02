@@ -45,7 +45,8 @@ describe('sampleFlag', () => {
 });
 
 describe('when storage is blocked', () => {
-  it('reads nothing and writes nothing, without throwing', () => {
+  it('reads nothing and writes nothing, without throwing, and says so', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     for (const method of ['getItem', 'setItem', 'removeItem'] as const) {
       vi.spyOn(Storage.prototype, method).mockImplementation(() => {
         throw new DOMException('blocked', 'SecurityError');
@@ -57,5 +58,13 @@ describe('when storage is blocked', () => {
     expect(() => sampleFlag.write()).not.toThrow();
     expect(() => sampleFlag.clear()).not.toThrow();
     expect(sampleFlag.read()).toBe(false);
+    expect(warn.mock.calls.map(([where]) => where as string)).toEqual([
+      '[investor-app] saving the lock setting:',
+      '[investor-app] clearing the lock setting:',
+      '[investor-app] reading the lock setting:',
+      '[investor-app] saving the sample flag:',
+      '[investor-app] clearing the sample flag:',
+      '[investor-app] reading the sample flag:',
+    ]);
   });
 });

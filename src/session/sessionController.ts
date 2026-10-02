@@ -227,7 +227,10 @@ export function createSessionController(deps: SessionDeps) {
       void endUnlessMoved(reason === 'refresh_failed' ? reason : 'revoked', generation);
     },
     onUpgradeRequired: (minVersion) => upgradeRequired(minVersion),
-    onStorageError: () => set({ notice: SESSION_COPY.sessionNotSaved }),
+    onStorageError: (error) => {
+      reportProblem('saving the session', error);
+      set({ notice: SESSION_COPY.sessionNotSaved });
+    },
   };
   const api = deps.makeApi({ events, tokenStore });
   const live = api.mode === 'live';
@@ -303,6 +306,7 @@ export function createSessionController(deps: SessionDeps) {
         set({ status: 'signed-in', lockMethod: null, lockChoice: choice });
       }
     } catch (error) {
+      reportProblem('opening the session', error);
       if (gen === generation) await storageFailed(error);
     }
   }
@@ -383,8 +387,9 @@ export function createSessionController(deps: SessionDeps) {
     const done = (async () => {
       try {
         await settled(api.logout(), LOGOUT_WAIT_MS);
-      } catch {
+      } catch (error) {
         // Only a store that fails makes logout reject; ending the session here clears it anyway.
+        reportProblem('signing out: telling the platform', error);
       }
       if (gen === generation) await endHere('investor');
     })().finally(() => {
@@ -411,10 +416,11 @@ export function createSessionController(deps: SessionDeps) {
       const tokensGone = await clearSession(key, reason);
       if (moved()) return;
       // The lock belongs to the session: the next sign-in here is offered the setup again.
-      const lockGone = await attempt(() => platform.lock.clear());
+      const lockGone = await attempt('removing the lock', () => platform.lock.clear());
       if (moved()) return;
       lockPreference.clear();
-      await attempt(() => settled(platform.notifications.unsubscribe(), UNSUBSCRIBE_WAIT_MS));
+      const unsubscribe = () => settled(platform.notifications.unsubscribe(), UNSUBSCRIBE_WAIT_MS);
+      await attempt('ending push', unsubscribe);
       if (moved()) return;
       queryClient.clear();
       sampleFlag.clear();
@@ -474,19 +480,22 @@ export function createSessionController(deps: SessionDeps) {
    */
   function clearSession(key: string | null, reason: EndReason): Promise<boolean> {
     if (!live) return Promise.resolve(true);
-    if (key !== null) return attempt(() => tokenStore.clear(key));
-    return reason === 'investor' ? attempt(() => tokenStore.clear()) : Promise.resolve(true);
+    const where = 'removing the session';
+    if (key !== null) return attempt(where, () => tokenStore.clear(key));
+    return reason === 'investor' ? attempt(where, () => tokenStore.clear()) : Promise.resolve(true);
   }
 
   /**
-   * Runs a step of ending a session; a failure does not stop the rest. Resolves whether it worked:
-   * storage whose key is lost counts once reset, as the reset wipes it all.
+   * Runs a step of ending a session (`where` names it); a failure is reported and does not stop the
+   * rest. Resolves whether it worked: storage whose key is lost counts once reset, as the reset
+   * wipes it all.
    */
-  async function attempt(step: () => Promise<unknown>): Promise<boolean> {
+  async function attempt(where: string, step: () => Promise<unknown>): Promise<boolean> {
     try {
       await step();
       return true;
     } catch (error) {
+      reportProblem(`ending the session: ${where}`, error);
       return isUnreadableKey(error) ? resetStorage() : false;
     }
   }
@@ -496,8 +505,10 @@ export function createSessionController(deps: SessionDeps) {
     try {
       await platform.storage.reset();
       return true;
-    } catch {
-      return false; // the next launch reads what it cannot decrypt as no session
+    } catch (error) {
+      // The next launch reads what it cannot decrypt as no session.
+      reportProblem('resetting secure storage', error);
+      return false;
     }
   }
 
@@ -842,6 +853,7 @@ export function createSessionController(deps: SessionDeps) {
   }
 
   function setupFailed(offer: LockSetupOffer, error: unknown): void {
+    reportProblem('setting up the lock', error);
     if (state.lockSetup?.id !== offer.id) return;
     if (isUnreadableKey(error)) {
       void storageFailed(error);
@@ -956,7 +968,10 @@ export function createSessionController(deps: SessionDeps) {
   /** A query or mutation failed: one that could not read the session means signing in again. */
   function callFailed(error: unknown): void {
     if (state.status === 'signed-out' || state.status === 'loading') return;
-    if (MobileApiError.is(error) && error.code === 'storage_error') void storageFailed(error);
+    if (MobileApiError.is(error) && error.code === 'storage_error') {
+      reportProblem('a call could not read the session', error);
+      void storageFailed(error);
+    }
   }
 
   /** Another tab may have set up, turned off or removed the lock: read it again. */

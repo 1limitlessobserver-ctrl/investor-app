@@ -2,6 +2,7 @@
 // session per browser. It names this install only; it is not a secret and not investor data.
 
 import { base64url } from '../lib/base64url';
+import { reportProblem } from '../lib/report';
 
 const KEY = 'app.deviceId';
 /** What the platform takes as a device id (CLAUDE.md); anything else it treats as none. */
@@ -27,7 +28,8 @@ export function getDeviceId(storage?: Pick<Storage, 'getItem' | 'setItem'>): str
     const id = newDeviceId();
     store.setItem(KEY, id);
     return id;
-  } catch {
+  } catch (error) {
+    if (unstored === undefined) reportProblem('keeping the device id', error);
     unstored ??= newDeviceId();
     return unstored;
   }

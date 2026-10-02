@@ -5,6 +5,7 @@
 
 import type { Brand } from '../api/types';
 import { themes, type ThemeId } from '../design/themes';
+import { reportProblem } from '../lib/report';
 import { appConfig } from './appConfig';
 
 const BRAND_KEY = 'app.brand';
@@ -14,7 +15,8 @@ const HEX_COLOUR = /^#[0-9a-f]{6}$/i;
 function readItem(key: string): string | null {
   try {
     return localStorage.getItem(key);
-  } catch {
+  } catch (error) {
+    reportProblem(`reading ${key}`, error);
     return null; // storage blocked: as if nothing were kept
   }
 }
@@ -22,8 +24,9 @@ function readItem(key: string): string | null {
 function writeItem(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
-  } catch {
+  } catch (error) {
     // Storage blocked or full: the app works on without it.
+    reportProblem(`saving ${key}`, error);
   }
 }
 
@@ -78,7 +81,8 @@ export const brandCache = {
         return null;
       }
       return isBrand(kept.brand) ? kept.brand : null;
-    } catch {
+    } catch (error) {
+      reportProblem('reading the cached brand', error);
       return null;
     }
   },

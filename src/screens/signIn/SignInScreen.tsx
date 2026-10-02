@@ -9,6 +9,7 @@ import { Input } from '../../components/form/Input';
 import { Orb } from '../../components/Orb';
 import { Panel } from '../../components/Panel';
 import { StateView } from '../../components/StateView';
+import { reportProblem } from '../../lib/report';
 import { useBrand } from '../../queries/account';
 import { useAppSession } from '../../session/AppSession';
 import { appConfig } from '../../session/appConfig';
@@ -77,6 +78,9 @@ export function SignInScreen() {
     try {
       await run();
     } catch (error) {
+      // The platform's refusals are shown as they are; anything else only as "Something went
+      // wrong", so it is reported.
+      if (!MobileApiError.is(error)) reportProblem('signing in', error);
       setFailure(failureOf(error));
     } finally {
       setBusy(null);
