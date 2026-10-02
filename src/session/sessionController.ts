@@ -57,6 +57,7 @@ export const SESSION_COPY = {
   deviceUnavailable:
     "This browser can't use your face or fingerprint for the app. Set a passcode instead.",
   deviceFailed: "That didn't go through. Try again, or set a passcode.",
+  deviceUnchecked: "Your device's own lock couldn't be checked. You can set a passcode instead.",
   passcodeFailed: "The passcode couldn't be saved on this device. Try again.",
   sessionNotSaved: 'Could not save your session on this device.',
   sessionNotCleared:
@@ -164,6 +165,9 @@ const ENDED: Record<Exclude<EndReason, 'investor'>, string> = {
   elsewhere: SESSION_COPY.endedElsewhere,
 };
 
+/** What the device offers for a lock, and why not its own lock when it could not say. */
+type DeviceOffer = { available: LockMethod; error?: string | undefined };
+
 /** What a fresh look at the device's lock found: see refreshLock(). */
 type LockRead = 'stands' | 'gone' | 'unread';
 
@@ -260,6 +264,8 @@ export function createSessionController(deps: SessionDeps) {
   let settleSetup: ((done: boolean) => void) | null = null;
   let leaving: Ending | null = null;
   let ending: Ending | null = null;
+  // The investor's lock choice when this device could not save it: it holds for this visit.
+  let unsavedChoice: boolean | null = null;
 
   function set(patch: Partial<SessionState>): void {
     state = { ...state, ...patch };
@@ -267,6 +273,21 @@ export function createSessionController(deps: SessionDeps) {
   }
 
   const lockEnabled = () => state.lockChoice ?? state.lockMethod !== null;
+
+  /** The investor's lock choice as kept: on the device, or in this visit when it could not be. */
+  const storedChoice = () => unsavedChoice ?? lockPreference.read();
+
+  /** Keeps the investor's lock choice; one the device cannot save holds for this visit. */
+  function saveChoice(on: boolean): void {
+    unsavedChoice = lockPreference.write(on) ? null : on;
+    set({ lockChoice: on });
+  }
+
+  /** Back to no choice: the next sign-in on this device decides afresh. */
+  function forgetChoice(): void {
+    unsavedChoice = null;
+    lockPreference.clear();
+  }
 
   function updateIsRequired(): boolean {
     const brand = queryClient.getQueryData(brandQuery(api).queryKey) ?? null;
@@ -292,7 +313,7 @@ export function createSessionController(deps: SessionDeps) {
       }
       const method = await platform.lock.enrolled();
       if (gen !== generation) return;
-      const choice = lockPreference.read();
+      const choice = storedChoice();
       if (method !== null) {
         // A lock on the device always asks at launch (so "Lock now" outlasts a reload): the
         // setting governs only the lock after five minutes away.
@@ -331,7 +352,7 @@ export function createSessionController(deps: SessionDeps) {
 
   /** Wipes the device lock and its setting; storage whose key is lost is reset, lock and all. */
   async function forgetLock(): Promise<void> {
-    lockPreference.clear();
+    forgetChoice();
     try {
       await platform.lock.clear();
     } catch (error) {
@@ -418,7 +439,7 @@ export function createSessionController(deps: SessionDeps) {
       // The lock belongs to the session: the next sign-in here is offered the setup again.
       const lockGone = await attempt('removing the lock', () => platform.lock.clear());
       if (moved()) return;
-      lockPreference.clear();
+      forgetChoice();
       const unsubscribe = () => settled(platform.notifications.unsubscribe(), UNSUBSCRIBE_WAIT_MS);
       await attempt('ending push', unsubscribe);
       if (moved()) return;
@@ -547,7 +568,7 @@ export function createSessionController(deps: SessionDeps) {
       return 'gone';
     }
     if (gen !== generation) return 'gone';
-    const choice = lockPreference.read();
+    const choice = storedChoice();
     if (method !== state.lockMethod || choice !== state.lockChoice) {
       set({ lockMethod: method, lockChoice: choice });
     }
@@ -565,7 +586,10 @@ export function createSessionController(deps: SessionDeps) {
     set({ status: 'locked', unlocking: IDLE });
   }
 
-  /** "Lock now": locks whenever a lock is set up, at once as known, then as the device says. */
+  /**
+   * "Lock now": locks whenever a lock is set up, at once as known, then as the device says. With no
+   * lock on the device it does nothing (the setting is no matter).
+   */
   function lock(): void {
     if (state.status !== 'signed-in') return;
     if (state.lockMethod !== null) lockNow();
@@ -766,30 +790,32 @@ export function createSessionController(deps: SessionDeps) {
 
   /** After a first sign-in on a device with no lock: offer one (not while an update is due). */
   async function offerLockAfterSignIn(gen: number): Promise<void> {
-    const available = await whatTheDeviceOffers();
-    if (available === null || gen !== generation) return;
+    const offer = await whatTheDeviceOffers();
+    if (gen !== generation) return;
     if (state.status !== 'signed-in' || state.lockMethod !== null || updateIsRequired()) return;
-    void showLockSetup(available);
+    void showLockSetup(offer);
   }
 
   /**
    * What the device offers. The investor's email names a device credential in its prompt, so it is
-   * fetched meanwhile, for the tap to find in the cache.
+   * fetched meanwhile, for the tap to find in the cache. A device that cannot say is offered the
+   * passcode, which needs nothing of it, and the investor is told why.
    */
-  async function whatTheDeviceOffers(): Promise<LockMethod | null> {
+  async function whatTheDeviceOffers(): Promise<DeviceOffer> {
     void queryClient.prefetchQuery(meQuery(api));
     try {
-      return await platform.lock.available();
-    } catch {
-      return null; // no offer this time; the lock can be set up from Security
+      return { available: await platform.lock.available() };
+    } catch (error) {
+      reportProblem('asking what the device offers', error);
+      return { available: 'passcode', error: SESSION_COPY.deviceUnchecked };
     }
   }
 
-  function showLockSetup(available: LockMethod): Promise<boolean> {
+  function showLockSetup({ available, error }: DeviceOffer): Promise<boolean> {
     settleSetup?.(false);
     return new Promise((resolve) => {
       settleSetup = resolve;
-      set({ lockSetup: { id: ++nextId, available, busy: false, error: undefined } });
+      set({ lockSetup: { id: ++nextId, available, busy: false, error } });
     });
   }
 
@@ -806,8 +832,8 @@ export function createSessionController(deps: SessionDeps) {
 
   /** A lock is now set up on this device: it is on, and confirmations ask for it. */
   function recordLock(method: LockMethod): void {
-    lockPreference.write(true);
-    set({ lockMethod: method, lockChoice: true });
+    saveChoice(true);
+    set({ lockMethod: method });
   }
 
   /**
@@ -822,8 +848,8 @@ export function createSessionController(deps: SessionDeps) {
 
   function setUpLockForConfirmation(): void {
     if (state.confirmation === null || state.lockSetup !== null) return;
-    void whatTheDeviceOffers().then((available) => {
-      if (available !== null && state.confirmation !== null) void showLockSetup(available);
+    void whatTheDeviceOffers().then((offer) => {
+      if (state.confirmation !== null) void showLockSetup(offer);
     });
   }
 
@@ -885,19 +911,14 @@ export function createSessionController(deps: SessionDeps) {
     if (!on) {
       if (!lockEnabled()) return true;
       const ok = await confirm(SESSION_COPY.turnOffLock);
-      if (ok) {
-        lockPreference.write(false);
-        set({ lockChoice: false });
-      }
+      if (ok) saveChoice(false);
       return ok;
     }
     if (state.lockMethod !== null) {
-      lockPreference.write(true);
-      set({ lockChoice: true });
+      saveChoice(true);
       return true;
     }
-    const available = await whatTheDeviceOffers();
-    return available === null ? false : showLockSetup(available);
+    return showLockSetup(await whatTheDeviceOffers());
   }
 
   /** Settles a confirmation and closes a setup that a change of session cut short. */

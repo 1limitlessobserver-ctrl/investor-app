@@ -28,8 +28,13 @@ export const lockPreference = {
     const value = attempt('reading the lock setting', () => localStorage.getItem(LOCK_KEY), null);
     return value === 'true' ? true : value === 'false' ? false : null;
   },
-  write(on: boolean): void {
-    attempt('saving the lock setting', () => localStorage.setItem(LOCK_KEY, String(on)), undefined);
+  /** Resolves whether it was saved. */
+  write(on: boolean): boolean {
+    const save = () => {
+      localStorage.setItem(LOCK_KEY, String(on));
+      return true;
+    };
+    return attempt('saving the lock setting', save, false);
   },
   /** Back to unset: the next sign-in on this device decides afresh. */
   clear(): void {

@@ -10,7 +10,7 @@ afterEach(() => {
 describe('lockPreference', () => {
   it('is unset until the investor decides, then on or off', () => {
     expect(lockPreference.read()).toBeNull();
-    lockPreference.write(true);
+    expect(lockPreference.write(true)).toBe(true); // saved
     expect(localStorage.getItem('app.lockEnabled')).toBe('true');
     expect(lockPreference.read()).toBe(true);
     lockPreference.write(false);
@@ -52,7 +52,7 @@ describe('when storage is blocked', () => {
         throw new DOMException('blocked', 'SecurityError');
       });
     }
-    expect(() => lockPreference.write(true)).not.toThrow();
+    expect(lockPreference.write(true)).toBe(false); // not saved, and no throw
     expect(() => lockPreference.clear()).not.toThrow();
     expect(lockPreference.read()).toBeNull();
     expect(() => sampleFlag.write()).not.toThrow();

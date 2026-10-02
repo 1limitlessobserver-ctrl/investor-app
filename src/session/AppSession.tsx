@@ -67,7 +67,10 @@ export interface AppSession {
   /** Sample mode: signs in to the sample world. */
   enterSample: () => Promise<void>;
   signOut: () => Promise<void>;
-  /** "Lock now": locks whenever a lock is set up, whatever lockEnabled says. */
+  /**
+   * "Lock now": locks whenever a lock is set up, whatever lockEnabled says. With no lock set up on
+   * the device it does nothing: offer the setup (setLockEnabled(true)) instead.
+   */
   lock: () => void;
   /** The lock screen's check: the device prompt (call it inside the tap) or the passcode. */
   unlock: (passcode?: string) => Promise<boolean>;
@@ -257,14 +260,28 @@ class ShowsFailure extends Component<{ children: ReactNode }, { failed: boolean 
 const SETUP_PROBLEM =
   "Its platform address or version can't be used. The company that offers the app can fix this.";
 
-/** The build's platform settings could not be used: nothing can work, so say so plainly. */
+/**
+ * The session could not be made, so nothing can work: say so plainly. The build's platform
+ * settings that the live client refuses (a TypeError of createLiveApi's) are the company's to fix;
+ * anything else may pass, so a reload is offered.
+ */
 function SetupProblem({ failure }: { failure: unknown }) {
   useEffect(() => {
     console.error('The app could not start:', failure);
   }, [failure]);
+  const settings = failure instanceof TypeError && failure.message.startsWith('createLiveApi:');
   return (
     <main className={styles.problem}>
-      <StateView kind="error" title="This app isn't set up correctly" detail={SETUP_PROBLEM} />
+      {settings ? (
+        <StateView kind="error" title="This app isn't set up correctly" detail={SETUP_PROBLEM} />
+      ) : (
+        <StateView
+          kind="error"
+          title="This app couldn't start"
+          detail="Something went wrong as it opened. Reload it to try again."
+          action={{ label: 'Reload', onClick: () => window.location.reload() }}
+        />
+      )}
     </main>
   );
 }

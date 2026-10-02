@@ -1624,6 +1624,27 @@ describe('AppSession: a screen that cannot render', () => {
 });
 
 describe('AppSession: a build it cannot use', () => {
+  it('says the app could not start, and offers a reload, when it fails another way', () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const problem = new Error('IndexedDB is not available');
+    render(
+      <AppSessionProvider
+        api={() => {
+          throw problem;
+        }}
+        platform={fakePlatform()}
+      >
+        <Probe />
+      </AppSessionProvider>,
+    );
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent("This app couldn't start");
+    expect(alert).not.toHaveTextContent('platform address');
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(logged).toHaveBeenCalledWith('The app could not start:', problem);
+    logged.mockRestore();
+  });
+
   it('says the app is not set up, and why, to the console', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     const problem = new TypeError('createLiveApi: baseUrl must be an absolute http or https URL');
@@ -2769,5 +2790,67 @@ describe('AppSession: why the session ended', () => {
     await waitFor(() => expect(tab.session.getSnapshot().notice).not.toBeNull());
     await tab.session.enterSample();
     expect(tab.session.getSnapshot().notice).toBeNull();
+  });
+});
+
+describe('AppSession: a device that keeps nothing, or answers nothing', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps the lock on for this visit when its setting cannot be saved', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    sessionStorage.setItem('app.sample', '1');
+    localStorage.setItem('app.lockEnabled', 'false'); // turned off before, and no lock now
+    // Web storage keeps everything but the lock's setting, as when it is nearly full.
+    const setItem = Reflect.get<Storage, 'setItem'>(Storage.prototype, 'setItem');
+    const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ) {
+      if (key === 'app.lockEnabled') throw new DOMException('Full.', 'QuotaExceededError');
+      Reflect.apply(setItem, this, [key, value]);
+    });
+    try {
+      const device = fakePlatform({ lock: { available: () => Promise.resolve('passcode') } });
+      await device.lock.clear();
+      const tab = openTab(device, () => createSampleApi({ latencyMs: 0 }));
+      await waitFor(() => expect(tab.status()).toBe('signed-in'));
+      const turningOn = tab.session.setLockEnabled(true);
+      await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+      tab.session.enrolPasscode('246810');
+      expect(await turningOn).toBe(true);
+      expect(localStorage.getItem('app.lockEnabled')).toBe('false'); // not saved
+      window.dispatchEvent(new StorageEvent('storage', { key: 'app.lockEnabled' }));
+      await vi.advanceTimersByTimeAsync(20); // the lock is read afresh
+      expect(tab.session.getSnapshot().lockChoice).toBe(true);
+      expect(warn).toHaveBeenCalledWith(
+        '[investor-app] saving the lock setting:',
+        expect.any(DOMException),
+      );
+    } finally {
+      full.mockRestore();
+    }
+  });
+
+  it('offers the passcode, and says why, when the device cannot say what it offers', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failure = new Error('UnknownError');
+    const device = fakePlatform({ lock: { available: () => Promise.reject(failure) } });
+    const tab = openTab(device, () => createSampleApi({ latencyMs: 0 }));
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    expect(tab.session.getSnapshot().lockSetup).toMatchObject({
+      available: 'passcode',
+      error: "Your device's own lock couldn't be checked. You can set a passcode instead.",
+    });
+    expect(warn).toHaveBeenCalledWith('[investor-app] asking what the device offers:', failure);
   });
 });
