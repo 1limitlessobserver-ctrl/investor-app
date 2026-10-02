@@ -150,7 +150,7 @@ describe('web notifications: permission, subscriptions and local notifications',
       await expect(
         createWebNotifications({ registration }).subscribe(vapidKey),
         JSON.stringify(json),
-      ).rejects.toThrow(Error);
+      ).rejects.toThrow('The push subscription came without its endpoint or keys.');
     }
   });
 

@@ -192,7 +192,11 @@ describe('secure storage: the key and the sealed entries', () => {
     const store = createStore('investor-app', 'secure');
     const key: unknown = await get('secure:key', store);
     expect(key).toBeInstanceOf(CryptoKey);
-    expect((key as CryptoKey).extractable).toBe(false);
+    const { extractable, algorithm, usages } = key as CryptoKey;
+    expect(extractable).toBe(false);
+    expect(algorithm.name).toBe('AES-GCM');
+    expect((algorithm as AesKeyAlgorithm).length).toBe(256);
+    expect([...usages].sort()).toEqual(['decrypt', 'encrypt']);
     const sealed = await get<Sealed>('secure:refreshToken', store);
     expect(sealed?.iv).toHaveLength(12);
     expect(await createSecureStorage().get('refreshToken')).toBe('r-1');
