@@ -708,6 +708,83 @@ describe('AppSession: signing out', () => {
     expect(notice.closest('[role="status"]')).not.toBeNull();
   });
 
+  it('asks nothing while it signs out or ends: a confirmation is refused at once', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined)); // never answers
+    const unsubscribe = vi.fn(() => new Promise<null>(() => undefined)); // waited for 3 s
+    const platform = fakePlatform({
+      lock: { enrolled: () => Promise.resolve(null) },
+      notifications: { unsubscribe },
+    });
+    const user = await launch(api, platform);
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const enrolled = vi.spyOn(platform.lock, 'enrolled');
+    await user.click(screen.getByText('sign out')); // the platform is waited for
+    await user.click(screen.getByText('confirm'));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(status()).toHaveTextContent('signed-in');
+    await act(() => vi.advanceTimersByTimeAsync(3_100)); // then the session ends here, on push
+    await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1));
+    document.title = '';
+    await user.click(screen.getByText('confirm'));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(enrolled).not.toHaveBeenCalled(); // refused at once, without a look at the lock
+  });
+
+  it('refuses a confirmation whose look at the lock outlasts the start of a sign-out', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    let release!: (method: null) => void;
+    let holding = false;
+    const enrolled = () =>
+      holding ? new Promise<null>((resolve) => (release = resolve)) : Promise.resolve(null);
+    const user = await launch(api, fakePlatform({ lock: { enrolled } }));
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    holding = true;
+    await user.click(screen.getByText('confirm')); // it reads the device's lock first
+    await user.click(screen.getByText('sign out')); // and the investor signs out meanwhile
+    act(() => release(null));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('ends an open confirmation the moment the investor signs out', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    const user = await launch(
+      api,
+      fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } }),
+    );
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+    await user.click(screen.getByText('confirm'));
+    await screen.findByRole('dialog', { name: 'Confirm' });
+    act(() => screen.getByText('sign out').click()); // the sheet covers the page: a direct click
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(status()).toHaveTextContent('signed-in'); // still waiting on the platform
+  });
+
+  it('never unlocks while the investor signs out instead', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    const verify = vi.fn(() => Promise.resolve(true));
+    const user = await launch(api, fakePlatform({ lock: { verify } }));
+    expect(status()).toHaveTextContent('locked');
+    await user.click(screen.getByText('sign out')); // "Sign out instead", and then Unlock
+    await user.click(screen.getByText('unlock'));
+    await act(() => vi.advanceTimersByTimeAsync(50));
+    expect(verify).not.toHaveBeenCalled();
+    expect(status()).toHaveTextContent('locked');
+  });
+
   it('joins the end of the session under way when the investor signs out meanwhile', async () => {
     let wired: ApiWiring | undefined;
     const api = createSampleApi({ latencyMs: 0 });

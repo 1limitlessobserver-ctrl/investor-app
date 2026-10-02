@@ -344,6 +344,9 @@ export function createSessionController(deps: SessionDeps) {
     await signIn(tokens);
   }
 
+  /** A sign-out or an end of this session is under way: nothing more is asked of the investor. */
+  const leavingNow = () => leaving?.gen === generation || ending?.gen === generation;
+
   /**
    * The investor's own sign-out: the platform is told, then the session ends here. Once only: a
    * second tap joins the first. A session that begins while the platform is waited for (another
@@ -517,7 +520,9 @@ export function createSessionController(deps: SessionDeps) {
    */
   function unlock(passcode?: string): Promise<boolean> {
     const { status, lockMethod: method, unlocking } = state;
-    if (status !== 'locked' || method === null || unlocking.busy) return Promise.resolve(false);
+    if (status !== 'locked' || method === null || unlocking.busy || leavingNow()) {
+      return Promise.resolve(false);
+    }
     let check: Promise<Check>;
     if (method === 'webauthn') check = platform.lock.verify().then((ok) => ({ ok }));
     else if (passcode === undefined) return Promise.resolve(false);
@@ -571,7 +576,7 @@ export function createSessionController(deps: SessionDeps) {
   // ---- Confirmations -----------------------------------------------------------------------
 
   async function confirm(reason: string, options: ConfirmOptions = {}): Promise<boolean> {
-    if (state.status !== 'signed-in') return false;
+    if (state.status !== 'signed-in' || leavingNow()) return false;
     // The lock the device has now decides what the sheet asks for.
     if (!(await refreshLock()) || state.status !== 'signed-in') return false;
     settleConfirmation?.(false); // a newer confirmation replaces one still open
