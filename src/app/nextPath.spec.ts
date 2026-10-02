@@ -37,9 +37,20 @@ describe('nextPathFrom', () => {
     ['a tab', '/\t/evil.example'],
     ['a line break', '/\r\n/evil.example'],
     ['a script', 'javascript:alert(1)'],
+    // Dot segments the browser removes, leaving a path that starts with two slashes.
+    ['a dot segment', '/.//evil.example'],
+    ['a parent segment', '/a/..//evil.example'],
+    ['an encoded dot segment', '/%2e//evil.example'],
+    ['a parent segment at the root', '/..//evil.example'],
     ['data', 'data:text/html,hello'],
   ])('goes home rather than to %s', (_, next) => {
     expect(nextPathFrom(next, ORIGIN)).toBe('/');
+  });
+
+  it('goes home from an address that cannot be read', () => {
+    for (const next of ['http://[', 'https://', 'http://a b', 'http://%']) {
+      expect(nextPathFrom(next, ORIGIN)).toBe('/');
+    }
   });
 
   it('goes home rather than back to sign-in', () => {

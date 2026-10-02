@@ -89,6 +89,18 @@ describe('SignInScreen', () => {
     expect(router.state.location.pathname).toBe('/');
   });
 
+  it.each(['https://evil.example/steal', '/.//evil.example', '/%2e//evil.example'])(
+    'sends a signed-in visitor home, never on to %s',
+    async (next) => {
+      const { router } = renderWithApp({
+        route: `/sign-in?next=${encodeURIComponent(next)}`,
+        signedIn: true,
+      });
+      expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe('/');
+    },
+  );
+
   it('links to the company’s own pages for a new account or a forgotten password', async () => {
     renderWithApp({ route: '/sign-in' });
     const forgot = await screen.findByRole('link', { name: 'Forgot password?' });
