@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { join } from 'node:path';
@@ -260,11 +260,39 @@ describe('AppSession: launching with a stored session', () => {
     expect(status()).toHaveTextContent('signed-in');
   });
 
-  it('opens signed in when the investor turned the lock off', async () => {
+  it('opens locked when a lock is set up, though the investor turned the lock off', async () => {
+    // The setting governs the lock after five minutes away; a lock on the device always asks at
+    // launch.
     localStorage.setItem('app.lockEnabled', 'false');
     await launch(createSampleApi({ latencyMs: 0 }));
+    expect(status()).toHaveTextContent('locked');
+    expect(screen.getByTestId('lock')).toHaveTextContent('false');
+  });
+
+  it('opens signed in when the investor turned the lock off and none is set up', async () => {
+    localStorage.setItem('app.lockEnabled', 'false');
+    await launch(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } }),
+    );
     expect(status()).toHaveTextContent('signed-in');
     expect(screen.getByTestId('lock')).toHaveTextContent('false');
+  });
+
+  it('stays locked after a reload once locked with Lock now, the lock turned off', async () => {
+    sessionStorage.removeItem('app.sample');
+    const platform = fakePlatform(); // one device: its lock survives the reload
+    const user = await launch(createSampleApi({ latencyMs: 0 }), platform);
+    await user.click(screen.getByText('enter'));
+    await setUpDeviceLock(user);
+    await user.click(screen.getByText('lock off'));
+    await user.click(await screen.findByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(screen.getByTestId('lock')).toHaveTextContent('false'));
+    await user.click(screen.getByText('lock now'));
+    expect(status()).toHaveTextContent('locked');
+    cleanup(); // the page reloads: the same tab and the same device
+    await launch(createSampleApi({ latencyMs: 0 }), platform);
+    expect(status()).toHaveTextContent('locked');
   });
 
   it('ends the session here, never unlocked, when the lock is on but gone', async () => {

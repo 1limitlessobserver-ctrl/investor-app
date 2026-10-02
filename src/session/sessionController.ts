@@ -4,13 +4,13 @@
 // lock, and the device's online state.
 //
 //  - Launch: a stored session (live: the token store holds one; sample: this tab's flag) opens
-//    locked while the lock is on and set up, signed out (never unlocked) when it is on and no
-//    longer set up, else signed in.
+//    locked whenever a lock is set up on the device, whatever the setting; with none, it ends
+//    (never unlocked) when the lock is on, else it opens signed in.
 //  - The lock belongs to the session: a fresh sign-in wipes any lock left on the device and
 //    offers the setup; sign-out wipes it too.
 //  - The lock is on once the investor sets one up, until they turn it off (app.lockEnabled); with
 //    no choice stored, a lock that is set up counts as on ("Not now" stores none). It locks after
-//    five minutes hidden, on lock() and at launch; confirmations always ask, whatever it says.
+//    five minutes hidden while on; launch, lock() and confirmations ask whatever it says.
 //    The device's lock is read afresh before each of these, and when another tab changes it.
 //  - Nothing left to check the investor (the app locked, or the lock on, and no lock on the
 //    device): the session ends here, at launch or on any of these, without telling the platform,
@@ -273,15 +273,17 @@ export function createSessionController(deps: SessionDeps) {
       const method = await platform.lock.enrolled();
       if (gen !== generation) return;
       const choice = lockPreference.read();
-      if (!(choice ?? method !== null)) {
-        set({ status: 'signed-in', lockMethod: method, lockChoice: choice });
-      } else if (method !== null) {
+      if (method !== null) {
+        // A lock on the device always asks at launch (so "Lock now" outlasts a reload): the
+        // setting governs only the lock after five minutes away.
         set({ status: 'locked', lockMethod: method, lockChoice: choice, unlocking: IDLE });
-      } else {
+      } else if (choice === true) {
         // The lock is on and nothing can unlock it any more: the app never opens unlocked. The
         // session ends here only: this tab may be behind the shared store, and telling the
         // platform could end a newer sign-in made elsewhere.
         await endUnlessMoved('lock_gone', gen);
+      } else {
+        set({ status: 'signed-in', lockMethod: null, lockChoice: choice });
       }
     } catch (error) {
       if (gen === generation) await storageFailed(error);

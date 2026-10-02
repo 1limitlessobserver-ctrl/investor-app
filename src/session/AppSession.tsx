@@ -52,7 +52,10 @@ export interface AppSession {
   theme: ThemeId;
   setTheme: (id: ThemeId) => void;
   online: boolean;
-  /** The background lock and the lock at launch are on. */
+  /**
+   * The lock after five minutes away is on. (A lock set up on the device asks at launch, on "Lock
+   * now" and for every confirmation, whatever this says.)
+   */
   lockEnabled: boolean;
   /** The lock set up on this device: what unlock() and confirm() ask for. */
   lockMethod: LockMethod | null;

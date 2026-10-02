@@ -29,11 +29,11 @@ function stubbedApi(answers: Partial<Record<keyof PlatformApi, unknown>>) {
 type QueryHook = () => { data: unknown };
 type MutationHook = () => { mutateAsync: (variables: unknown) => Promise<unknown> };
 
-function setup(api: PlatformApi) {
+function setup(api: PlatformApi, platform = fakePlatform()) {
   const queryClient = createQueryClient();
   const invalidated = vi.spyOn(queryClient, 'invalidateQueries');
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <AppSessionProvider api={api} platform={fakePlatform()} queryClient={queryClient}>
+    <AppSessionProvider api={api} platform={platform} queryClient={queryClient}>
       {children}
     </AppSessionProvider>
   );
@@ -338,9 +338,12 @@ describe('mutation hooks invalidate exactly the queries they change', () => {
     ],
   ] as const)('%s signs this device out', async (_, hook, method, variables, answer) => {
     const { api } = stubbedApi({ [method]: answer });
-    const { wrapper } = setup(api);
+    // A session from before the reload, on a device with no lock: it opens signed in.
+    const { wrapper } = setup(
+      api,
+      fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } }),
+    );
     sessionStorage.setItem('app.sample', '1');
-    localStorage.setItem('app.lockEnabled', 'false');
     const { result } = renderHook(
       () => ({ mutation: (hook as MutationHook)(), session: useAppSession() }),
       { wrapper },
