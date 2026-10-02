@@ -230,6 +230,18 @@ describe('secure storage: the call queue', () => {
     expect(unhandled[0]).toEqual(new Error('disk full'));
   });
 
+  it('runs get() in call order too: it never overtakes an earlier set or remove', async () => {
+    const storage = createSecureStorage({ db: memoryKvStore() });
+    const [, afterSet] = await Promise.all([storage.set('a', '1'), storage.get('a')]);
+    expect(afterSet).toBe('1');
+    const [, , afterRemove] = await Promise.all([
+      storage.set('b', '2'),
+      storage.remove('b'),
+      storage.get('b'),
+    ]);
+    expect(afterRemove).toBeNull();
+  });
+
   it('goes on with the calls after one that failed', async () => {
     const memory = memoryKvStore();
     let full = true;
