@@ -1768,6 +1768,32 @@ describe('onSignedOut', () => {
     },
   );
 
+  // Another tab signs out, or signs in as someone else, between the client's check of the store
+  // and its clear(): the store's compare finds the session over already, so the clear is no
+  // write, no one is told, and the platform's error is thrown as it came.
+  const ended = { error: 'session_revoked', message: 'This session has ended.' };
+  it.each([
+    ['a revoked session', 'a sign-in', session(5, 'k2')],
+    ['a revoked session', 'a sign-out', null],
+    ['a refused refresh', 'a sign-in', session(5, 'k2')],
+    ['a refused refresh', 'a sign-out', null],
+  ] as const)(
+    'hears nothing of %s when %s in another tab reached the store first',
+    async (way, _other, other) => {
+      const t = setup(
+        (c) =>
+          way === 'a revoked session' || isRefresh(c)
+            ? json(401, ended)
+            : json(401, { error: 'unauthorized' }),
+        session(1),
+        { cutIn: other },
+      );
+      const e = await failure(t.api.me());
+      expect([e.code, e.message]).toEqual(['session_revoked', ended.message]);
+      expect([t.signedOut, t.writes, t.tokens()]).toEqual([[], [null], other]);
+    },
+  );
+
   it('hears once of a refused refresh that several calls share', async () => {
     const t = setup((c) =>
       isRefresh(c) ? json(401, { error: 'session_revoked' }) : json(401, { error: 'unauthorized' }),

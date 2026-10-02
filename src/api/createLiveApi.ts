@@ -132,9 +132,9 @@ export type LiveApiConfig = {
    * the call that met it still rejects. It runs once per ended session and never for logout(),
    * not even for a call that hears a 401 while a logout is out. Sign out on this callback, not on
    * a rejection: a call can reject `session_revoked` without it (the session was over already,
-   * newer tokens were stored, or the store holds another sign-in). The client does not notice
-   * closeAccount() or a revokeSession() that answers `current: true`: sign out after those
-   * yourself.
+   * newer tokens were stored, or the store holds another sign-in or none, as its own compare may
+   * find when the client asks it to clear). The client does not notice closeAccount() or a
+   * revokeSession() that answers `current: true`: sign out after those yourself.
    */
   onSignedOut?: ((reason: SignedOutReason) => void) | undefined;
   /**
@@ -484,9 +484,11 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   }
 
   /**
-   * The client ends the session `sessionKey` names itself: the count moves, the store clears that
-   * session and onSignedOut is told, even when the store cannot be cleared. Then `e`, the
-   * platform's verdict, is thrown, with the store's failure as its cause if it had one.
+   * The client ends the session `sessionKey` names itself: the count moves, and the store clears
+   * that session. onSignedOut is told when it did, and when the store failed (it may still hold
+   * the session); a store that no longer held it had it ended already, by another tab, and no one
+   * is told. Then `e`, the platform's verdict, is thrown, with the store's failure as its cause if
+   * it had one.
    */
   async function signOut(
     e: MobileApiError,
@@ -494,12 +496,13 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     sessionKey: string,
   ): Promise<never> {
     generation += 1;
+    let cleared: boolean | undefined;
     try {
-      await tokenStore.clear(sessionKey);
+      cleared = await tokenStore.clear(sessionKey);
     } catch (cause) {
       throw withCause(e, cause);
     } finally {
-      notify(onSignedOut, reason);
+      if (cleared !== false) notify(onSignedOut, reason);
     }
     throw e;
   }
