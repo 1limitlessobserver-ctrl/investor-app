@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MobileApiError } from '../../api/MobileApiError';
+import { appConfig } from '../../session/appConfig';
 import { renderWithApp } from '../../test/renderWithApp';
 
 describe('SignInScreen', () => {
@@ -77,6 +79,83 @@ describe('SignInScreen', () => {
       'Something went wrong. Please try again.',
     );
     expect(warn).toHaveBeenCalledWith('[investor-app] signing in:', failure);
+  });
+
+  it('shows the platform’s refusal that names no field as the form’s alert', async () => {
+    const user = userEvent.setup();
+    const { api } = renderWithApp({ route: '/sign-in' });
+    vi.spyOn(api, 'login').mockRejectedValue(
+      new MobileApiError('invalid_credentials', 401, 'That email and password do not match.'),
+    );
+    await user.type(await screen.findByLabelText('Email'), 'investor@sample.app');
+    await user.type(screen.getByLabelText('Password'), 'wrong');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'That email and password do not match.',
+    );
+    expect(screen.getByLabelText('Email')).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('says near its button why the sample world could not be opened', async () => {
+    const user = userEvent.setup();
+    const { api } = renderWithApp({ route: '/sign-in' });
+    vi.spyOn(api, 'login').mockRejectedValue(
+      new MobileApiError('server_error', 503, 'The sample world is resting. Try again soon.'),
+    );
+    await user.click(await screen.findByRole('button', { name: 'Explore with sample data' }));
+    const sample = screen.getByRole('region', { name: 'Look around first' });
+    expect(await within(sample).findByRole('alert')).toHaveTextContent(
+      'The sample world is resting. Try again soon.',
+    );
+    expect(within(screen.getByRole('region', { name: 'Sign in' })).queryByRole('alert')).toBeNull();
+  });
+
+  it('says the company’s details did not load, and tries again', async () => {
+    const user = userEvent.setup();
+    let reachable = false;
+    renderWithApp({
+      route: '/sign-in',
+      mode: 'live',
+      live: {
+        answer: (path) =>
+          path === '/brand' && !reachable
+            ? Promise.reject(new TypeError('Failed to fetch'))
+            : undefined,
+      },
+    });
+    const said = await screen.findByText("The company's details couldn't be loaded.");
+    expect(said).toHaveAttribute('role', 'status');
+    reachable = true;
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Everest Reserve' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("The company's details couldn't be loaded.")).toBeNull();
+  });
+
+  it('links to the platform’s own pages while the company’s details are missing', async () => {
+    const platformUrl = appConfig.platformUrl;
+    appConfig.platformUrl = 'https://platform.test';
+    try {
+      renderWithApp({
+        route: '/sign-in',
+        mode: 'live',
+        live: {
+          answer: (path) =>
+            path === '/brand' ? Promise.reject(new TypeError('Failed to fetch')) : undefined,
+        },
+      });
+      expect(await screen.findByRole('link', { name: 'Forgot password?' })).toHaveAttribute(
+        'href',
+        'https://platform.test/forgot-password',
+      );
+      expect(screen.getByRole('link', { name: 'Create account' })).toHaveAttribute(
+        'href',
+        'https://platform.test/register',
+      );
+    } finally {
+      appConfig.platformUrl = platformUrl;
+    }
   });
 
   it('puts the platform’s word on the field it refused', async () => {

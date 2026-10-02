@@ -17,15 +17,32 @@ import styles from './SignInScreen.module.css';
 
 type Step = { name: 'password' } | { name: 'code'; challenge: string; backup: boolean };
 
-/** What went wrong with the last try: the platform's words, and per field where it says. */
-type Failure = { message: string; fields: Record<string, string> };
+/** What a try was: the password, the code, or opening the sample world. */
+type Try = 'password' | 'code' | 'sample';
+
+/**
+ * What went wrong with the last try (`of`): the platform's words, and per field where it says. It
+ * shows where that try was made.
+ */
+type Failure = { of: Try; message: string; fields: Record<string, string> };
 
 const SOMETHING_WRONG = 'Something went wrong. Please try again.';
 
-function failureOf(error: unknown): Failure {
+function failureOf(of: Try, error: unknown): Failure {
   return MobileApiError.is(error)
-    ? { message: error.message, fields: error.fields }
-    : { message: SOMETHING_WRONG, fields: {} };
+    ? { of, message: error.message, fields: error.fields }
+    : { of, message: SOMETHING_WRONG, fields: {} };
+}
+
+/**
+ * Where to reset a password and open an account: the company's pages from its brand, or, while the
+ * brand is missing, the platform's own (none in sample mode).
+ */
+function linksFor(brand: { links: { forgotPassword: string; register: string } } | null) {
+  if (brand !== null) return brand.links;
+  const { platformUrl } = appConfig;
+  if (platformUrl === '') return null;
+  return { forgotPassword: `${platformUrl}/forgot-password`, register: `${platformUrl}/register` };
 }
 
 /**
@@ -42,7 +59,7 @@ export function SignInScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
-  const [busy, setBusy] = useState<'password' | 'code' | 'sample' | null>(null);
+  const [busy, setBusy] = useState<Try | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   // Tries so far: a repeated message is a new alert, announced again.
   const [tries, setTries] = useState(0);
@@ -70,7 +87,7 @@ export function SignInScreen() {
   }
 
   /** Runs one try: the busy state, the failure it ends in, and a fresh alert each time. */
-  async function attempt(kind: NonNullable<typeof busy>, run: () => Promise<void>) {
+  async function attempt(kind: Try, run: () => Promise<void>) {
     if (busy !== null) return;
     setBusy(kind);
     setFailure(null);
@@ -81,7 +98,7 @@ export function SignInScreen() {
       // The platform's refusals are shown as they are; anything else only as "Something went
       // wrong", so it is reported.
       if (!MobileApiError.is(error)) reportProblem('signing in', error);
-      setFailure(failureOf(error));
+      setFailure(failureOf(kind, error));
     } finally {
       setBusy(null);
     }
@@ -94,7 +111,7 @@ export function SignInScreen() {
     if (password === '') fields.password = 'Enter your password.';
     if (Object.keys(fields).length > 0) {
       setTries((count) => count + 1);
-      setFailure({ message: '', fields });
+      setFailure({ of: 'password', message: '', fields });
       return;
     }
     void attempt('password', async () => {
@@ -123,18 +140,24 @@ export function SignInScreen() {
   }
 
   const name = brand?.name ?? (appConfig.productName || 'Sign in');
+  const links = linksFor(brand);
   const onPasswordStep = step.name === 'password';
   // Signing in: a message the platform tied to neither field is the form's one alert. The code
-  // step has one field, which carries whatever went wrong.
+  // step has one field, which carries whatever went wrong. Opening the sample world says why it
+  // did not, beside its button.
+  const failed = (of: Try) => (failure?.of === of ? failure : null);
+  const passwordFailure = failed('password');
   const formAlert =
     onPasswordStep &&
-    failure !== null &&
-    failure.message !== '' &&
-    failure.fields.email === undefined &&
-    failure.fields.password === undefined
-      ? failure.message
+    passwordFailure !== null &&
+    passwordFailure.message !== '' &&
+    passwordFailure.fields.email === undefined &&
+    passwordFailure.fields.password === undefined
+      ? passwordFailure.message
       : undefined;
-  const codeError = onPasswordStep ? undefined : (failure?.fields.code ?? failure?.message);
+  const codeFailure = failed('code');
+  const codeError = onPasswordStep ? undefined : (codeFailure?.fields.code ?? codeFailure?.message);
+  const sampleAlert = failed('sample')?.message;
   const newTab = {
     target: '_blank',
     rel: 'noopener noreferrer',
@@ -161,6 +184,16 @@ export function SignInScreen() {
             {name}
           </h1>
           {brand?.tagline && <p className={styles.tagline}>{brand.tagline}</p>}
+          {brand === null && brandQuery.isError && (
+            <div className={styles.unbranded}>
+              <p role="status" className={styles.lead}>
+                The company&apos;s details couldn&apos;t be loaded.
+              </p>
+              <Button variant="outline" size="sm" onClick={() => void brandQuery.refetch()}>
+                Try again
+              </Button>
+            </div>
+          )}
         </header>
 
         <Panel className={styles.panel} padding="lg" aria-labelledby={formTitleId}>
@@ -174,7 +207,7 @@ export function SignInScreen() {
                   {formAlert}
                 </p>
               )}
-              <Field label="Email" error={failure?.fields.email} errorKey={tries}>
+              <Field label="Email" error={passwordFailure?.fields.email} errorKey={tries}>
                 <Input
                   type="email"
                   autoComplete="username"
@@ -183,7 +216,7 @@ export function SignInScreen() {
                   onChange={(event) => setEmail(event.target.value)}
                 />
               </Field>
-              <Field label="Password" error={failure?.fields.password} errorKey={tries}>
+              <Field label="Password" error={passwordFailure?.fields.password} errorKey={tries}>
                 <Input
                   type="password"
                   autoComplete="current-password"
@@ -194,8 +227,8 @@ export function SignInScreen() {
               <Button type="submit" size="lg" loading={busy === 'password'}>
                 Sign in
               </Button>
-              {brand && (
-                <a className={styles.link} href={brand.links.forgotPassword} {...newTab}>
+              {links && (
+                <a className={styles.link} href={links.forgotPassword} {...newTab}>
                   Forgot password?
                 </a>
               )}
@@ -264,6 +297,11 @@ export function SignInScreen() {
               This app holds sample data. Any email signs in, with any password. Add +2fa to try the
               two-factor step; the code is 123456.
             </p>
+            {sampleAlert && (
+              <p key={tries} className={styles.alert} role="alert">
+                {sampleAlert}
+              </p>
+            )}
             <Button
               variant="outline"
               size="lg"
@@ -275,10 +313,10 @@ export function SignInScreen() {
           </section>
         )}
 
-        {brand && (
+        {links && (
           <p className={styles.register}>
             New here?{' '}
-            <a className={styles.link} href={brand.links.register} {...newTab}>
+            <a className={styles.link} href={links.register} {...newTab}>
               Create account
             </a>
           </p>
