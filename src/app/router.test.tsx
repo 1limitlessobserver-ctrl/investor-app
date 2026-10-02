@@ -23,6 +23,20 @@ function underTop(children: RouteObject[]): RouteObject[] {
   return [{ ...top, children }];
 }
 
+/**
+ * The app over `router` and a fresh sample world, with jsdom's missing browser APIs (Radix's,
+ * the starfield's canvas) stubbed, as renderWithApp does for the app's own routes.
+ */
+function renderApp(router: ReturnType<typeof createMemoryRouter>) {
+  stubRadixBrowserApis();
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => null);
+  return render(
+    <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
+      <App router={router} />
+    </AppProviders>,
+  );
+}
+
 describe('the routes', () => {
   it('shows a loading screen while the session starts', () => {
     renderWithApp({ route: '/' });
@@ -217,15 +231,10 @@ describe('the routes', () => {
   });
 
   it('shows the loading view, with the ribbon, while a screen’s code is on its way', async () => {
-    stubRadixBrowserApis();
     const router = createMemoryRouter(
       underTop([{ path: '/', lazy: () => new Promise<never>(() => {}) }]),
     );
-    render(
-      <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
-        <App router={router} />
-      </AppProviders>,
-    );
+    renderApp(router);
     expect(await screen.findByRole('status', { name: 'Loading' })).toBeInTheDocument();
     expect(screen.getByText('Sample', { exact: true })).toBeInTheDocument();
   });
@@ -234,11 +243,7 @@ describe('the routes', () => {
     const router = createMemoryRouter(underTop([{ path: '/', element: <h1>Home</h1> }]), {
       initialEntries: ['/nowhere'],
     });
-    render(
-      <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
-        <App router={router} />
-      </AppProviders>,
-    );
+    renderApp(router);
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/');
   });
@@ -250,11 +255,7 @@ describe('the routes', () => {
     const router = createMemoryRouter(
       underTop([{ path: '/', lazy: () => Promise.reject(failure) }]),
     );
-    render(
-      <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
-        <App router={router} />
-      </AppProviders>,
-    );
+    renderApp(router);
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
     expect(warn).toHaveBeenCalledWith('[investor-app] showing a screen:', failure);
     logged.mockRestore();
@@ -276,11 +277,7 @@ describe('the routes', () => {
         children: [{ path: '/', element: <Broken /> }],
       },
     ]);
-    render(
-      <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
-        <App router={router} />
-      </AppProviders>,
-    );
+    renderApp(router);
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
     expect(screen.queryByText(/Unexpected Application Error/)).toBeNull();
