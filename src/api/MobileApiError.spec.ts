@@ -73,10 +73,25 @@ describe('MobileApiError details', () => {
       network: 'You appear to be offline.',
       upgrade_required: 'Please update the app to continue.',
       feature_disabled: 'This feature is not available right now.',
+      timeout: 'The platform did not answer in time. Check your connection and try again.',
+      storage_error: 'This device could not read or save the session. Sign in again.',
     };
     for (const [code, message] of Object.entries(defaults)) {
       expect(new MobileApiError(code, 400).message, code).toBe(message);
     }
+  });
+  it('keeps what went wrong underneath as the standard cause, and only when there is one', () => {
+    const lost = new TypeError('Failed to fetch');
+    const e = new MobileApiError('server_error', 200, undefined, { cause: lost });
+    expect(e.cause).toBe(lost);
+    expect(MobileApiError.network({ cause: lost }).cause).toBe(lost);
+    // As ES2022 installs it: an own property that is not enumerable, so JSON leaves it out.
+    expect(Object.getOwnPropertyDescriptor(e, 'cause')).toMatchObject({
+      value: lost,
+      enumerable: false,
+    });
+    expect(Object.hasOwn(new MobileApiError('server_error', 500), 'cause')).toBe(false);
+    expect(Object.hasOwn(MobileApiError.network(), 'cause')).toBe(false);
   });
   it('does not mistake the name of an Object method for a code', () => {
     for (const code of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {

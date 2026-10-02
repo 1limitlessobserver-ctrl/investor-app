@@ -64,10 +64,16 @@ export interface PlatformApi {
   }): Promise<MobileTokens>;
   /**
    * POST /auth/refresh with the stored refresh token. Each token works once, so the new pair is
-   * stored and concurrent callers share one request.
+   * stored while the store still holds that sign-in, and concurrent callers share one request.
+   * Resolves the new pair only while the store still holds the sign-in it renewed; otherwise, and
+   * with no session stored (when it sends nothing), it rejects `unauthorized`.
    */
   refresh(): Promise<MobileTokens>;
-  /** POST /auth/logout with the stored tokens; the platform answers `{ ok: true }` regardless. */
+  /**
+   * POST /auth/logout with the stored tokens, once; the platform answers `{ ok: true }` regardless,
+   * and a failure is ignored. The live client clears the stored tokens before it sends, and never
+   * refreshes, retries or calls onSignedOut; it rejects only when its token store fails.
+   */
   logout(): Promise<void>;
   /** GET /brand. */
   brand(): Promise<Brand>;
