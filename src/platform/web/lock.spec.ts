@@ -252,28 +252,56 @@ describe('webauthn lock', () => {
 /** Storage over the shared memory store, for the describes below; storage() serves the plan's. */
 const secureStorage = () => createSecureStorage({ db: memoryKvStore() });
 
-/** Signs as a platform authenticator would, with ES256, over client data and flags we choose. */
+/**
+ * Signs as a platform authenticator would, with the key pair's algorithm (ES256 or RS256), over
+ * client data and flags we choose. `tamper` changes the authenticator data, and `length` cuts it,
+ * before it is signed: the signature stays valid for what is sent.
+ */
 async function signAssertion(
   keyPair: CryptoKeyPair,
-  opts: { clientData: object; rpId: string; flags: number },
+  opts: {
+    clientData: object;
+    rpId: string;
+    flags: number;
+    tamper?: ((authenticatorData: Uint8Array) => void) | undefined;
+    length?: number | undefined;
+  },
 ) {
-  const authenticatorData = new Uint8Array(37);
+  let authenticatorData = new Uint8Array(37);
   authenticatorData.set(
     new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(opts.rpId))),
   );
   authenticatorData[32] = opts.flags;
+  opts.tamper?.(authenticatorData);
+  if (opts.length !== undefined) authenticatorData = authenticatorData.slice(0, opts.length);
   const clientDataJSON = new TextEncoder().encode(JSON.stringify(opts.clientData));
   const clientHash = new Uint8Array(await crypto.subtle.digest('SHA-256', clientDataJSON));
+  const signed = new Uint8Array([...authenticatorData, ...clientHash]);
+  if (keyPair.privateKey.algorithm.name === 'RSASSA-PKCS1-v1_5') {
+    const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyPair.privateKey, signed);
+    return { authenticatorData, clientDataJSON, signature: new Uint8Array(signature) };
+  }
   const raw = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
     keyPair.privateKey,
-    new Uint8Array([...authenticatorData, ...clientHash]),
+    signed,
   );
   return { authenticatorData, clientDataJSON, signature: rawToDer(new Uint8Array(raw)) };
 }
 
 const es256 = () =>
   crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+const rs256 = () =>
+  crypto.subtle.generateKey(
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: 'SHA-256',
+    },
+    true,
+    ['sign', 'verify'],
+  );
 const spkiOf = async (keyPair: CryptoKeyPair) =>
   new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey));
 
@@ -290,12 +318,19 @@ describe('verifyAssertion: every check, and malformed input', () => {
     origin: 'https://app.example',
     ...extra,
   });
-  async function check(opts: { clientData?: object; flags?: number }) {
+  async function check(opts: {
+    clientData?: object;
+    flags?: number;
+    tamper?: (authenticatorData: Uint8Array) => void;
+    length?: number;
+  }) {
     const keyPair = await es256();
     const signed = await signAssertion(keyPair, {
       clientData: opts.clientData ?? clientData(),
       rpId: 'app.example',
       flags: opts.flags ?? 0x05,
+      tamper: opts.tamper,
+      length: opts.length,
     });
     return verifyAssertion({
       publicKeySpki: await spkiOf(keyPair),
@@ -315,6 +350,41 @@ describe('verifyAssertion: every check, and malformed input', () => {
     expect(await check({ clientData: clientData({ type: 'webauthn.create' }) })).toBe(false);
     expect(await check({ flags: 0x04 })).toBe(false); // verified, but no user presence
     expect(await check({ flags: 0x01 })).toBe(false); // present, but not verified
+  });
+
+  it('accepts the flags a synced passkey adds: backup eligible 0x08, backed up 0x10', async () => {
+    for (const flags of [0x05, 0x0d, 0x1d]) {
+      expect(await check({ flags }), flags.toString(16)).toBe(true);
+    }
+  });
+
+  it('compares challenge, origin and rpId hash whole: a near miss is a miss', async () => {
+    const encoded = base64url.encode(challenge);
+    const lastByte = new Uint8Array(challenge);
+    lastByte[31]! ^= 0x01;
+    const nearMisses: [string, object][] = [
+      ['the last byte of the challenge', { challenge: base64url.encode(lastByte) }],
+      ['the challenge cut short', { challenge: encoded.slice(0, -1) }],
+      ['the challenge run on', { challenge: `${encoded}A` }],
+      ['an origin that runs on', { origin: 'https://app.example.evil.test' }],
+      ['an origin cut short', { origin: 'https://app.exampl' }],
+      ['the page address for the origin', { origin: 'https://app.example/' }],
+    ];
+    for (const [name, extra] of nearMisses) {
+      expect(await check({ clientData: clientData(extra) }), name).toBe(false);
+    }
+    for (const at of [0, 15, 16, 31]) {
+      const tamper = (authenticatorData: Uint8Array) => {
+        authenticatorData[at]! ^= 0x01;
+      };
+      expect(await check({ tamper }), `rpId hash byte ${at}`).toBe(false);
+    }
+  });
+
+  it('refuses authenticator data under 37 bytes, even when the signature is valid', async () => {
+    for (const length of [32, 33, 36]) {
+      expect(await check({ length }), `${length} bytes`).toBe(false);
+    }
   });
 
   it('answers false, never throwing, for malformed input', async () => {
@@ -437,6 +507,20 @@ describe('passcode lock: what it keeps and how it counts', () => {
     expect(answers.map((answer) => answer.attemptsLeft)).toEqual([4, 3, 2]);
   });
 
+  it('lets the right passcode in at the fifth attempt; five wrong in a row wipe it', async () => {
+    const lock = createLock({ storage: secureStorage(), credentials: undefined });
+    await lock.enrollPasscode('246810');
+    for (let left = 4; left >= 1; left--) {
+      expect(await lock.verifyPasscode('000000')).toEqual({ ok: false, attemptsLeft: left });
+    }
+    expect(await lock.verifyPasscode('246810')).toEqual({ ok: true, attemptsLeft: 5 });
+    expect(await lock.enrolled()).toBe('passcode');
+    for (let left = 4; left >= 0; left--) {
+      expect(await lock.verifyPasscode('000000')).toEqual({ ok: false, attemptsLeft: left });
+    }
+    expect(await lock.enrolled()).toBeNull();
+  });
+
   it('answers attemptsLeft 0 when no passcode is enrolled', async () => {
     const lock = createLock({ storage: secureStorage(), credentials: undefined });
     expect(await lock.verifyPasscode('246810')).toEqual({ ok: false, attemptsLeft: 0 });
@@ -515,14 +599,18 @@ type CreateOptions = {
   };
 };
 
-/** A platform authenticator: create() hands over an ES256 key; get() signs for `origin`. */
-async function fakeAuthenticator(origin = 'http://localhost:3000') {
-  const keyPair = await es256();
+/**
+ * A platform authenticator for rpId `localhost`: create() hands over a key of `alg` (ES256 unless
+ * told otherwise); get() signs with it for `origin`.
+ */
+async function fakeAuthenticator(opts: { origin?: string; alg?: -7 | -257 } = {}) {
+  const { origin = 'http://localhost:3000', alg = -7 } = opts;
+  const keyPair = alg === -7 ? await es256() : await rs256();
   const publicKeySpki = await spkiOf(keyPair);
   const create = vi.fn<(options: CreateOptions) => Promise<unknown>>(() =>
     Promise.resolve({
       rawId: new Uint8Array([1, 2, 3]).buffer,
-      response: { getPublicKey: () => publicKeySpki.buffer, getPublicKeyAlgorithm: () => -7 },
+      response: { getPublicKey: () => publicKeySpki.buffer, getPublicKeyAlgorithm: () => alg },
     }),
   );
   const get = vi.fn(async (options: GetOptions) => {
@@ -658,7 +746,7 @@ describe('webauthn lock: availability, enrolment and verification', () => {
   });
 
   it('answers false for a cancelled prompt or an assertion for another origin', async () => {
-    const auth = await fakeAuthenticator('https://evil.example');
+    const auth = await fakeAuthenticator({ origin: 'https://evil.example' });
     const lock = lockOver(auth.credentials);
     await lock.enrollWebAuthn(ada);
     expect(await lock.verify()).toBe(false);
@@ -1019,5 +1107,42 @@ describe('verifyAssertion: the DER of an ES256 signature', () => {
     for (const [name, signature] of cases) {
       expect(await verifyAssertion({ ...input, signature }), name).toBe(false);
     }
+  });
+});
+
+describe('RS256 credentials', () => {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const origin = 'https://app.example';
+  const expected = { expectedChallenge: challenge, expectedOrigin: origin, rpId: 'app.example' };
+
+  it("refuses a damaged, empty or another key's signature, or another key enrolled", async () => {
+    for (const alg of [-257, -7] as const) {
+      const options = { alg, challenge, origin, rpId: 'app.example', uv: true };
+      const [assertion, other] = await Promise.all([fabricate(options), fabricate(options)]);
+      expect(await verifyAssertion({ ...assertion, ...expected }), String(alg)).toBe(true);
+      const enrolledOther = { ...assertion, ...expected, publicKeySpki: other.publicKeySpki };
+      expect(await verifyAssertion(enrolledOther), String(alg)).toBe(false);
+    }
+    const options = { alg: -257 as const, challenge, origin, rpId: 'app.example', uv: true };
+    const [assertion, other] = await Promise.all([fabricate(options), fabricate(options)]);
+    const damaged = new Uint8Array(assertion.signature);
+    damaged[10]! ^= 0xff;
+    for (const [name, signature] of [
+      ['damaged', damaged],
+      ["another key's", other.signature],
+      ['empty', new Uint8Array(0)],
+    ] as const) {
+      expect(await verifyAssertion({ ...assertion, ...expected, signature }), name).toBe(false);
+    }
+  });
+
+  it('enrols and verifies an RS256 credential, as Windows Hello hands over', async () => {
+    const auth = await fakeAuthenticator({ alg: -257 });
+    const secure = secureStorage();
+    const lock = lockOver(auth.credentials, secure);
+    await lock.enrollWebAuthn(ada);
+    expect(JSON.parse((await secure.get('lock:webauthn'))!)).toMatchObject({ alg: -257 });
+    expect(await lock.enrolled()).toBe('webauthn');
+    expect(await lock.verify()).toBe(true);
   });
 });
