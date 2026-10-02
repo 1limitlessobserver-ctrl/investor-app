@@ -47,6 +47,8 @@ export const SESSION_COPY = {
   deviceFailed: "That didn't go through. Try again, or set a passcode.",
   passcodeFailed: "The passcode couldn't be saved on this device. Try again.",
   sessionNotSaved: 'Could not save your session on this device.',
+  sessionNotCleared:
+    "Your session couldn't be fully removed from this device. Clear this site's data to remove it.",
   turnOffLock: 'Turn off the app lock',
 } as const;
 
@@ -256,26 +258,30 @@ export function createSessionController(deps: SessionDeps) {
   async function signIn(tokens: MobileTokens): Promise<void> {
     const gen = ++generation;
     closeFlows();
+    // A lock belongs to the session that set it up: one an earlier session left on this device is
+    // wiped before this one starts, never adopted. A lock that cannot be wiped stops the sign-in.
+    await forgetLock();
+    if (gen !== generation) return;
     if (live) await startSession(tokens);
     else sampleFlag.write();
     if (gen !== generation) return;
-    let method: LockMethod | null = null;
+    set({ status: 'signed-in', lockMethod: null, lockChoice: null, unlocking: IDLE });
+    void offerLockAfterSignIn(gen);
+  }
+
+  /** Wipes the device lock and its setting; storage whose key is lost is reset, lock and all. */
+  async function forgetLock(): Promise<void> {
+    lockPreference.clear();
     try {
-      method = await platform.lock.enrolled();
+      await platform.lock.clear();
     } catch (error) {
-      if (isUnreadableKey(error)) {
-        await storageFailed(error);
-        return;
+      try {
+        if (!isUnreadableKey(error)) throw error;
+        await platform.storage.reset();
+      } catch (cause) {
+        throw new MobileApiError('storage_error', 0, undefined, { cause });
       }
     }
-    if (gen !== generation) return;
-    set({
-      status: 'signed-in',
-      lockMethod: method,
-      lockChoice: lockPreference.read(),
-      unlocking: IDLE,
-    });
-    if (method === null) void offerLockAfterSignIn(gen);
   }
 
   /** Stores a sign-in; storage whose key is lost is reset and tried once more. */
@@ -324,9 +330,9 @@ export function createSessionController(deps: SessionDeps) {
     ending ??= (async () => {
       generation += 1;
       closeFlows();
-      if (live) await attempt(() => tokenStore.clear());
+      const tokensGone = live ? await attempt(() => tokenStore.clear()) : true;
       // The lock belongs to the session: the next sign-in here is offered the setup again.
-      await attempt(() => platform.lock.clear());
+      const lockGone = await attempt(() => platform.lock.clear());
       lockPreference.clear();
       await attempt(() => settled(platform.notifications.unsubscribe(), UNSUBSCRIBE_WAIT_MS));
       queryClient.clear();
@@ -338,6 +344,8 @@ export function createSessionController(deps: SessionDeps) {
         unlocking: IDLE,
         confirmation: null,
         lockSetup: null,
+        // The sign-out goes on regardless, and the investor learns what this device still holds.
+        ...(tokensGone && lockGone ? {} : { notice: SESSION_COPY.sessionNotCleared }),
       });
     })().finally(() => {
       ending = null;
@@ -345,20 +353,26 @@ export function createSessionController(deps: SessionDeps) {
     return ending;
   }
 
-  /** Runs a step of ending a session; a failure does not stop the rest, a lost key resets. */
-  async function attempt(step: () => Promise<unknown>): Promise<void> {
+  /**
+   * Runs a step of ending a session; a failure does not stop the rest. Resolves whether it worked:
+   * storage whose key is lost counts once reset, as the reset wipes it all.
+   */
+  async function attempt(step: () => Promise<unknown>): Promise<boolean> {
     try {
       await step();
+      return true;
     } catch (error) {
-      if (isUnreadableKey(error)) await resetStorage();
+      return isUnreadableKey(error) ? resetStorage() : false;
     }
   }
 
-  async function resetStorage(): Promise<void> {
+  /** Resolves whether storage could be reset. */
+  async function resetStorage(): Promise<boolean> {
     try {
       await platform.storage.reset();
+      return true;
     } catch {
-      // Nothing more can be done here; the next launch reads it as no session.
+      return false; // the next launch reads what it cannot decrypt as no session
     }
   }
 

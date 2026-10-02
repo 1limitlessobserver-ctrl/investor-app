@@ -50,6 +50,14 @@ const urlOf = (input: RequestInfo | URL) =>
   typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 const UNREADABLE = 'The secure storage key cannot be read.';
 
+/** Takes the lock a fresh sign-in offers: the device's own prompt, which the fake grants. */
+async function setUpDeviceLock(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole('button', { name: 'Use Face ID / Touch ID / Windows Hello' }),
+  );
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+}
+
 describe('AppSession', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -86,6 +94,7 @@ describe('AppSession', () => {
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signed-out'));
     await user.click(screen.getByText('enter'));
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signed-in'));
+    await setUpDeviceLock(user); // a fresh sign-in offers the lock
     act(() => {
       hidden('hidden');
       vi.advanceTimersByTime(4 * 60 * 1000);
@@ -148,6 +157,7 @@ describe('AppSession', () => {
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signed-out'));
     await user.click(screen.getByText('enter'));
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signed-in'));
+    await setUpDeviceLock(user);
     await user.click(screen.getByText('confirm'));
     expect(await screen.findByRole('dialog', { name: 'Confirm' })).toHaveTextContent(
       'Send $10.00 to $grace',
@@ -173,6 +183,7 @@ describe('AppSession', () => {
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signed-out'));
     await user.click(screen.getByText('enter'));
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signed-in'));
+    await setUpDeviceLock(user);
     await user.click(screen.getByText('lock now'));
     act(() => api?._test_revoke()); // every later call answers 401 session_revoked
     await user.click(screen.getByText('unlock')); // unlock refetches /me, which now fails
@@ -318,7 +329,7 @@ describe('AppSession: the lock while signed in', () => {
   it('locks on return when five minutes passed while hidden, though no timer fired', async () => {
     const user = await launch(createSampleApi({ latencyMs: 0 }));
     await user.click(screen.getByText('enter'));
-    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    await setUpDeviceLock(user);
     act(() => {
       hidden('hidden');
       vi.setSystemTime(Date.now() + 5 * 60 * 1000); // the clock moves, no timer runs
@@ -330,7 +341,7 @@ describe('AppSession: the lock while signed in', () => {
   it('cancels a pending confirmation when the app locks', async () => {
     const user = await launch(createSampleApi({ latencyMs: 0 }));
     await user.click(screen.getByText('enter'));
-    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    await setUpDeviceLock(user);
     await user.click(screen.getByText('confirm'));
     await screen.findByRole('dialog', { name: 'Confirm' });
     act(() => {
@@ -346,12 +357,13 @@ describe('AppSession: the lock while signed in', () => {
   it('keeps the lock on when turning it off is cancelled', async () => {
     const user = await launch(createSampleApi({ latencyMs: 0 }));
     await user.click(screen.getByText('enter'));
-    await waitFor(() => expect(screen.getByTestId('lock')).toHaveTextContent('true'));
+    await setUpDeviceLock(user);
+    expect(screen.getByTestId('lock')).toHaveTextContent('true');
     await user.click(screen.getByText('lock off'));
     await user.click(await screen.findByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.getByTestId('lock')).toHaveTextContent('true');
-    expect(localStorage.getItem('app.lockEnabled')).toBeNull();
+    expect(localStorage.getItem('app.lockEnabled')).toBe('true');
   });
 
   it('offers a lock when confirming without one, and confirms plainly after Not now', async () => {
@@ -395,16 +407,38 @@ describe('AppSession: signing out', () => {
       fakePlatform({ lock: { clear }, notifications: { unsubscribe } }),
     );
     await user.click(screen.getByText('enter'));
-    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' })); // the lock offer
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(sessionStorage.getItem('app.sample')).toBe('1');
+    expect(clear).toHaveBeenCalledTimes(1); // the fresh sign-in wiped the device's lock
     localStorage.setItem('app.lockEnabled', 'true');
     await user.click(screen.getByText('sign out'));
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
     expect(logout).toHaveBeenCalledTimes(1);
-    expect(clear).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledTimes(2);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(sessionStorage.getItem('app.sample')).toBeNull();
     expect(localStorage.getItem('app.lockEnabled')).toBeNull();
+  });
+
+  it('says so when signing out cannot remove the lock from this device', async () => {
+    let broken = false;
+    const user = await launch(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({
+        lock: {
+          clear: () => (broken ? Promise.reject(new Error('disk error')) : Promise.resolve()),
+        },
+      }),
+    );
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    broken = true;
+    await user.click(screen.getByText('sign out'));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    const notice = screen.getByText(/Your session couldn't be fully removed from this device\./);
+    expect(notice.closest('[role="status"]')).not.toBeNull();
   });
 
   it('signs out on the client’s own sign-out, without asking the platform', async () => {
@@ -563,6 +597,58 @@ describe('AppSession: setting up the lock', () => {
     vi.useRealTimers();
   });
 
+  it('wipes a lock an earlier session left on this device, and offers a new one', async () => {
+    localStorage.setItem('app.lockEnabled', 'true'); // the earlier session's setting
+    const platform = fakePlatform(); // and its lock, still set up on the device
+    const clear = vi.spyOn(platform.lock, 'clear');
+    const user = await launch(createSampleApi({ latencyMs: 0 }), platform);
+    await user.click(screen.getByText('enter'));
+    await screen.findByRole('dialog', { name: 'Lock the app on this device' });
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(await platform.lock.enrolled()).toBeNull();
+    expect(screen.getByTestId('lock')).toHaveTextContent('false');
+    expect(localStorage.getItem('app.lockEnabled')).toBeNull();
+  });
+
+  it('does not sign in over a lock it cannot wipe', async () => {
+    function Enter() {
+      const s = useAppSession();
+      const failed = (error: unknown) => {
+        document.title = MobileApiError.is(error) ? error.code : 'other';
+      };
+      return <button onClick={() => void s.enterSample().catch(failed)}>enter or fail</button>;
+    }
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AppSessionProvider
+        api={createSampleApi({ latencyMs: 0 })}
+        platform={fakePlatform({ lock: { clear: () => Promise.reject(new Error('disk error')) } })}
+      >
+        <Probe />
+        <Enter />
+      </AppSessionProvider>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await user.click(screen.getByText('enter or fail'));
+    await waitFor(() => expect(document.title).toBe('storage_error'));
+    expect(status()).toHaveTextContent('signed-out');
+    expect(sessionStorage.getItem('app.sample')).toBeNull();
+  });
+
+  it('resets storage whose key is lost, which wipes the lock, and signs in', async () => {
+    const reset = vi.fn(() => Promise.resolve());
+    const user = await launch(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({
+        storage: { reset },
+        lock: { clear: () => Promise.reject(new Error(UNREADABLE)) },
+      }),
+    );
+    await user.click(screen.getByText('enter'));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    expect(reset).toHaveBeenCalledTimes(1);
+  });
+
   it('offers a lock after the first sign-in, and turns it on once a passcode is set', async () => {
     const enrollPasscode = vi.fn(() => Promise.resolve());
     const user = await launch(
@@ -610,6 +696,7 @@ describe('AppSession: setting up the lock', () => {
   it('turns the lock back on without asking, while one is set up', async () => {
     const user = await launch(createSampleApi({ latencyMs: 0 }));
     await user.click(screen.getByText('enter'));
+    await setUpDeviceLock(user);
     await user.click(screen.getByText('lock off'));
     await user.click(await screen.findByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(screen.getByTestId('lock')).toHaveTextContent('false'));
@@ -620,12 +707,13 @@ describe('AppSession: setting up the lock', () => {
   });
 
   it('asks for the passcode to confirm, and counts a wrong one', async () => {
-    const user = await launch(
-      createSampleApi({ latencyMs: 0 }),
-      fakePlatform({ lock: { enrolled: () => Promise.resolve('passcode') } }),
-    );
+    const user = await launch(createSampleApi({ latencyMs: 0 }));
     await user.click(screen.getByText('enter'));
-    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    await user.click(await screen.findByRole('button', { name: 'Set a passcode' }));
+    await user.type(screen.getByLabelText('Passcode'), '246810');
+    await user.type(await screen.findByLabelText('Repeat passcode'), '246810');
+    await user.click(screen.getByRole('button', { name: 'Save passcode' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await user.click(screen.getByText('confirm'));
     await user.type(await screen.findByLabelText('Passcode'), '000000');
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
@@ -640,7 +728,7 @@ describe('AppSession: setting up the lock', () => {
     vi.spyOn(api, 'me').mockRejectedValue(MobileApiError.network());
     const user = await launch(api);
     await user.click(screen.getByText('enter'));
-    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    await setUpDeviceLock(user);
     await user.click(screen.getByText('lock now'));
     await user.click(screen.getByText('unlock'));
     await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
@@ -707,6 +795,51 @@ describe('AppSession: a live session', () => {
     await otherTab.start({ ...pair, accessToken: 'a2', refreshToken: 'r2' });
     await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
     stop();
+  });
+
+  it('wipes a lock left on this device before a fresh sign-in', async () => {
+    const platform = fakePlatform(); // an earlier session's lock is still set up
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AppSessionProvider api={liveApi} platform={platform}>
+        <Probe />
+        <SignIn />
+      </AppSessionProvider>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await user.click(screen.getByText('sign in live'));
+    await screen.findByRole('dialog', { name: 'Lock the app on this device' });
+    expect(await platform.lock.enrolled()).toBeNull();
+    expect(screen.getByTestId('lock')).toHaveTextContent('false');
+  });
+
+  it('says so when signing out cannot remove the session from this device', async () => {
+    const device = fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } });
+    let broken = false;
+    const platform = {
+      ...device,
+      storage: {
+        ...device.storage,
+        remove: (key: string) =>
+          broken ? Promise.reject(new Error('disk error')) : device.storage.remove(key),
+      },
+    };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AppSessionProvider api={liveApi} platform={platform}>
+        <Probe />
+        <SignIn />
+      </AppSessionProvider>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await user.click(screen.getByText('sign in live'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    broken = true;
+    await user.click(screen.getByText('sign out'));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    const notice = screen.getByText(/Your session couldn't be fully removed from this device\./);
+    expect(notice.closest('[role="status"]')).not.toBeNull();
   });
 
   it('resets storage whose key cannot be read, and keeps the sign-in', async () => {

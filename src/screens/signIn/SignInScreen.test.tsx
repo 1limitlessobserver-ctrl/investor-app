@@ -40,6 +40,8 @@ describe('SignInScreen', () => {
     await user.clear(code);
     await user.type(code, '123456');
     await user.click(screen.getByRole('button', { name: 'Verify' }));
+    // A fresh sign-in offers the device lock first.
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     expect(router.state.location.search).toBe('?from=link');
   });
@@ -76,6 +78,7 @@ describe('SignInScreen', () => {
     const user = userEvent.setup();
     const { router } = renderWithApp({ route: '/sign-in' });
     await user.click(await screen.findByRole('button', { name: 'Explore with sample data' }));
+    await user.click(await screen.findByRole('button', { name: 'Not now' })); // the lock offer
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/');
   });

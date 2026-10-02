@@ -3,11 +3,15 @@ import type { LockMethod, Platform } from '../platform/types';
 /** Per adapter, the methods to replace: `{ lock: { enrolled: () => Promise.resolve(null) } }`. */
 export type PlatformOverrides = { [K in Exclude<keyof Platform, 'kind'>]?: Partial<Platform[K]> };
 
+/** The passcode the fake lock takes. */
+export const FAKE_PASSCODE = '246810';
+
 /**
  * A platform for specs: secure storage over a Map, and a device lock already set up with the
  * device's own prompt, which always verifies (so `confirm()` and `unlock()` pass with a tap).
- * Enrolling sets the lock up and clear() forgets it, as on a device; the passcode is 246810.
- * Notifications, sharing and installing do nothing.
+ * Enrolling sets the lock up and clear() forgets it, as on a device; the passcode is
+ * FAKE_PASSCODE. (A fresh sign-in has the session wipe it and offer the setup.) Notifications,
+ * sharing and installing do nothing.
  */
 export function fakePlatform(overrides: PlatformOverrides = {}): Platform {
   const values = new Map<string, string>();
@@ -46,7 +50,7 @@ export function fakePlatform(overrides: PlatformOverrides = {}): Platform {
         return Promise.resolve();
       },
       verify: () => Promise.resolve(true),
-      verifyPasscode: (code) => Promise.resolve({ ok: code === '246810', attemptsLeft: 5 }),
+      verifyPasscode: (code) => Promise.resolve({ ok: code === FAKE_PASSCODE, attemptsLeft: 5 }),
       clear: () => {
         enrolled = null;
         return Promise.resolve();

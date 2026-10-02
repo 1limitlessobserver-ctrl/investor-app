@@ -24,6 +24,7 @@ describe('the routes', () => {
     const user = userEvent.setup();
     const { router } = renderWithApp({ route: '/?from=link' });
     await user.click(await screen.findByRole('button', { name: 'Explore with sample data' }));
+    await user.click(await screen.findByRole('button', { name: 'Not now' })); // the lock offer
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/');
     expect(router.state.location.search).toBe('?from=link');

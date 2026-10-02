@@ -8,12 +8,15 @@ import { AppProviders } from '../app/providers';
 import { routes } from '../app/router';
 import { useAppSession, type SessionEvents } from '../session/AppSession';
 import { stubRadixBrowserApis } from './browserStubs';
-import { fakePlatform, type PlatformOverrides } from './fakePlatform';
+import { FAKE_PASSCODE, fakePlatform, type PlatformOverrides } from './fakePlatform';
 
 export interface RenderWithAppOptions {
   /** Where the app opens, such as '/move/transfer' or '/portfolio?tab=statements'. */
   route: string;
-  /** Enters the sample session first, as "Explore with sample data" does. */
+  /**
+   * Opens on a sample session stored from before, as after a reload: locked behind the device's
+   * lock, which is then unlocked (the device's prompt, or the fake passcode).
+   */
   signedIn?: boolean | undefined;
   /** How long every sample call waits; 0 unless set. */
   latencyMs?: number | undefined;
@@ -23,24 +26,25 @@ export interface RenderWithAppOptions {
   sample?: Omit<SampleApiOptions, 'latencyMs' | 'onSignedOut'> | undefined;
 }
 
-/** Signs in to the sample world once the session has started signed out. */
-function EnterSample() {
-  const { status, enterSample } = useAppSession();
-  const entered = useRef(false);
+/** Unlocks the stored session once, when the app opens locked. */
+function UnlockOnce() {
+  const { status, lockMethod, unlock } = useAppSession();
+  const done = useRef(false);
   useEffect(() => {
-    if (status !== 'signed-out' || entered.current) return;
-    entered.current = true;
-    void enterSample();
-  }, [status, enterSample]);
+    if (status !== 'locked' || lockMethod === null || done.current) return;
+    done.current = true;
+    void unlock(lockMethod === 'passcode' ? FAKE_PASSCODE : undefined);
+  }, [status, lockMethod, unlock]);
   return null;
 }
 
 /**
  * Renders the whole app for a screen spec: the real providers and routes over a fresh sample world
- * (`latencyMs` 0) and fakePlatform(), in a memory router at `route`. With `signedIn`, the sample
- * session is entered first: the visitor is sent to sign-in and back to `route` once signed in.
- * jsdom's missing browser APIs (Radix's, the starfield's canvas) are stubbed. Returns the sample
- * api (to change its world: `_test_revoke()`) and the router (`router.state.location`).
+ * (`latencyMs` 0) and fakePlatform(), in a memory router at `route`. With `signedIn`, the app opens
+ * on a stored sample session and unlocks it with the fake lock (set up by default), so the screen
+ * at `route` shows signed in, with the lock on. jsdom's missing browser APIs (Radix's, the
+ * starfield's canvas) are stubbed. Returns the sample api (to change its world: `_test_revoke()`)
+ * and the router (`router.state.location`).
  */
 export function renderWithApp({
   route,
@@ -51,6 +55,7 @@ export function renderWithApp({
 }: RenderWithAppOptions) {
   stubRadixBrowserApis();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => null);
+  if (signedIn) sessionStorage.setItem('app.sample', '1');
   let events: SessionEvents | undefined;
   const api = createSampleApi({
     ...sample,
@@ -67,7 +72,7 @@ export function renderWithApp({
       platform={fakePlatform(platform)}
     >
       <App router={router} />
-      {signedIn && <EnterSample />}
+      {signedIn && <UnlockOnce />}
     </AppProviders>,
   );
   return { ...view, api, router };
