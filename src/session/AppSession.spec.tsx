@@ -2214,3 +2214,52 @@ describe('AppSession: the passcode’s last attempt', () => {
     expect(tab.status()).toBe('locked');
   });
 });
+
+describe('AppSession: a lock set up after its offer closed', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A tab signed in to the sample world whose passcode setup waits until release(). */
+  async function settingUpSlowly() {
+    const device = fakePlatform({ lock: { available: () => Promise.resolve('passcode') } });
+    const enrol = device.lock.enrollPasscode.bind(device.lock);
+    const held = gate();
+    device.lock.enrollPasscode = (code) => held.opened.then(() => enrol(code));
+    let wired: ApiWiring | undefined;
+    const tab = openTab(device, (wiring) => {
+      wired = wiring;
+      return createSampleApi({ latencyMs: 0 });
+    });
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    tab.session.enrolPasscode('246810'); // the passcode is being saved
+    return { ...tab, device, release: held.release, events: () => wired?.events };
+  }
+
+  it('records the lock all the same', async () => {
+    const tab = await settingUpSlowly();
+    tab.events()?.onUpgradeRequired('2.0.0'); // the update screen closes the offer meanwhile
+    expect(tab.session.getSnapshot().lockSetup).toBeNull();
+    tab.release();
+    await waitFor(() => expect(tab.session.getSnapshot().lockMethod).toBe('passcode'));
+    expect(tab.session.getSnapshot().lockChoice).toBe(true);
+    expect(localStorage.getItem('app.lockEnabled')).toBe('true');
+  });
+
+  it('records no lock for a session that ended meanwhile', async () => {
+    const tab = await settingUpSlowly();
+    tab.events()?.onSignedOut('session_revoked');
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    tab.release();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(tab.session.getSnapshot().lockMethod).toBeNull();
+    expect(localStorage.getItem('app.lockEnabled')).toBeNull();
+  });
+});

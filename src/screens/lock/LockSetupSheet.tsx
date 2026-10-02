@@ -17,7 +17,10 @@ export interface LockSetupSheetProps {
   open: boolean;
   /** What this device offers: its own lock (face, fingerprint, device PIN) or a passcode only. */
   available: LockMethod;
-  /** A setup is under way: its button shows it and ignores presses. */
+  /**
+   * A setup is under way: its button shows it and ignores presses, and so do "Not now", Escape and
+   * a press outside, until the setup answers.
+   */
   busy?: boolean | undefined;
   /** Why the last try did not work, as the sheet's one alert. */
   error?: string | undefined;
@@ -25,7 +28,7 @@ export interface LockSetupSheetProps {
   onUseDevice: () => void;
   /** The six digits, typed twice alike. */
   onPasscode: (code: string) => void;
-  /** "Not now", Escape or a press outside: no lock for now. */
+  /** "Not now", Escape or a press outside: no lock for now. Never while `busy`. */
   onNotNow: () => void;
 }
 
@@ -48,11 +51,14 @@ export function LockSetupSheet({
   onPasscode,
   onNotNow,
 }: LockSetupSheetProps) {
+  const notNowUnlessBusy = () => {
+    if (!busy) onNotNow();
+  };
   return (
     <Sheet
       open={open}
       onOpenChange={(next) => {
-        if (!next) onNotNow();
+        if (!next) notNowUnlessBusy();
       }}
     >
       <SheetContent closeButton={false} className={styles.sheet}>
@@ -69,7 +75,7 @@ export function LockSetupSheet({
           error={error}
           onUseDevice={onUseDevice}
           onPasscode={onPasscode}
-          onNotNow={onNotNow}
+          onNotNow={notNowUnlessBusy}
         />
       </SheetContent>
     </Sheet>
@@ -98,7 +104,7 @@ function Steps({
   }, [step]);
 
   const notNow = (
-    <Button variant="ghost" onClick={onNotNow}>
+    <Button variant="ghost" aria-disabled={busy || undefined} onClick={onNotNow}>
       Not now
     </Button>
   );

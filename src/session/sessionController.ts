@@ -724,15 +724,27 @@ export function createSessionController(deps: SessionDeps) {
   function finishSetup(enrolled: LockMethod | null): void {
     const resolve = settleSetup;
     settleSetup = null;
+    if (enrolled !== null) recordLock(enrolled);
     // A confirmation waiting behind the setup no longer suggests it.
     const confirmation = state.confirmation && { ...state.confirmation, offerSetup: false };
-    if (enrolled !== null) {
-      lockPreference.write(true);
-      set({ lockSetup: null, lockMethod: enrolled, lockChoice: true, confirmation });
-    } else {
-      set({ lockSetup: null, confirmation });
-    }
+    set({ lockSetup: null, confirmation });
     resolve?.(enrolled !== null);
+  }
+
+  /** A lock is now set up on this device: it is on, and confirmations ask for it. */
+  function recordLock(method: LockMethod): void {
+    lockPreference.write(true);
+    set({ lockMethod: method, lockChoice: true });
+  }
+
+  /**
+   * A setup answered that the lock is set up: the offer closes, if it is still the one shown. One
+   * closed meanwhile (by the lock, an update, a newer offer) still has its lock recorded, as the
+   * device has it now; a session that changed since does not take it up.
+   */
+  function setupDone(offer: LockSetupOffer, method: LockMethod, gen: number): void {
+    if (state.lockSetup?.id === offer.id) finishSetup(method);
+    else if (gen === generation) recordLock(method);
   }
 
   function setUpLockForConfirmation(): void {
@@ -749,10 +761,9 @@ export function createSessionController(deps: SessionDeps) {
     const me = queryClient.getQueryData(meQuery(api).queryKey);
     const enrolling = platform.lock.enrollWebAuthn({ id: me?.id ?? '', email: me?.email ?? '' });
     set({ lockSetup: { ...offer, busy: true, error: undefined } });
+    const gen = generation;
     enrolling.then(
-      () => {
-        if (state.lockSetup?.id === offer.id) finishSetup('webauthn');
-      },
+      () => setupDone(offer, 'webauthn', gen),
       (error: unknown) => setupFailed(offer, error),
     );
   }
@@ -761,10 +772,9 @@ export function createSessionController(deps: SessionDeps) {
     const offer = state.lockSetup;
     if (offer === null || offer.busy) return;
     set({ lockSetup: { ...offer, busy: true, error: undefined } });
+    const gen = generation;
     platform.lock.enrollPasscode(code).then(
-      () => {
-        if (state.lockSetup?.id === offer.id) finishSetup('passcode');
-      },
+      () => setupDone(offer, 'passcode', gen),
       (error: unknown) => setupFailed(offer, error),
     );
   }

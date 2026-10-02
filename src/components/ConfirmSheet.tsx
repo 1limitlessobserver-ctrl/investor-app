@@ -24,8 +24,9 @@ export interface ConfirmSheetProps {
   needsSetup?: boolean | undefined;
   onSetUpLock?: (() => void) | undefined;
   /**
-   * A check is running: Confirm shows it and ignores presses (Cancel still works), and the last
-   * error steps aside until the check answers.
+   * A check is running: Confirm shows it and ignores presses, and so do Cancel, Escape and a press
+   * outside (the check's answer settles the sheet, so a cancel cannot outrun it). The last error
+   * steps aside until the check answers.
    */
   busy?: boolean | undefined;
   /**
@@ -40,7 +41,7 @@ export interface ConfirmSheetProps {
    * runs inside the tap, so `platform.lock.verify()` can be called straight from here.
    */
   onConfirm: (passcode?: string) => void;
-  /** Cancel, Escape, or a press outside the sheet. */
+  /** Cancel, Escape, or a press outside the sheet; never while `busy`. */
   onCancel: () => void;
 }
 
@@ -75,8 +76,17 @@ export function ConfirmSheet({
     (attemptsLeft !== undefined && attemptsLeft > 0
       ? attemptsLeftMessage(attemptsLeft)
       : undefined);
+  const cancelUnlessBusy = () => {
+    if (!busy) onCancel();
+  };
   const cancel = (
-    <Button ref={cancelButton} variant="ghost" size="lg" onClick={onCancel}>
+    <Button
+      ref={cancelButton}
+      variant="ghost"
+      size="lg"
+      aria-disabled={busy || undefined}
+      onClick={cancelUnlessBusy}
+    >
       Cancel
     </Button>
   );
@@ -85,7 +95,7 @@ export function ConfirmSheet({
     <Sheet
       open={open}
       onOpenChange={(next) => {
-        if (!next) onCancel();
+        if (!next) cancelUnlessBusy();
       }}
     >
       <SheetContent

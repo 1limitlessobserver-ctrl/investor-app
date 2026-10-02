@@ -137,18 +137,38 @@ describe('ConfirmSheet', () => {
     expect(onConfirm).toHaveBeenCalledWith();
   });
 
-  it('ignores Confirm while a check runs, but can always be cancelled', async () => {
-    const user = userEvent.setup();
-    const { onConfirm, onCancel } = renderConfirm({
-      method: 'webauthn',
-      busy: true,
-      error: "That didn't confirm it. Try again.",
-    });
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Confirm' })).toHaveAttribute('aria-busy', 'true');
-    await user.click(screen.getByRole('button', { name: 'Confirm' }));
-    expect(onConfirm).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+  it.each([
+    ['the device prompt', 'webauthn' as const],
+    ['a passcode', 'passcode' as const],
+  ])(
+    'waits for the check to answer with %s: no Confirm, Cancel, Escape or press outside',
+    async (_, method) => {
+      const user = userEvent.setup();
+      const { onConfirm, onCancel } = renderConfirm({
+        method,
+        busy: true,
+        error: "That didn't confirm it. Try again.",
+      });
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Confirm' })).toHaveAttribute('aria-busy', 'true');
+      await user.click(screen.getByRole('button', { name: 'Confirm' }));
+      expect(onConfirm).not.toHaveBeenCalled();
+      const cancel = screen.getByRole('button', { name: 'Cancel' });
+      expect(cancel).toHaveAttribute('aria-disabled', 'true');
+      await user.click(cancel);
+      await user.keyboard('{Escape}');
+      const overlay = document.querySelector('.overlay');
+      if (!(overlay instanceof HTMLElement)) throw new Error('The sheet has no overlay.');
+      await new Promise((resolve) => setTimeout(resolve, 0)); // Radix listens from the next task
+      await user.click(overlay);
+      expect(onCancel).not.toHaveBeenCalled();
+      expect(screen.getByRole('dialog', { name: 'Confirm' })).toBeInTheDocument();
+    },
+  );
+
+  it('gives the error over the attempts left when it has both', () => {
+    renderConfirm({ method: 'passcode', attemptsLeft: 3, error: "The lock couldn't be checked." });
+    expect(screen.getByRole('alert')).toHaveTextContent("The lock couldn't be checked.");
+    expect(screen.queryByText(/attempts left/)).toBeNull();
   });
 });
