@@ -1,6 +1,7 @@
 /*
  * A text field on glass. The border is the muted text colour at 70 %, enough to read as a field
- * edge (3:1) on every theme; focus turns it to the accent with a soft ring.
+ * edge (3:1) on every theme. Keyboard focus draws a 2 px accent outline (kept in forced-colours
+ * mode) with a soft ring inside it, and turns the border to the accent, even on an invalid field.
  */
 
 .input {
@@ -26,22 +27,20 @@
   opacity: 1;
 }
 
-.input:hover:not(:disabled) {
+.input:hover {
   border-color: var(--muted-foreground);
-}
-
-.input:focus-visible {
-  outline: none;
-  border-color: var(--accent-text);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 28%, transparent);
 }
 
 .input[aria-invalid='true'] {
   border-color: var(--error);
 }
 
-.input[aria-invalid='true']:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 28%, transparent);
+/* After hover and the error, so focus wins; the outline is the indicator forced colours keep. */
+.input:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-text) 28%, transparent);
 }
 
 .input:disabled {

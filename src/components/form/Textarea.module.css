@@ -1,4 +1,4 @@
-/* Input's field look, taller, growing by hand. */
+/* Input's field look and focus indicator, taller, growing by hand. */
 
 .textarea {
   box-sizing: border-box;
@@ -25,22 +25,20 @@
   opacity: 1;
 }
 
-.textarea:hover:not(:disabled) {
+.textarea:hover {
   border-color: var(--muted-foreground);
-}
-
-.textarea:focus-visible {
-  outline: none;
-  border-color: var(--accent-text);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 28%, transparent);
 }
 
 .textarea[aria-invalid='true'] {
   border-color: var(--error);
 }
 
-.textarea[aria-invalid='true']:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 28%, transparent);
+/* After hover and the error, so focus wins; the outline is the indicator forced colours keep. */
+.textarea:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-text) 28%, transparent);
 }
 
 .textarea:disabled {

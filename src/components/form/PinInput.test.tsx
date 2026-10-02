@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { cssRule, rem } from '../../test/cssRules';
+import { cssOrder, cssRule, rem } from '../../test/cssRules';
 import { Field } from './Field';
 import { PinInput } from './PinInput';
 
@@ -160,6 +160,22 @@ describe('PinInput', () => {
     expect(ref.current).toBe(boxes()[0]);
     for (const box of boxes()) expect(box).toHaveAttribute('aria-invalid', 'true');
     expect(boxes()[2]).toHaveAccessibleDescription("That passcode didn't match. 4 attempts left.");
+  });
+
+  it('keeps a real outline on keyboard focus, and focus wins over a filled box and the error', () => {
+    const css = join(import.meta.dirname, 'PinInput.module.css');
+    expect(cssRule(css, '.box:focus-visible')).toMatchObject({
+      outline: '2px solid var(--accent-text)',
+      'outline-offset': '2px',
+      'border-color': 'var(--accent-text)',
+    });
+    expect(cssOrder(css, '.box[data-filled]')).toBeGreaterThan(-1);
+    expect(cssOrder(css, '.box[data-filled]')).toBeLessThan(
+      cssOrder(css, ".box[aria-invalid='true']"),
+    );
+    expect(cssOrder(css, ".box[aria-invalid='true']")).toBeLessThan(
+      cssOrder(css, '.box:focus-visible'),
+    );
   });
 
   it('keeps 44 px boxes', () => {

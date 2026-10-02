@@ -1,4 +1,7 @@
-/* The trigger wears Input's field look; the list is a solid popup, above sheets and dialogs. */
+/*
+ * The trigger wears Input's field look and focus indicator; the list is a solid popup, above
+ * sheets and dialogs, whose highlighted option carries an accent outline as well as a wash.
+ */
 
 .trigger {
   box-sizing: border-box;
@@ -23,18 +26,20 @@
     box-shadow 140ms ease;
 }
 
-.trigger:hover:not(:disabled) {
+.trigger:hover {
   border-color: var(--muted-foreground);
-}
-
-.trigger:focus-visible {
-  outline: none;
-  border-color: var(--accent-text);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 28%, transparent);
 }
 
 .trigger[aria-invalid='true'] {
   border-color: var(--error);
+}
+
+/* After hover and the error, so focus wins; the outline is the indicator forced colours keep. */
+.trigger:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-text) 28%, transparent);
 }
 
 .trigger:disabled {
@@ -102,6 +107,8 @@
 
 .item[data-highlighted] {
   background: color-mix(in srgb, var(--accent-text) 14%, transparent);
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
 }
 
 .item[data-disabled] {

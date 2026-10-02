@@ -1,7 +1,9 @@
+import { join } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { stubRadixBrowserApis } from '../../test/browserStubs';
+import { cssOrder, cssRule } from '../../test/cssRules';
 import { Field } from './Field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './Select';
 
@@ -70,5 +72,29 @@ describe('Select', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('listbox')).toBeNull();
     expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps a real outline on keyboard focus, and focus wins over hover and the error', () => {
+    const css = join(import.meta.dirname, 'Select.module.css');
+    expect(cssRule(css, '.trigger:focus-visible')).toMatchObject({
+      outline: '2px solid var(--accent-text)',
+      'outline-offset': '2px',
+      'border-color': 'var(--accent-text)',
+    });
+    expect(cssOrder(css, '.trigger:hover')).toBeGreaterThan(-1);
+    expect(cssOrder(css, '.trigger:hover')).toBeLessThan(
+      cssOrder(css, ".trigger[aria-invalid='true']"),
+    );
+    expect(cssOrder(css, ".trigger[aria-invalid='true']")).toBeLessThan(
+      cssOrder(css, '.trigger:focus-visible'),
+    );
+  });
+
+  it('outlines the highlighted option in the readable accent', () => {
+    const css = join(import.meta.dirname, 'Select.module.css');
+    expect(cssRule(css, '.item[data-highlighted]')).toMatchObject({
+      outline: '2px solid var(--accent-text)',
+      'outline-offset': '-2px',
+    });
   });
 });
