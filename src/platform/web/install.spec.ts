@@ -86,8 +86,18 @@ const safariOnMac =
 const onIPhone = (browser: string) =>
   `Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) ${browser} Mobile/15E148 Safari/604.1`;
 
+/** Gives navigator the values a browser reports; afterEach takes them away again. */
+function browser(values: { userAgent?: string; platform?: string; maxTouchPoints?: number }) {
+  for (const [name, value] of Object.entries(values)) {
+    Object.defineProperty(navigator, name, { configurable: true, value });
+  }
+}
+
 describe('install adapter: prompts, installation and hints', () => {
   afterEach(() => {
+    for (const name of ['userAgent', 'platform', 'maxTouchPoints']) {
+      delete (navigator as unknown as Record<string, unknown>)[name];
+    }
     vi.unstubAllGlobals();
   });
 
@@ -273,11 +283,18 @@ describe('install adapter: prompts, installation and hints', () => {
     }
   });
 
-  it("reads the browser's own user agent, platform and display mode by default", () => {
+  it("reads the browser's user agent, platform, touch points and display mode by default", () => {
+    expect(createWebInstall().hint()).toBeNull(); // jsdom is no Safari
+    browser({ userAgent: safariOnMac, platform: 'MacIntel', maxTouchPoints: 0 });
+    expect(createWebInstall().hint()).toBe('safari-mac');
+    browser({ maxTouchPoints: 5 }); // iPadOS Safari reports a Mac with a touch screen
+    expect(createWebInstall().hint()).toBe('safari-ios');
+    browser({ userAgent: onIPhone('Version/17.0'), platform: 'iPhone' });
     const install = createWebInstall();
-    expect(install.hint()).toBeNull(); // jsdom is no Safari
+    expect(install.hint()).toBe('safari-ios');
     expect(install.isInstalled()).toBe(false);
     vi.stubGlobal('matchMedia', mm(true));
     expect(install.isInstalled()).toBe(true);
+    expect(install.hint()).toBeNull();
   });
 });
