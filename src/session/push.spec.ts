@@ -108,7 +108,7 @@ describe('push, once a session opens', () => {
     vi.useRealTimers();
   });
 
-  it('hands this browser’s subscription for the brand’s key to the platform after a sign-in', async () => {
+  it('subscribes for the brand’s key and tells the platform after a sign-in', async () => {
     const { device, subscribe, request } = pushDevice();
     const tab = openTab(device);
     await signIn(tab);
@@ -182,7 +182,7 @@ describe('push, once a session opens', () => {
     expect(tab.status()).toBe('signed-in');
   });
 
-  it('reports a platform that refuses the subscription, and tells the investor nothing', async () => {
+  it('reports a subscription the platform refuses, and tells the investor nothing', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { device } = pushDevice();
     const tab = openTab(device);
@@ -252,7 +252,7 @@ describe('push, at the end of a session', () => {
     return { ...tab, unsubscribe: device.unsubscribe };
   }
 
-  it('tells the platform the subscription ends before it signs out, then ends it here', async () => {
+  it('tells the platform push ends before it signs out, then ends it here', async () => {
     const tab = await subscribedTab();
     await tab.session.signOut();
     expect(tab.status()).toBe('signed-out');
