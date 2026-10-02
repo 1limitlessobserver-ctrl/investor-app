@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { AppSessionProvider, useAppSession, type ApiWiring } from './AppSession';
 import { createSampleApi, type SampleApi } from '../api/createSampleApi';
 import { createLiveApi } from '../api/createLiveApi';
@@ -612,6 +613,41 @@ describe('AppSession: signing out', () => {
     // tells the session, which shows sign-in.
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
     expect(fetchImpl.mock.calls.some(([input]) => urlOf(input).endsWith('/me'))).toBe(true);
+  });
+
+  it('stays signed in when a call is refused session_revoked and no one signs out', async () => {
+    // The live client throws `session_revoked` without onSignedOut when its store has moved on to
+    // another sign-in: only onSignedOut (or the investor) ends a session, never the cache.
+    const refused = () => Promise.reject(new MobileApiError('session_revoked', 401));
+    function Refused() {
+      useQuery({ queryKey: ['sample', 'refused'], queryFn: refused });
+      const { mutate } = useMutation({ mutationFn: refused });
+      useEffect(() => mutate(), [mutate]);
+      return null;
+    }
+    function Gate() {
+      return useAppSession().status === 'signed-in' ? <Refused /> : null;
+    }
+    const queryClient = createQueryClient();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AppSessionProvider
+        api={createSampleApi({ latencyMs: 0 })}
+        platform={fakePlatform()}
+        queryClient={queryClient}
+      >
+        <Probe />
+        <Gate />
+      </AppSessionProvider>,
+    );
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    await user.click(screen.getByText('enter'));
+    await waitFor(() => {
+      expect(queryClient.getQueryState(['sample', 'refused'])?.status).toBe('error');
+      expect(queryClient.getMutationCache().getAll()[0]?.state.status).toBe('error');
+    });
+    expect(status()).toHaveTextContent('signed-in');
+    expect(sessionStorage.getItem('app.sample')).toBe('1');
   });
 
   it('shows sign-in when a call cannot read the session from this device', async () => {
