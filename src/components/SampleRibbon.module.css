@@ -1,13 +1,15 @@
 /*
- * A tab of warning-coloured tape on the right edge, just below where headers end, so it never
- * covers a header, the tab bar or a sheet's actions. The warning colour is the opposite ink of
- * the background on every theme, so the background colour reads on it.
+ * A narrow tab of warning-coloured tape on the right edge, inside the safe area, a little below
+ * the top bar's first row and well above the tab bar. It sits over every layer (sheets and the
+ * lock too) so sample mode always shows, and it can overlap the right end of what is beneath it,
+ * a long title say; it never takes a tap, so whatever it overlaps still works. The warning colour
+ * is the opposite ink of the background on every theme, so the background colour reads on it.
  */
 
 .ribbon {
   position: fixed;
   top: calc(var(--safe-top) + 5.5rem);
-  right: 0;
+  right: var(--safe-right);
   z-index: 90;
   margin: 0;
   padding: var(--space-3) var(--space-1);
