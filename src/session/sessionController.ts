@@ -140,6 +140,17 @@ export interface SessionDeps {
 
 type Check = { ok: boolean; attemptsLeft?: number | undefined };
 
+/**
+ * Why the session ends on this device: the investor signed out; the platform revoked it or refused
+ * its refresh; this device could not read it; nothing is left to unlock it; or another tab signed
+ * out.
+ */
+export type EndReason =
+  'investor' | 'revoked' | 'refresh_failed' | 'storage' | 'lock_gone' | 'elsewhere';
+
+/** A sign-out or an end of the session under way, and the generation it started. */
+type Ending = { gen: number; done: Promise<void> };
+
 const IDLE: Unlocking = { busy: false };
 
 /** True when `error`, or what caused it, is secure storage's lost key. */
@@ -194,7 +205,7 @@ export type SessionController = ReturnType<typeof createSessionController>;
 export function createSessionController(deps: SessionDeps) {
   const { platform, queryClient, tokenStore, appVersion } = deps;
   const events: SessionEvents = {
-    onSignedOut: () => void endHere(),
+    onSignedOut: (reason) => void endHere(reason === 'refresh_failed' ? reason : 'revoked'),
     onUpgradeRequired: (minVersion) => upgradeRequired(minVersion),
     onStorageError: () => set({ notice: SESSION_COPY.sessionNotSaved }),
   };
@@ -217,13 +228,15 @@ export function createSessionController(deps: SessionDeps) {
   const listeners = new Set<() => void>();
   // Moves with every change of session; an async step that finds it moved stops there.
   let generation = 0;
+  // The key of the sign-in this tab holds (live): what ending it here clears, and nothing else.
+  let sessionKey: string | null = null;
   let launched = false;
   let hiddenAt: number | null = null;
   let nextId = 0;
   let settleConfirmation: ((ok: boolean) => void) | null = null;
   let settleSetup: ((done: boolean) => void) | null = null;
-  let leaving: Promise<void> | null = null;
-  let ending: Promise<void> | null = null;
+  let leaving: Ending | null = null;
+  let ending: Ending | null = null;
 
   function set(patch: Partial<SessionState>): void {
     state = { ...state, ...patch };
@@ -243,8 +256,13 @@ export function createSessionController(deps: SessionDeps) {
     const gen = ++generation;
     if (state.status !== 'loading') set({ status: 'loading' });
     try {
-      const stored = live ? (await tokenStore.get()) !== null : sampleFlag.read();
-      if (gen !== generation) return;
+      let stored = sampleFlag.read();
+      if (live) {
+        const held = await tokenStore.get();
+        if (gen !== generation) return;
+        sessionKey = held?.sessionKey ?? null;
+        stored = held !== null;
+      }
       if (!stored) {
         set({ status: 'signed-out', lockMethod: null });
         return;
@@ -260,7 +278,7 @@ export function createSessionController(deps: SessionDeps) {
         // The lock is on and nothing can unlock it any more: the app never opens unlocked. The
         // session ends here only: this tab may be behind the shared store, and telling the
         // platform could end a newer sign-in made elsewhere.
-        await endHere();
+        await endHere('lock_gone');
       }
     } catch (error) {
       if (gen === generation) await storageFailed(error);
@@ -276,9 +294,10 @@ export function createSessionController(deps: SessionDeps) {
     // wiped before this one starts, never adopted. A lock that cannot be wiped stops the sign-in.
     await forgetLock();
     if (gen !== generation) return;
-    if (live) await startSession(tokens);
-    else sampleFlag.write();
+    const key = live ? await startSession(tokens) : null;
+    if (!live) sampleFlag.write();
     if (gen !== generation) return;
+    sessionKey = key;
     set({ status: 'signed-in', lockMethod: null, lockChoice: null, unlocking: IDLE });
     void offerLockAfterSignIn(gen);
   }
@@ -298,15 +317,18 @@ export function createSessionController(deps: SessionDeps) {
     }
   }
 
-  /** Stores a sign-in; storage whose key is lost is reset and tried once more. */
-  async function startSession(tokens: MobileTokens): Promise<void> {
+  /**
+   * Stores a sign-in, and resolves its session key; storage whose key is lost is reset and tried
+   * once more.
+   */
+  async function startSession(tokens: MobileTokens): Promise<string> {
     try {
       try {
-        await tokenStore.start(tokens);
+        return await tokenStore.start(tokens);
       } catch (error) {
         if (!isUnreadableKey(error)) throw error;
         await platform.storage.reset();
-        await tokenStore.start(tokens);
+        return await tokenStore.start(tokens);
       }
     } catch (cause) {
       throw new MobileApiError('storage_error', 0, undefined, { cause });
@@ -322,35 +344,55 @@ export function createSessionController(deps: SessionDeps) {
     await signIn(tokens);
   }
 
-  /** The investor's own sign-out: the platform is told, then the session ends here. */
+  /**
+   * The investor's own sign-out: the platform is told, then the session ends here. Once only: a
+   * second tap joins the first. A session that begins while the platform is waited for (another
+   * tab signs in, and this one follows) is not this sign-out's to end.
+   */
   function signOut(): Promise<void> {
-    leaving ??= (async () => {
-      generation += 1;
-      closeFlows();
+    if (leaving?.gen === generation) return leaving.done;
+    if (ending?.gen === generation) return ending.done;
+    closeFlows(); // an open confirmation ends at once
+    const gen = ++generation;
+    const done = (async () => {
       try {
         await settled(api.logout(), LOGOUT_WAIT_MS);
       } catch {
         // Only a store that fails makes logout reject; ending the session here clears it anyway.
       }
-      await endHere();
+      if (gen === generation) await endHere('investor');
     })().finally(() => {
-      leaving = null;
+      if (leaving?.gen === gen) leaving = null;
     });
-    return leaving;
+    leaving = { gen, done };
+    return done;
   }
 
-  /** Ends the session on this device, without telling the platform. */
-  function endHere(): Promise<void> {
-    ending ??= (async () => {
-      generation += 1;
-      closeFlows();
-      const tokensGone = live ? await attempt(() => tokenStore.clear()) : true;
+  /**
+   * Ends the session on this device, without telling the platform: this sign-in leaves the store
+   * (by its key: one stored since is not this session's), then the device's lock and its setting,
+   * push, the cache and the sample flag, and sign-in shows. A step that fails does not stop the
+   * rest. A session that begins meanwhile (another tab signs in, and this one follows) stops it
+   * before its next step: what the device holds is that session's now.
+   */
+  function endHere(reason: EndReason): Promise<void> {
+    if (ending?.gen === generation) return ending.done;
+    closeFlows();
+    const gen = ++generation;
+    const key = sessionKey;
+    const moved = () => gen !== generation;
+    const done = (async () => {
+      const tokensGone = await clearSession(key, reason);
+      if (moved()) return;
       // The lock belongs to the session: the next sign-in here is offered the setup again.
       const lockGone = await attempt(() => platform.lock.clear());
+      if (moved()) return;
       lockPreference.clear();
       await attempt(() => settled(platform.notifications.unsubscribe(), UNSUBSCRIBE_WAIT_MS));
+      if (moved()) return;
       queryClient.clear();
       sampleFlag.clear();
+      sessionKey = null;
       set({
         status: 'signed-out',
         lockMethod: null,
@@ -362,9 +404,20 @@ export function createSessionController(deps: SessionDeps) {
         ...(tokensGone && lockGone ? {} : { notice: SESSION_COPY.sessionNotCleared }),
       });
     })().finally(() => {
-      ending = null;
+      if (ending?.gen === gen) ending = null;
     });
-    return ending;
+    ending = { gen, done };
+    return done;
+  }
+
+  /**
+   * Takes this tab's sign-in out of the store (live), by its key. With no key known, nothing is
+   * cleared, unless the investor signs out: then whatever is stored. Resolves whether it worked.
+   */
+  function clearSession(key: string | null, reason: EndReason): Promise<boolean> {
+    if (!live) return Promise.resolve(true);
+    if (key !== null) return attempt(() => tokenStore.clear(key));
+    return reason === 'investor' ? attempt(() => tokenStore.clear()) : Promise.resolve(true);
   }
 
   /**
@@ -393,7 +446,7 @@ export function createSessionController(deps: SessionDeps) {
   /** Storage this device cannot read: sign in again, after a reset when its key is lost. */
   async function storageFailed(error: unknown): Promise<void> {
     if (isUnreadableKey(error)) await resetStorage();
-    await endHere();
+    await endHere('storage');
   }
 
   // ---- The lock ----------------------------------------------------------------------------
@@ -424,7 +477,7 @@ export function createSessionController(deps: SessionDeps) {
       set({ lockMethod: method, lockChoice: choice });
     }
     if (method === null && (state.status === 'locked' || lockEnabled())) {
-      void endHere();
+      void endHere('lock_gone');
       return false;
     }
     return true;
@@ -763,15 +816,24 @@ export function createSessionController(deps: SessionDeps) {
     if (updateIsRequired()) closeFlows();
   }
 
-  /** Another tab signed in or out: this one follows what is stored now. */
-  function storeChanged(event: TokenStoreEvent): void {
-    if (event.type === 'clear') {
-      if (state.status !== 'signed-out') void endHere();
-      return;
-    }
+  /**
+   * The store moved on from this tab's sign-in: what this tab fetched for it is forgotten, and the
+   * session starts again from what is stored now.
+   */
+  function follow(): void {
     closeFlows();
     queryClient.clear();
     void launch();
+  }
+
+  /** Another tab signed in or out: this one follows what is stored now. */
+  function storeChanged(event: TokenStoreEvent): void {
+    if (event.type === 'clear') {
+      if (state.status !== 'signed-out') void endHere('elsewhere');
+      return;
+    }
+    sessionKey = event.sessionKey;
+    follow();
   }
 
   /** A query or mutation failed: one that could not read the session means signing in again. */
