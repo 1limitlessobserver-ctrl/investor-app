@@ -1412,70 +1412,82 @@ describe('AppSession: a build it cannot use', () => {
   });
 });
 
-describe('AppSession: two tabs on one device', () => {
-  const pairOf = (n: number) => ({
-    tokenType: 'Bearer' as const,
-    accessToken: `a${n}`,
-    refreshToken: `r${n}`,
-    accessExpiresAt: '2026-10-01T12:15:00.000Z',
-    refreshExpiresAt: '2026-10-31T12:00:00.000Z',
-  });
-  const json = (body: unknown) =>
-    new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+// ---- Sessions driven without React: a tab is a started controller on a device ----
 
-  /** The live client over a platform that answers its brand and /me; `slowLogout` never answers. */
-  function liveOver({ slowLogout = false } = {}) {
-    return ({ events, tokenStore }: ApiWiring) => {
-      const sample = createSampleApi({ latencyMs: 0 });
-      return createLiveApi({
-        baseUrl: 'https://platform.test/api/mobile/v1',
-        tokenStore,
-        app: { version: '1.0.0', platform: 'web', deviceId: 'device-test-1' },
-        fetchImpl: async (input) => {
-          const url = urlOf(input);
-          if (url.endsWith('/auth/logout')) {
-            return slowLogout ? new Promise<Response>(() => {}) : json({ ok: true });
-          }
-          return json(url.endsWith('/brand') ? await sample.brand() : await sample.me());
-        },
-        ...events,
-      });
-    };
-  }
+const pairOf = (n: number) => ({
+  tokenType: 'Bearer' as const,
+  accessToken: `a${n}`,
+  refreshToken: `r${n}`,
+  accessExpiresAt: '2026-10-01T12:15:00.000Z',
+  refreshExpiresAt: '2026-10-31T12:00:00.000Z',
+});
+const json = (body: unknown) =>
+  new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
 
-  const stops: (() => void)[] = [];
-
-  /** A tab of the app on `device`: its session, started, over its own cache. */
-  function openTab(
-    device: Platform,
-    makeApi: (wiring: ApiWiring) => PlatformApi,
-    tokenStore = createTokenStore(device.storage),
-  ) {
-    const queryClient = createQueryClient();
-    const session = createSessionController({
-      makeApi,
-      platform: device,
-      queryClient,
+/** The live client over a platform that answers its brand and /me; `slowLogout` never answers. */
+function liveOver({ slowLogout = false } = {}) {
+  return ({ events, tokenStore }: ApiWiring) => {
+    const sample = createSampleApi({ latencyMs: 0 });
+    return createLiveApi({
+      baseUrl: 'https://platform.test/api/mobile/v1',
       tokenStore,
-      appVersion: '1.0.0',
+      app: { version: '1.0.0', platform: 'web', deviceId: 'device-test-1' },
+      fetchImpl: async (input) => {
+        const url = urlOf(input);
+        if (url.endsWith('/auth/logout')) {
+          return slowLogout ? new Promise<Response>(() => {}) : json({ ok: true });
+        }
+        return json(url.endsWith('/brand') ? await sample.brand() : await sample.me());
+      },
+      ...events,
     });
-    stops.push(session.start());
-    return { session, queryClient, status: () => session.getSnapshot().status };
-  }
+  };
+}
 
-  /** The session key stored on the device, or null. */
-  async function storedKey(device: Platform) {
-    const raw = await device.storage.get('session');
-    return raw === null ? null : (JSON.parse(raw) as { sessionKey: string }).sessionKey;
-  }
+// The tabs a test opened, stopped after it.
+const stops: (() => void)[] = [];
+afterEach(() => {
+  for (const stop of stops.splice(0)) stop();
+});
 
+/** A tab of the app on `device`: its session, started, over its own cache. */
+function openTab(
+  device: Platform,
+  makeApi: (wiring: ApiWiring) => PlatformApi,
+  tokenStore = createTokenStore(device.storage),
+) {
+  const queryClient = createQueryClient();
+  const session = createSessionController({
+    makeApi,
+    platform: device,
+    queryClient,
+    tokenStore,
+    appVersion: '1.0.0',
+  });
+  stops.push(session.start());
+  return { session, queryClient, status: () => session.getSnapshot().status };
+}
+
+/** The session key stored on the device, or null. */
+async function storedKey(device: Platform) {
+  const raw = await device.storage.get('session');
+  return raw === null ? null : (JSON.parse(raw) as { sessionKey: string }).sessionKey;
+}
+
+/** A promise that waits until release(), as a slow step of the device does. */
+function gate() {
+  let release!: () => void;
+  const opened = new Promise<void>((resolve) => (release = resolve));
+  return { opened, release };
+}
+
+describe('AppSession: two tabs on one device', () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
   afterEach(() => {
-    for (const stop of stops.splice(0)) stop();
     vi.useRealTimers();
   });
 
@@ -1519,13 +1531,6 @@ describe('AppSession: two tabs on one device', () => {
     expect(a.queryClient.getQueryData(['live', 'dashboard'])).toEqual({ of: 'the newer sign-in' });
     expect(await storedKey(device)).not.toBeNull();
   });
-
-  /** A promise that waits until release(), as a slow step of the device does. */
-  function gate() {
-    let release!: () => void;
-    const opened = new Promise<void>((resolve) => (release = resolve));
-    return { opened, release };
-  }
 
   it('stops ending its session once it follows a newer one, at every step', async () => {
     // The step of ending the session under test waits while another tab signs in again.
@@ -1805,5 +1810,313 @@ describe('AppSession: two tabs on one device', () => {
     a.session.lock(); // Lock now: the lock is found gone
     await waitFor(() => expect(a.status()).toBe('signed-in'));
     expect(await storedKey(device)).toBe(newer);
+  });
+});
+
+describe('AppSession: a step that answers after the session changed', () => {
+  /** The sample world, wired to the session's callbacks; `api` is kept for the spec. */
+  function sampleOver(api = createSampleApi({ latencyMs: 0 })) {
+    return (wiring: ApiWiring) => {
+      api = createSampleApi({ latencyMs: 0, onSignedOut: wiring.events.onSignedOut });
+      return api;
+    };
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ['answers', false],
+    ['fails', true],
+  ])(
+    'never ends a sign-in made while the launch read the store, which then %s',
+    async (_, fails) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const device = fakePlatform();
+      const held = gate();
+      let first = true;
+      const storage = {
+        ...device.storage,
+        get: async (key: string) => {
+          if (first && key === 'session') {
+            first = false; // the launch's look at the store waits
+            await held.opened;
+            if (fails) throw new Error('disk error');
+            return null;
+          }
+          return device.storage.get(key);
+        },
+      };
+      const a = openTab({ ...device, storage }, liveOver(), createTokenStore(storage));
+      expect(a.status()).toBe('loading');
+      await a.session.signIn(pairOf(1)); // the investor signs in meanwhile
+      expect(a.status()).toBe('signed-in');
+      held.release();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(a.status()).toBe('signed-in');
+    },
+  );
+
+  it('never shows the lock when the launch’s look at it answers after the session ended', async () => {
+    sessionStorage.setItem('app.sample', '1'); // a session from before the reload
+    let answer!: (method: 'webauthn') => void;
+    const enrolled = () => new Promise<'webauthn'>((resolve) => (answer = resolve));
+    let wired: ApiWiring | undefined;
+    const a = openTab(fakePlatform({ lock: { enrolled } }), (wiring) => {
+      wired = wiring;
+      return sampleOver()(wiring);
+    });
+    await waitFor(() => expect(answer).toBeDefined());
+    wired?.events.onSignedOut('session_revoked'); // the platform ends it meanwhile
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    answer('webauthn');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.status()).toBe('signed-out');
+  });
+
+  it('leaves the app signed out when the session ends while a sign-in wipes the old lock', async () => {
+    const held = gate();
+    let first = true;
+    const clear = () => {
+      if (!first) return Promise.resolve();
+      first = false;
+      return held.opened;
+    };
+    let wired: ApiWiring | undefined;
+    const a = openTab(fakePlatform({ lock: { clear } }), (wiring) => {
+      wired = wiring;
+      return sampleOver()(wiring);
+    });
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    const signingIn = a.session.enterSample(); // it waits on wiping the old lock
+    await vi.advanceTimersByTimeAsync(10);
+    wired?.events.onSignedOut('session_revoked'); // and the session ends meanwhile
+    await vi.advanceTimersByTimeAsync(10);
+    held.release();
+    await signingIn;
+    expect(a.status()).toBe('signed-out');
+    expect(sessionStorage.getItem('app.sample')).toBeNull();
+  });
+
+  it('leaves the app signed out when the session ends while a sign-in is stored', async () => {
+    const device = fakePlatform();
+    const held = gate();
+    let holding = false;
+    const storage = {
+      ...device.storage,
+      set: async (key: string, value: string) => {
+        if (holding && key === 'session') await held.opened;
+        return device.storage.set(key, value);
+      },
+    };
+    let wired: ApiWiring | undefined;
+    const a = openTab(
+      { ...device, storage },
+      (wiring) => {
+        wired = wiring;
+        return liveOver()(wiring);
+      },
+      createTokenStore(storage),
+    );
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    holding = true;
+    const signingIn = a.session.signIn(pairOf(1)); // storing the session waits
+    await vi.advanceTimersByTimeAsync(10);
+    wired?.events.onSignedOut('session_revoked'); // and the session ends meanwhile
+    await waitFor(() => expect(a.session.getSnapshot().status).toBe('signed-out'));
+    held.release();
+    await signingIn;
+    await vi.advanceTimersByTimeAsync(10);
+    expect(a.status()).toBe('signed-out');
+  });
+
+  it.each([
+    ['says yes', true],
+    ['says no', false],
+  ])(
+    'never opens, nor complains, when the device %s while the investor signs out',
+    async (_, ok) => {
+      sessionStorage.setItem('app.sample', '1');
+      let answer!: (ok: boolean) => void;
+      const verify = () => new Promise<boolean>((resolve) => (answer = resolve));
+      const api = createSampleApi({ latencyMs: 0 });
+      vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined)); // slow platform
+      const a = openTab(fakePlatform({ lock: { verify } }), () => api);
+      await waitFor(() => expect(a.status()).toBe('locked'));
+      void a.session.unlock(); // the device prompt is up
+      void a.session.signOut(); // and the investor signs out instead
+      answer(ok);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(a.status()).toBe('locked');
+      expect(a.session.getSnapshot().unlocking.error).toBeUndefined();
+    },
+  );
+
+  it('never opens when the platform answers the unlock’s check while the investor signs out', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    const api = createSampleApi({ latencyMs: 0 });
+    const me = await api.me();
+    let answer!: () => void;
+    vi.spyOn(api, 'me').mockImplementation(
+      () => new Promise((resolve) => (answer = () => resolve(me))),
+    );
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    const a = openTab(fakePlatform(), () => api);
+    await waitFor(() => expect(a.status()).toBe('locked'));
+    void a.session.unlock(); // the device says yes, and the platform is asked
+    await waitFor(() => expect(answer).toBeDefined());
+    void a.session.signOut(); // and the investor signs out instead
+    answer();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.status()).toBe('locked');
+  });
+
+  it('never shows the lock’s error when its check fails while the investor signs out', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    let fail!: (error: Error) => void;
+    const verify = () => new Promise<boolean>((_, reject) => (fail = reject));
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    const a = openTab(fakePlatform({ lock: { verify } }), () => api);
+    await waitFor(() => expect(a.status()).toBe('locked'));
+    void a.session.unlock();
+    void a.session.signOut();
+    fail(new Error('NotReadableError'));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.session.getSnapshot().unlocking.error).toBeUndefined();
+  });
+
+  it('offers no lock once the investor signs out while the device is asked what it offers', async () => {
+    let offer!: (method: 'webauthn') => void;
+    const available = () => new Promise<'webauthn'>((resolve) => (offer = resolve));
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    const a = openTab(fakePlatform({ lock: { available } }), () => api);
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.enterSample();
+    await waitFor(() => expect(offer).toBeDefined());
+    void a.session.signOut();
+    offer('webauthn');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.session.getSnapshot().lockSetup).toBeNull();
+  });
+});
+
+describe('AppSession: ending and starting sessions in one visit', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A tab signed in to the sample world, with no lock: `wired` reaches its callbacks. */
+  async function signedInTab(device = fakePlatform()) {
+    const api = createSampleApi({ latencyMs: 0 });
+    let wired: ApiWiring | undefined;
+    const tab = openTab(device, (wiring) => {
+      wired = wiring;
+      return api;
+    });
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    tab.session.skipLockSetup();
+    return { ...tab, api, onSignedOut: () => wired?.events.onSignedOut('session_revoked') };
+  }
+
+  it('tells the platform once when the investor taps Sign out twice', async () => {
+    const tab = await signedInTab();
+    const logout = vi.spyOn(tab.api, 'logout');
+    await Promise.all([tab.session.signOut(), tab.session.signOut()]);
+    expect(tab.status()).toBe('signed-out');
+    expect(logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the device once when the platform ends the session twice over', async () => {
+    const device = fakePlatform();
+    const tab = await signedInTab(device);
+    const clear = vi.spyOn(device.lock, 'clear');
+    tab.onSignedOut();
+    tab.onSignedOut();
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['signs out', (tab: Awaited<ReturnType<typeof signedInTab>>) => tab.session.signOut()],
+    [
+      'is signed out by the platform',
+      (tab: Awaited<ReturnType<typeof signedInTab>>) => tab.onSignedOut(),
+    ],
+  ])('forgets everything it fetched when the investor %s', async (_, end) => {
+    const tab = await signedInTab();
+    tab.queryClient.setQueryData(['sample', 'dashboard'], { of: 'the investor' });
+    void end(tab);
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    expect(tab.queryClient.getQueryData(['sample', 'dashboard'])).toBeUndefined();
+  });
+
+  it('forgets everything it fetched when another tab signs in as someone else', async () => {
+    const device = fakePlatform();
+    const a = openTab(device, liveOver());
+    const otherTab = createTokenStore(device.storage);
+    stops.push(otherTab.subscribe(() => {}));
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    a.queryClient.setQueryData(['live', 'dashboard'], { of: 'the first investor' });
+    await otherTab.start(pairOf(2));
+    await waitFor(() => expect(a.queryClient.getQueryData(['live', 'dashboard'])).toBeUndefined());
+    await waitFor(() => expect(a.status()).toBe('signed-in'));
+  });
+
+  it('can sign out, sign in and sign out again, telling the platform each time', async () => {
+    const tab = await signedInTab();
+    const logout = vi.spyOn(tab.api, 'logout');
+    await tab.session.signOut();
+    await tab.session.enterSample();
+    expect(tab.status()).toBe('signed-in');
+    await tab.session.signOut();
+    expect(tab.status()).toBe('signed-out');
+    expect(logout).toHaveBeenCalledTimes(2);
+  });
+
+  it('can be signed out by the platform in a second session of the same visit', async () => {
+    const tab = await signedInTab();
+    tab.onSignedOut();
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+    await tab.session.enterSample();
+    expect(tab.status()).toBe('signed-in');
+    tab.onSignedOut();
+    await waitFor(() => expect(tab.status()).toBe('signed-out'));
+  });
+
+  it('never lets a late answer of the device approve a later confirmation', async () => {
+    const answers: ((ok: boolean) => void)[] = [];
+    const verify = () => new Promise<boolean>((resolve) => answers.push(resolve));
+    const tab = await signedInTab(fakePlatform({ lock: { verify } }));
+    const settingUp = tab.session.setLockEnabled(true); // the investor sets up the device's lock
+    await waitFor(() => expect(tab.session.getSnapshot().lockSetup).not.toBeNull());
+    tab.session.enrolDevice();
+    expect(await settingUp).toBe(true);
+    const first = tab.session.confirm('Send $10.00 to $grace');
+    await waitFor(() => expect(tab.session.getSnapshot().confirmation).not.toBeNull());
+    tab.session.confirmWith(); // the device prompt is up
+    const second = tab.session.confirm('Send $20.00 to $grace'); // a newer one replaces it
+    expect(await first).toBe(false);
+    await waitFor(() => expect(tab.session.getSnapshot().confirmation?.reason).toMatch(/\$20/));
+    answers[0]?.(true); // the first prompt is answered, late
+    await vi.advanceTimersByTimeAsync(50);
+    expect(tab.session.getSnapshot().confirmation?.reason).toMatch(/\$20/);
+    tab.session.confirmWith();
+    answers[1]?.(true);
+    expect(await second).toBe(true);
   });
 });
