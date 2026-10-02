@@ -302,7 +302,7 @@ describe('verifyAssertion: every check, and malformed input', () => {
     const signed = await signAssertion(keyPair, {
       clientData: clientData(),
       rpId: 'app.example',
-      flags: 5,
+      flags: 0x05,
     });
     const valid = {
       publicKeySpki: await spkiOf(keyPair),
@@ -340,15 +340,10 @@ describe('verifyAssertion: every check, and malformed input', () => {
     const seen = { short: false, signByte: false };
     for (let i = 0; i < 20_000 && !(seen.short && seen.signByte); i++) {
       const fresh = crypto.getRandomValues(new Uint8Array(32));
-      const clientDataOf = {
-        type: 'webauthn.get',
-        challenge: base64url.encode(fresh),
-        origin: 'https://app.example',
-      };
       const signed = await signAssertion(keyPair, {
-        clientData: clientDataOf,
+        clientData: clientData({ challenge: base64url.encode(fresh) }),
         rpId: 'app.example',
-        flags: 5,
+        flags: 0x05,
       });
       const rLength = signed.signature[3]!;
       const sLength = signed.signature[5 + rLength]!;
