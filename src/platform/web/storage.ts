@@ -45,11 +45,21 @@ export function createSecureStorage(
   let key: Promise<CryptoKey> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
 
-  /** Runs this instance's calls one at a time in call order: a clear() waits for a set(). */
+  /**
+   * Runs this instance's calls one at a time in call order: a clear() waits for a set(). The queue
+   * goes on after a call that failed, and only the caller sees the failure: a call that nobody
+   * waits for still rejects unhandled.
+   */
   function inOrder<T>(task: () => Promise<T>): Promise<T> {
-    const run = queue.then(task);
-    queue = run.catch(() => undefined);
-    return run;
+    const settled = queue.then(task).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    queue = settled;
+    return settled.then((outcome) => {
+      if (outcome.ok) return outcome.value;
+      throw outcome.error;
+    });
   }
 
   /** The one key, shared by every call of this instance; a read that failed is tried again. */

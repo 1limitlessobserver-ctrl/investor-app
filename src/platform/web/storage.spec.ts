@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { clear, createStore, get } from 'idb-keyval';
 import { createSecureStorage, type KvStore } from './storage';
 import { memoryKvStore } from '../../test/memoryKvStore';
@@ -209,5 +209,41 @@ describe('secure storage: the key and the sealed entries', () => {
     await Promise.all([first.set('a', '1'), second.set('b', '2')]);
     const again = createSecureStorage();
     expect([await again.get('a'), await again.get('b')]).toEqual(['1', '2']);
+  });
+});
+
+describe('secure storage: the call queue', () => {
+  it('lets a call that nobody waits for reject unhandled', async () => {
+    const db: KvStore = { ...memoryKvStore(), set: () => Promise.reject(new Error('disk full')) };
+    const storage = createSecureStorage({ db });
+    const unhandled: unknown[] = [];
+    const collect = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', collect); // Vitest leaves a rejection with a listener to it
+    try {
+      void storage.set('a', '1');
+      await vi.waitFor(() => expect(unhandled).toHaveLength(1));
+    } finally {
+      process.off('unhandledRejection', collect);
+    }
+    expect(unhandled[0]).toEqual(new Error('disk full'));
+  });
+
+  it('goes on with the calls after one that failed', async () => {
+    const memory = memoryKvStore();
+    let full = true;
+    const db: KvStore = {
+      ...memory,
+      set: (key, value) => (full ? Promise.reject(new Error('disk full')) : memory.set(key, value)),
+    };
+    const storage = createSecureStorage({ db });
+    const failed = storage.set('a', '1');
+    const next = storage.get('a');
+    await expect(failed).rejects.toThrow('disk full');
+    expect(await next).toBeNull();
+    full = false;
+    await storage.set('b', '2');
+    expect(await storage.get('b')).toBe('2');
   });
 });
