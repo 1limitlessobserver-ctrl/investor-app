@@ -29,6 +29,11 @@ import type { SessionTokenStore, TokenStoreEvent } from './tokens';
 
 /** How long the app may stay hidden before it locks. */
 export const LOCK_AFTER_MS = 5 * 60_000;
+/**
+ * How long a sign-out waits for the platform to hear of it. The live client clears the stored
+ * session before it sends, so the sign-out can go on without the answer.
+ */
+const LOGOUT_WAIT_MS = 3_000;
 /** How long a sign-out waits for the push subscription to end. */
 const UNSUBSCRIBE_WAIT_MS = 3_000;
 /** The sample world signs in any email; this one, and its two-factor code where it asks. */
@@ -315,7 +320,7 @@ export function createSessionController(deps: SessionDeps) {
       generation += 1;
       closeFlows();
       try {
-        await api.logout();
+        await settled(api.logout(), LOGOUT_WAIT_MS);
       } catch {
         // Only a store that fails makes logout reject; ending the session here clears it anyway.
       }

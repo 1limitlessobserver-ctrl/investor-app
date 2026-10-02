@@ -532,6 +532,24 @@ describe('AppSession: signing out', () => {
     expect(localStorage.getItem('app.lockEnabled')).toBeNull();
   });
 
+  it('signs out here after three seconds when the platform does not answer', async () => {
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    const user = await launch(api);
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await user.click(screen.getByText('sign out'));
+    act(() => {
+      vi.advanceTimersByTime(2_500);
+    });
+    expect(status()).toHaveTextContent('signed-in');
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+  });
+
   it('says so when signing out cannot remove the lock from this device', async () => {
     let broken = false;
     const user = await launch(
