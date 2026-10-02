@@ -5,7 +5,7 @@ import { createMemoryRouter, type RouteObject } from 'react-router';
 import { createSampleApi } from '../api/createSampleApi';
 import type { LockMethod } from '../platform/types';
 import { stubRadixBrowserApis } from '../test/browserStubs';
-import { fakePlatform } from '../test/fakePlatform';
+import { FAKE_PASSCODE, fakePlatform } from '../test/fakePlatform';
 import { renderWithApp } from '../test/renderWithApp';
 import { App } from './App';
 import { AppProviders } from './providers';
@@ -27,6 +27,18 @@ describe('the routes', () => {
   it('shows a loading screen while the session starts', () => {
     renderWithApp({ route: '/' });
     expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+  });
+
+  it('shows nothing of the app while the session starts, however long that takes', async () => {
+    renderWithApp({
+      route: '/',
+      signedIn: true,
+      platform: { lock: { enrolled: () => new Promise<never>(() => {}) } }, // the device is slow
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Home', hidden: true })).toBeNull();
+    expect(screen.queryByRole('navigation', { hidden: true })).toBeNull();
   });
 
   it('takes a signed-out visitor through sign-in and back to where they were going', async () => {
@@ -89,6 +101,69 @@ describe('the routes', () => {
     expect(router.state.location.pathname).toBe('/sign-in');
     const notice = screen.getByText('Your session ended. Sign in again.');
     expect(notice.closest('[role="status"]')).not.toBeNull();
+  });
+
+  it('counts the unread alerts on the bell', async () => {
+    const unread = (await createSampleApi({ latencyMs: 0 }).notifications()).unreadCount;
+    expect(unread).toBeGreaterThan(0);
+    renderWithApp({ route: '/', signedIn: true });
+    const bell = await screen.findByRole('link', { name: `Alerts, ${unread} unread` });
+    expect(bell).toHaveTextContent(String(unread));
+  });
+
+  it('signs out from the lock with Sign out instead', async () => {
+    sessionStorage.setItem('app.sample', '1'); // a session from before the reload
+    const user = userEvent.setup();
+    const { router } = renderWithApp({ route: '/' });
+    await screen.findByRole('heading', { name: 'Locked' });
+    await user.click(screen.getByRole('button', { name: 'Sign out instead' }));
+    expect(
+      await screen.findByRole('button', { name: 'Explore with sample data' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/sign-in');
+  });
+
+  it('opens the lock with the passcode, and says what a wrong one leaves', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    const user = userEvent.setup();
+    const verifyPasscode = vi
+      .fn<(code: string) => Promise<{ ok: boolean; attemptsLeft: number }>>()
+      .mockResolvedValueOnce({ ok: false, attemptsLeft: 4 })
+      .mockResolvedValue({ ok: true, attemptsLeft: 5 });
+    renderWithApp({
+      route: '/',
+      platform: { lock: { enrolled: () => Promise.resolve('passcode'), verifyPasscode } },
+    });
+    await user.type(await screen.findByLabelText('Passcode'), '111111');
+    await user.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('4 attempts left');
+    await user.type(screen.getByLabelText('Passcode'), FAKE_PASSCODE);
+    await user.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    expect(verifyPasscode).toHaveBeenLastCalledWith(FAKE_PASSCODE);
+  });
+
+  it('says on the lock when its check cannot run, and shows a check running', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    const user = userEvent.setup();
+    let fail!: (error: Error) => void;
+    renderWithApp({
+      route: '/',
+      platform: {
+        lock: {
+          enrolled: () => Promise.resolve('passcode'),
+          verifyPasscode: () => new Promise((_, reject) => (fail = reject)),
+        },
+      },
+    });
+    await user.type(await screen.findByLabelText('Passcode'), '111111');
+    await user.click(screen.getByRole('button', { name: 'Unlock' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Unlock' })).toHaveAttribute('aria-busy', 'true'),
+    );
+    act(() => fail(new Error('storage busy')));
+    expect(await screen.findByRole('alert')).toHaveTextContent("The lock couldn't be checked.");
+    expect(screen.getByRole('button', { name: 'Unlock' })).not.toHaveAttribute('aria-busy');
   });
 
   it('shows the update screen in place of the app, where Sign out still works', async () => {
