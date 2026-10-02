@@ -33,7 +33,8 @@ describe('FlowShell', () => {
     expect(within(header).getByRole('button', { name: 'Help' })).toBeInTheDocument();
     expect(within(header).getByRole('link', { name: 'Alerts, 1 unread' })).toBeInTheDocument();
     expect(within(header).getByRole('link', { name: 'Oracle' })).toBeInTheDocument();
-    expect(screen.getByRole('main')).toHaveTextContent('Methods');
+    // The title sits in the header bar, so it names the main landmark too.
+    expect(screen.getByRole('main', { name: 'Deposit' })).toHaveTextContent('Methods');
     expect(screen.queryByRole('navigation', { name: 'Main' })).toBeNull();
 
     await userEvent.setup().click(within(header).getByRole('button', { name: 'Back' }));
@@ -64,6 +65,7 @@ describe('FlowShell', () => {
     );
     expect(screen.getAllByRole('link', { name: /^Alerts, \d+ unread$/ })).toHaveLength(1);
     expect(screen.getByRole('heading', { level: 1, name: 'Alerts' })).toBeInTheDocument();
+    expect(screen.getByRole('main', { name: 'Alerts' })).toHaveTextContent('Today');
     expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument();
   });
 });

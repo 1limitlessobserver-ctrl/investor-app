@@ -14,6 +14,8 @@ export interface ShellFrameProps {
   banners: ReactNode;
   /** Under the content on phones only (the tab bar). */
   footer?: ReactNode;
+  /** The id of a heading outside `<main>` that names it: FlowShell's title, in the header bar. */
+  mainLabelledBy?: string | undefined;
   children: ReactNode;
 }
 
@@ -30,6 +32,7 @@ export function ShellFrame({
   header,
   banners,
   footer,
+  mainLabelledBy,
   children,
 }: ShellFrameProps) {
   const main = useRef<HTMLElement>(null);
@@ -45,7 +48,13 @@ export function ShellFrame({
     </a>
   );
   const content = (
-    <main ref={main} id="main" tabIndex={-1} className={styles.main}>
+    <main
+      ref={main}
+      id="main"
+      tabIndex={-1}
+      className={styles.main}
+      aria-labelledby={mainLabelledBy}
+    >
       {children}
     </main>
   );
