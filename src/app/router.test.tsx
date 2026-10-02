@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter } from 'react-router';
 import { createSampleApi } from '../api/createSampleApi';
+import type { LockMethod } from '../platform/types';
 import { fakePlatform } from '../test/fakePlatform';
 import { renderWithApp } from '../test/renderWithApp';
 import { App } from './App';
@@ -74,6 +75,27 @@ describe('the routes', () => {
       await screen.findByRole('button', { name: 'Explore with sample data' }),
     ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/sign-in');
+  });
+
+  it('never opens a locked app whose lock is gone: it signs out, showing nothing meanwhile', async () => {
+    sessionStorage.setItem('app.sample', '1'); // a session from before the reload
+    let method: LockMethod | null = 'webauthn';
+    renderWithApp({
+      route: '/',
+      latencyMs: 50, // the sign-out takes a moment
+      platform: { lock: { enrolled: () => Promise.resolve(method) } },
+    });
+    expect(await screen.findByRole('heading', { name: 'Locked' })).toBeInTheDocument();
+    // Another tab signs out: the device's lock goes, and its setting.
+    method = null;
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'app.lockEnabled' }));
+    });
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Locked' })).toBeNull());
+    expect(screen.queryByRole('heading', { name: 'Home', hidden: true })).toBeNull();
+    expect(
+      await screen.findByRole('button', { name: 'Explore with sample data' }),
+    ).toBeInTheDocument();
   });
 
   it('says plainly when a screen fails, never with the router’s own page', async () => {
