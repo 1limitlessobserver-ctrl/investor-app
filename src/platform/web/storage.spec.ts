@@ -152,6 +152,16 @@ describe('secure storage: the key and the sealed entries', () => {
     expect(await createSecureStorage({ db }).get('c')).toBe('3');
   });
 
+  it('runs its calls in call order: a clear is never overtaken by a set in flight', async () => {
+    const db = memoryStore();
+    const storage = createSecureStorage({ db });
+    await Promise.all([storage.set('a', '1'), storage.clear()]);
+    expect(await storage.get('a')).toBeNull();
+    expect([...db.raw.keys()]).toEqual(['secure:key']);
+    await Promise.all([storage.set('b', '2'), storage.remove('b'), storage.set('c', '3')]);
+    expect([await storage.get('b'), await storage.get('c')]).toEqual([null, '3']);
+  });
+
   it('clear keeps the key and entries that are not its own', async () => {
     const db = memoryStore();
     const storage = createSecureStorage({ db });

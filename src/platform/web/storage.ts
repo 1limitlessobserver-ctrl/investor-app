@@ -38,6 +38,14 @@ export function createSecureStorage(
   const db = opts.db ?? indexedDbStore();
   const keyStore = opts.keyStore ?? db;
   let key: Promise<CryptoKey> | undefined;
+  let queue: Promise<unknown> = Promise.resolve();
+
+  /** Runs this instance's calls one at a time in call order: a clear() waits for a set(). */
+  function inOrder<T>(task: () => Promise<T>): Promise<T> {
+    const run = queue.then(task);
+    queue = run.catch(() => undefined);
+    return run;
+  }
 
   /** The one key, shared by every call of this instance; a read that failed is tried again. */
   function theKey(): Promise<CryptoKey> {
@@ -49,42 +57,43 @@ export function createSecureStorage(
   }
 
   return {
-    async get(name) {
-      const entry = entryName(name);
-      const sealed = await db.get(entry);
-      if (sealed === undefined) return null;
-      const cryptoKey = await theKey();
-      try {
-        return await open(cryptoKey, name, sealed);
-      } catch {
-        // Another instance may have stored a different key since this one read it: adopt the
-        // stored key and try once more before calling the value stale. (IndexedDB answers a new
-        // object on every read, so there the second try always runs.)
-        const stored = await keyStore.get(KEY_ENTRY);
-        if (stored instanceof CryptoKey && stored !== cryptoKey) {
-          key = Promise.resolve(stored);
-          try {
-            return await open(stored, name, sealed);
-          } catch {
-            // Stale under the stored key too.
+    get: (name) =>
+      inOrder(async () => {
+        const entry = entryName(name);
+        const sealed = await db.get(entry);
+        if (sealed === undefined) return null;
+        const cryptoKey = await theKey();
+        try {
+          return await open(cryptoKey, name, sealed);
+        } catch {
+          // Another instance may have stored a different key since this one read it: adopt the
+          // stored key and try once more before calling the value stale. (IndexedDB answers a new
+          // object on every read, so there the second try always runs.)
+          const stored = await keyStore.get(KEY_ENTRY);
+          if (stored instanceof CryptoKey && stored !== cryptoKey) {
+            key = Promise.resolve(stored);
+            try {
+              return await open(stored, name, sealed);
+            } catch {
+              // Stale under the stored key too.
+            }
           }
+          await db.del(entry);
+          return null;
         }
-        await db.del(entry);
-        return null;
-      }
-    },
-    async set(name, value) {
-      const entry = entryName(name);
-      await db.set(entry, await seal(await theKey(), name, value));
-    },
-    async remove(name) {
-      await db.del(entryName(name));
-    },
-    async clear() {
-      for (const entry of await db.keys()) {
-        if (entry.startsWith(PREFIX) && entry !== KEY_ENTRY) await db.del(entry);
-      }
-    },
+      }),
+    set: (name, value) =>
+      inOrder(async () => {
+        const entry = entryName(name);
+        await db.set(entry, await seal(await theKey(), name, value));
+      }),
+    remove: (name) => inOrder(() => db.del(entryName(name))),
+    clear: () =>
+      inOrder(async () => {
+        for (const entry of await db.keys()) {
+          if (entry.startsWith(PREFIX) && entry !== KEY_ENTRY) await db.del(entry);
+        }
+      }),
   };
 }
 
