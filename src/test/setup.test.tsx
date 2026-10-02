@@ -49,6 +49,19 @@ describe('vitest.setup', () => {
     });
   });
 
+  describe('web storage', () => {
+    it('keeps what a test stores for the rest of that test', () => {
+      localStorage.setItem('app.theme', 'ivory');
+      sessionStorage.setItem('app.sample', '1');
+      expect(localStorage.getItem('app.theme')).toBe('ivory');
+    });
+
+    it('starts the next test on a fresh device', () => {
+      expect(localStorage.length).toBe(0);
+      expect(sessionStorage.length).toBe(0);
+    });
+  });
+
   describe('browser APIs', () => {
     it('offers Web Crypto with subtle', async () => {
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('investor'));

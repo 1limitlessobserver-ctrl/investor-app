@@ -6,6 +6,13 @@ import { afterEach } from 'vitest';
 
 // `globals: false` stops Testing Library registering its own cleanup, so unmount after each test.
 afterEach(cleanup);
+// Then every test starts on a fresh device, as each Playwright test gets a fresh browser context:
+// what one test kept in web storage (a sample session, the lock choice, a cached brand) never
+// reaches the next.
+afterEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
+});
 
 if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true });
