@@ -14,7 +14,7 @@ import { createQueryClient } from '../queries/client';
 import { cssRule } from '../test/cssRules';
 import { fakePlatform } from '../test/fakePlatform';
 import { createSessionController } from './sessionController';
-import { createTokenStore } from './tokens';
+import { createTokenStore, type TokenStoreEvent } from './tokens';
 
 function Probe() {
   const s = useAppSession();
@@ -287,6 +287,31 @@ describe('AppSession: launching with a stored session', () => {
     );
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
     expect(reset).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends nothing once the investor signs in again while storage is being reset', async () => {
+    let release!: () => void;
+    const reset = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+    let unreadable = true;
+    const enrolled = () =>
+      unreadable ? Promise.reject(new Error(UNREADABLE)) : Promise.resolve(null);
+    render(
+      <AppSessionProvider
+        api={createSampleApi({ latencyMs: 0 })}
+        platform={fakePlatform({ storage: { reset }, lock: { enrolled } })}
+      >
+        <Probe />
+      </AppSessionProvider>,
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await waitFor(() => expect(reset).toHaveBeenCalledTimes(1)); // the launch met a lost key
+    unreadable = false;
+    await user.click(screen.getByText('enter')); // a new session begins meanwhile
+    await waitFor(() => expect(status()).toHaveTextContent('signed-in'));
+    act(() => release());
+    await act(() => vi.advanceTimersByTimeAsync(50));
+    expect(status()).toHaveTextContent('signed-in');
+    expect(sessionStorage.getItem('app.sample')).toBe('1');
   });
 
   it('counts down a wrong passcode and signs out after the last attempt', async () => {
@@ -1604,6 +1629,23 @@ describe('AppSession: two tabs on one device', () => {
     // This tab hears nothing of the other: its store has no channel.
     const tokenStore = createTokenStore(device.storage, { channel: null });
     const clear = vi.spyOn(tokenStore, 'clear');
+    const a = openTab(device, liveOver(), tokenStore);
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    const mine = await storedKey(device);
+    const otherKey = await createTokenStore(device.storage, { channel: null }).start(pairOf(2));
+    // A call of this tab's cannot read its session: the session ends here.
+    const unreadable = () => Promise.reject(new MobileApiError('storage_error', 0));
+    await a.queryClient
+      .fetchQuery({ queryKey: ['live', 'x'], queryFn: unreadable })
+      .catch(() => {});
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    expect(clear.mock.calls).toEqual([[mine]]);
+    expect(await storedKey(device)).toBe(otherKey);
+  });
+
+  it('follows a newer sign-in it finds stored when the platform ends its own', async () => {
+    const device = fakePlatform();
     let wired: ApiWiring | undefined;
     const a = openTab(
       device,
@@ -1611,16 +1653,157 @@ describe('AppSession: two tabs on one device', () => {
         wired = wiring;
         return liveOver()(wiring);
       },
-      tokenStore,
+      createTokenStore(device.storage, { channel: null }), // hears nothing of other tabs
     );
     await waitFor(() => expect(a.status()).toBe('signed-out'));
     await a.session.signIn(pairOf(1));
-    const mine = await storedKey(device);
-    const otherKey = await createTokenStore(device.storage, { channel: null }).start(pairOf(2));
+    const newer = await createTokenStore(device.storage, { channel: null }).start(pairOf(2));
+    a.queryClient.setQueryData(['live', 'dashboard'], { of: 'the first sign-in' });
     wired?.events.onSignedOut('session_revoked'); // news of this tab's own sign-in, late
-    await waitFor(() => expect(clear).toHaveBeenCalled());
-    await vi.advanceTimersByTimeAsync(10);
-    expect(clear.mock.calls).toEqual([[mine]]);
-    expect(await storedKey(device)).toBe(otherKey);
+    await waitFor(() => expect(a.queryClient.getQueryData(['live', 'dashboard'])).toBeUndefined());
+    await waitFor(() => expect(a.status()).toBe('signed-in'));
+    expect(await storedKey(device)).toBe(newer);
+  });
+
+  it('follows a sign-in stored by the time it hears another tab sign out', async () => {
+    const device = fakePlatform();
+    const real = createTokenStore(device.storage, { channel: null });
+    let tell: ((event: TokenStoreEvent) => void) | undefined;
+    const a = openTab(device, liveOver(), {
+      ...real,
+      subscribe: (listener) => {
+        tell = listener;
+        return () => (tell = undefined);
+      },
+    });
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    const mine = (await storedKey(device)) ?? '';
+    const newer = await createTokenStore(device.storage, { channel: null }).start(pairOf(2));
+    tell?.({ type: 'clear', sessionKey: mine }); // news of a sign-out, and a sign-in since
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.status()).toBe('signed-in');
+    expect(await storedKey(device)).toBe(newer);
+  });
+
+  it.each([
+    ['cannot be read', new Error('disk error'), 0],
+    ['has lost its key', new Error(UNREADABLE), 1],
+  ])('ends the session when the store it checks first %s', async (_, failure, resets) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    let broken = false;
+    const reset = vi.fn(() => {
+      broken = false; // a reset makes a new key: the store can be read again
+      return device.storage.reset();
+    });
+    const storage = {
+      ...device.storage,
+      get: (key: string) => (broken ? Promise.reject(failure) : device.storage.get(key)),
+      reset,
+    };
+    const real = createTokenStore(storage, { channel: null });
+    let tell: ((event: TokenStoreEvent) => void) | undefined;
+    const a = openTab({ ...device, storage }, liveOver(), {
+      ...real,
+      subscribe: (listener) => {
+        tell = listener;
+        return () => (tell = undefined);
+      },
+    });
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    broken = true;
+    tell?.({ type: 'clear', sessionKey: 'any' }); // another tab signed out
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    expect(reset).toHaveBeenCalledTimes(resets);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['answers', false],
+    ['fails', true],
+  ])('ends nothing begun here while it checked the store, whether that %s', async (_, fails) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    let holding = false;
+    let release!: () => void;
+    const storage = {
+      ...device.storage,
+      get: async (key: string) => {
+        if (holding && key === 'session') {
+          holding = false; // only this one look waits
+          await new Promise<void>((resolve) => (release = resolve));
+          if (fails) throw new Error('disk error');
+        }
+        return device.storage.get(key);
+      },
+    };
+    let wired: ApiWiring | undefined;
+    const a = openTab(
+      { ...device, storage },
+      (wiring) => {
+        wired = wiring;
+        return liveOver()(wiring);
+      },
+      createTokenStore(storage, { channel: null }),
+    );
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    holding = true;
+    wired?.events.onSignedOut('session_revoked'); // it looks at the store first, slowly
+    await waitFor(() => expect(release).toBeDefined());
+    await a.session.signIn(pairOf(2)); // meanwhile the investor signs in again here
+    release();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.status()).toBe('signed-in');
+    expect(await storedKey(device)).not.toBeNull();
+  });
+
+  it('follows a sign-in stored just as it was about to end its session at launch', async () => {
+    const device = fakePlatform();
+    const deafTab = () => createTokenStore(device.storage, { channel: null });
+    await deafTab().start(pairOf(1)); // a session from before the reload, with the lock on
+    localStorage.setItem('app.lockEnabled', 'true');
+    await device.lock.clear(); // and its lock gone: the session must end
+    let reads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const storage = {
+      ...device.storage,
+      get: async (key: string) => {
+        if (key === 'session' && ++reads === 2) await held; // a second look at the store waits
+        return device.storage.get(key);
+      },
+    };
+    const a = openTab(
+      { ...device, storage },
+      liveOver(),
+      createTokenStore(storage, { channel: null }),
+    );
+    await waitFor(() => expect(reads).toBe(2));
+    // Meanwhile another tab, unheard, signs in afresh: no lock, and no setting.
+    localStorage.removeItem('app.lockEnabled');
+    const newer = await deafTab().start(pairOf(2));
+    release();
+    await waitFor(() => expect(a.status()).toBe('signed-in'));
+    expect(await storedKey(device)).toBe(newer);
+  });
+
+  it('follows a sign-in it finds stored when the lock it knew is gone', async () => {
+    const device = fakePlatform();
+    const a = openTab(device, liveOver(), createTokenStore(device.storage, { channel: null }));
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    await waitFor(() => expect(a.session.getSnapshot().lockSetup).not.toBeNull());
+    a.session.enrolDevice(); // the investor sets up the device's own lock
+    await waitFor(() => expect(a.session.getSnapshot().lockMethod).toBe('webauthn'));
+    // Another tab, unheard, signs out and in again: the lock and its setting go.
+    await device.lock.clear();
+    localStorage.removeItem('app.lockEnabled');
+    const newer = await createTokenStore(device.storage, { channel: null }).start(pairOf(2));
+    a.session.lock(); // Lock now: the lock is found gone
+    await waitFor(() => expect(a.status()).toBe('signed-in'));
+    expect(await storedKey(device)).toBe(newer);
   });
 });

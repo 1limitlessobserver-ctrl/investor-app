@@ -26,6 +26,7 @@ import type { SignedOutReason } from '../api/createLiveApi';
 import type { PlatformApi } from '../api/PlatformApi';
 import type { Brand, LoginResult, MobileTokens } from '../api/types';
 import type { ThemeId } from '../design/themes';
+import { reportProblem } from '../lib/report';
 import { isBelowMinimum } from '../lib/semver';
 import type { LockMethod, Platform } from '../platform/types';
 import { brandQuery, meQuery } from '../queries/identity';
@@ -205,7 +206,9 @@ export type SessionController = ReturnType<typeof createSessionController>;
 export function createSessionController(deps: SessionDeps) {
   const { platform, queryClient, tokenStore, appVersion } = deps;
   const events: SessionEvents = {
-    onSignedOut: (reason) => void endHere(reason === 'refresh_failed' ? reason : 'revoked'),
+    onSignedOut: (reason) => {
+      void endUnlessMoved(reason === 'refresh_failed' ? reason : 'revoked', generation);
+    },
     onUpgradeRequired: (minVersion) => upgradeRequired(minVersion),
     onStorageError: () => set({ notice: SESSION_COPY.sessionNotSaved }),
   };
@@ -278,7 +281,7 @@ export function createSessionController(deps: SessionDeps) {
         // The lock is on and nothing can unlock it any more: the app never opens unlocked. The
         // session ends here only: this tab may be behind the shared store, and telling the
         // platform could end a newer sign-in made elsewhere.
-        await endHere('lock_gone');
+        await endUnlessMoved('lock_gone', gen);
       }
     } catch (error) {
       if (gen === generation) await storageFailed(error);
@@ -414,6 +417,32 @@ export function createSessionController(deps: SessionDeps) {
   }
 
   /**
+   * Ends the session for `reason`, found while the generation was `gen`: unless the session has
+   * moved on since, or (live) the store holds another sign-in by now, which this tab then follows
+   * instead. A store that cannot be read for this check ends the session all the same.
+   */
+  async function endUnlessMoved(reason: EndReason, gen: number): Promise<void> {
+    if (live) {
+      let stored: string | null;
+      try {
+        stored = (await tokenStore.get())?.sessionKey ?? null;
+      } catch (error) {
+        reportProblem('ending the session: reading the store', error);
+        if (gen !== generation) return;
+        if (isUnreadableKey(error)) await storageFailed(error);
+        else await endHere(reason);
+        return;
+      }
+      if (gen !== generation) return;
+      if (stored !== null && stored !== sessionKey) {
+        follow();
+        return;
+      }
+    }
+    await endHere(reason);
+  }
+
+  /**
    * Takes this tab's sign-in out of the store (live), by its key. With no key known, nothing is
    * cleared, unless the investor signs out: then whatever is stored. Resolves whether it worked.
    */
@@ -446,10 +475,14 @@ export function createSessionController(deps: SessionDeps) {
     }
   }
 
-  /** Storage this device cannot read: sign in again, after a reset when its key is lost. */
+  /**
+   * Storage this device cannot read: sign in again, after a reset when its key is lost. A session
+   * that begins during the reset is not ended.
+   */
   async function storageFailed(error: unknown): Promise<void> {
+    const gen = generation;
     if (isUnreadableKey(error)) await resetStorage();
-    await endHere('storage');
+    if (gen === generation) await endHere('storage');
   }
 
   // ---- The lock ----------------------------------------------------------------------------
@@ -480,7 +513,7 @@ export function createSessionController(deps: SessionDeps) {
       set({ lockMethod: method, lockChoice: choice });
     }
     if (method === null && (state.status === 'locked' || lockEnabled())) {
-      void endHere('lock_gone');
+      void endUnlessMoved('lock_gone', gen);
       return false;
     }
     return true;
@@ -834,7 +867,7 @@ export function createSessionController(deps: SessionDeps) {
   /** Another tab signed in or out: this one follows what is stored now. */
   function storeChanged(event: TokenStoreEvent): void {
     if (event.type === 'clear') {
-      if (state.status !== 'signed-out') void endHere('elsewhere');
+      if (state.status !== 'signed-out') void endUnlessMoved('elsewhere', generation);
       return;
     }
     sessionKey = event.sessionKey;
