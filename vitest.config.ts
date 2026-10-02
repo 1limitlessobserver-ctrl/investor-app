@@ -22,6 +22,9 @@ export default defineConfig({
     // `vmThreads` in the run summary. Plain forks (the default) keep every file in its own process.
     pool: 'forks',
     setupFiles: ['./vitest.setup.ts'],
+    // Every spy is restored before each test, so a stub (a quiet console, say) never outlives its
+    // test and hides what a later one prints.
+    restoreMocks: true,
     include: ['src/**/*.{spec,test}.{ts,tsx}', 'scripts/**/*.spec.ts'],
     exclude: [...configDefaults.exclude, '.reference/**'],
     css: { modules: { classNameStrategy: 'non-scoped' } },

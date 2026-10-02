@@ -1941,6 +1941,7 @@ describe('AppSession: two tabs on one device', () => {
   });
 
   it('clears only the sign-in it holds, never a newer one stored by another tab', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const device = fakePlatform();
     // This tab hears nothing of the other: its store has no channel.
     const tokenStore = createTokenStore(device.storage, { channel: null });
@@ -1958,6 +1959,10 @@ describe('AppSession: two tabs on one device', () => {
     await waitFor(() => expect(a.status()).toBe('signed-out'));
     expect(clear.mock.calls).toEqual([[mine]]);
     expect(await storedKey(device)).toBe(otherKey);
+    expect(warn).toHaveBeenCalledWith(
+      '[investor-app] a call could not read the session:',
+      expect.any(MobileApiError),
+    );
   });
 
   it('names its own sign-in when it tells the platform of a sign-out', async () => {
@@ -2746,6 +2751,8 @@ describe('AppSession: unlocking a live session', () => {
     ['signed out', 'signed-out'],
     ['signed in again', 'locked'],
   ] as const)('follows the store, never opening, when another tab %s unheard', async (_, then) => {
+    // The other sign-in's refresh, which the stand-in platform cannot answer, fails the check.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     const device = fakePlatform();
     const a = await lockedLiveTab(device);
     await device.storage.remove('session'); // another tab signed out; this one never heard

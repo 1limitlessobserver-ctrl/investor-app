@@ -81,6 +81,19 @@ describe('vitest.setup', () => {
     });
   });
 
+  // restoreMocks in vitest.config.ts: a spy, such as a stubbed console, ends with its test.
+  describe('spies', () => {
+    it('lets a test stub the console', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      console.warn('kept quiet');
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts the next test with the console as it was', () => {
+      expect(vi.isMockFunction(console.warn)).toBe(false);
+    });
+  });
+
   describe('browser APIs', () => {
     it('offers Web Crypto with subtle', async () => {
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('investor'));
