@@ -1,4 +1,4 @@
-import { Navigate, Outlet, useLocation } from 'react-router';
+import { isRouteErrorResponse, Navigate, Outlet, useLocation, useRouteError } from 'react-router';
 import { AppShell } from '../components/AppShell';
 import { LockScreen } from '../components/LockScreen';
 import { SampleRibbon } from '../components/SampleRibbon';
@@ -37,11 +37,27 @@ export function StartingUp() {
 }
 
 /**
- * A route that failed to render, in place of the router's own error page: a calm message and a
- * reload. The router still reports the error to the console.
+ * The top route's place while a screen's code is still on its way at launch (a lazy route): the
+ * loading view, and the ribbon in sample mode, never an empty page.
+ */
+export function LoadingRoute() {
+  const { mode } = useAppSession();
+  return (
+    <>
+      {mode === 'sample' && <SampleRibbon />}
+      <StartingUp />
+    </>
+  );
+}
+
+/**
+ * A route that failed to render or load, in place of the router's own error page: a calm message
+ * and a reload (App reports the error). An address no route knows goes home.
  */
 export function RouteError() {
   const { mode } = useAppSession();
+  const error = useRouteError();
+  if (isRouteErrorResponse(error) && error.status === 404) return <Navigate to="/" replace />;
   return (
     <>
       {mode === 'sample' && <SampleRibbon />}

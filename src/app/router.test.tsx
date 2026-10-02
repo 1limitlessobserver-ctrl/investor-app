@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter } from 'react-router';
+import { createMemoryRouter, type RouteObject } from 'react-router';
 import { createSampleApi } from '../api/createSampleApi';
 import type { LockMethod } from '../platform/types';
+import { stubRadixBrowserApis } from '../test/browserStubs';
 import { fakePlatform } from '../test/fakePlatform';
 import { renderWithApp } from '../test/renderWithApp';
 import { App } from './App';
@@ -14,6 +15,13 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
 });
+
+/** The app's own top route (its layout, error page and loading view), over `children`. */
+function underTop(children: RouteObject[]): RouteObject[] {
+  const [top] = routes;
+  if (top === undefined || top.index === true) throw new Error('The app has no top layout route.');
+  return [{ ...top, children }];
+}
 
 describe('the routes', () => {
   it('shows a loading screen while the session starts', () => {
@@ -106,10 +114,63 @@ describe('the routes', () => {
     expect(logout).not.toHaveBeenCalled();
   });
 
+  it('replaces the address a signed-out visitor never reached with sign-in', async () => {
+    const { router } = renderWithApp({ route: '/?from=link' });
+    await screen.findByRole('button', { name: 'Explore with sample data' });
+    expect(router.state.location.pathname).toBe('/sign-in');
+    expect(router.state.historyAction).toBe('REPLACE');
+  });
+
+  it('shows the loading view, with the ribbon, while a screen’s code is on its way', async () => {
+    stubRadixBrowserApis();
+    const router = createMemoryRouter(
+      underTop([{ path: '/', lazy: () => new Promise<never>(() => {}) }]),
+    );
+    render(
+      <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
+        <App router={router} />
+      </AppProviders>,
+    );
+    expect(await screen.findByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    expect(screen.getByText('Sample', { exact: true })).toBeInTheDocument();
+  });
+
+  it('sends an address no route knows home', async () => {
+    const router = createMemoryRouter(underTop([{ path: '/', element: <h1>Home</h1> }]), {
+      initialEntries: ['/nowhere'],
+    });
+    render(
+      <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
+        <App router={router} />
+      </AppProviders>,
+    );
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/');
+  });
+
+  it('says plainly when a screen’s code cannot load, and reports why', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failure = new TypeError('Failed to fetch dynamically imported module: /assets/x.js');
+    const router = createMemoryRouter(
+      underTop([{ path: '/', lazy: () => Promise.reject(failure) }]),
+    );
+    render(
+      <AppProviders api={createSampleApi({ latencyMs: 0 })} platform={fakePlatform()}>
+        <App router={router} />
+      </AppProviders>,
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
+    expect(warn).toHaveBeenCalledWith('[investor-app] showing a screen:', failure);
+    logged.mockRestore();
+  });
+
   it('says plainly when a screen fails, never with the router’s own page', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const problem = new Error('a screen that cannot render');
     function Broken(): never {
-      throw new Error('a screen that cannot render');
+      throw problem;
     }
     // The app's own top route, with a screen that fails beneath it.
     const [top] = routes;
@@ -128,7 +189,7 @@ describe('the routes', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
     expect(screen.queryByText(/Unexpected Application Error/)).toBeNull();
-    expect(logged).toHaveBeenCalled(); // the error still reaches the console
+    expect(warn).toHaveBeenCalledWith('[investor-app] showing a screen:', problem);
     logged.mockRestore();
   });
 });
