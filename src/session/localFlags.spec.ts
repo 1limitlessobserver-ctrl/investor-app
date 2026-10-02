@@ -23,6 +23,13 @@ describe('lockPreference', () => {
     localStorage.setItem('app.lockEnabled', 'maybe');
     expect(lockPreference.read()).toBeNull();
   });
+
+  it('knows the storage events of another tab that may have changed it', () => {
+    const event = (key: string | null) => new StorageEvent('storage', { key });
+    expect(lockPreference.changedBy(event('app.lockEnabled'))).toBe(true);
+    expect(lockPreference.changedBy(event(null))).toBe(true); // that tab cleared the storage
+    expect(lockPreference.changedBy(event('app.theme'))).toBe(false);
+  });
 });
 
 describe('sampleFlag', () => {

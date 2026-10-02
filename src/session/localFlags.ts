@@ -28,6 +28,10 @@ export const lockPreference = {
   clear(): void {
     attempt(() => localStorage.removeItem(LOCK_KEY), undefined);
   },
+  /** Another tab's storage event that may have changed it (null: that tab cleared it all). */
+  changedBy(event: StorageEvent): boolean {
+    return event.key === null || event.key === LOCK_KEY;
+  },
 };
 
 export const sampleFlag = {

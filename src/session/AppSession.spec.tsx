@@ -7,6 +7,7 @@ import { createSampleApi, type SampleApi } from '../api/createSampleApi';
 import { createLiveApi } from '../api/createLiveApi';
 import { MobileApiError } from '../api/MobileApiError';
 import type { PlatformApi } from '../api/PlatformApi';
+import type { Platform } from '../platform/types';
 import { fakePlatform } from '../test/fakePlatform';
 import { createTokenStore } from './tokens';
 
@@ -384,6 +385,114 @@ describe('AppSession: the lock while signed in', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(document.title).toBe('confirmed'));
+  });
+});
+
+describe('AppSession: a lock another tab changes', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    document.title = '';
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Signs in afresh and passes on the lock offered: "Not now" leaves the setting unset. */
+  async function signInWithoutLock(platform: Platform) {
+    const user = await launch(createSampleApi({ latencyMs: 0 }), platform);
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(localStorage.getItem('app.lockEnabled')).toBeNull();
+    expect(screen.getByTestId('lock')).toHaveTextContent('false');
+    return user;
+  }
+
+  /** Another tab sets up the device's own lock; a storage event tells this tab, if `heard`. */
+  async function lockSetUpElsewhere(platform: Platform, heard: boolean) {
+    await platform.lock.enrollWebAuthn({ id: 'inv_1', email: 'investor@sample.app' });
+    localStorage.setItem('app.lockEnabled', 'true');
+    if (!heard) return;
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', { key: 'app.lockEnabled', newValue: 'true' }),
+      );
+    });
+  }
+
+  it('hears a lock set up in another tab: confirming asks the device, and time away locks', async () => {
+    const verify = vi.fn(() => Promise.resolve(false));
+    const platform = fakePlatform({ lock: { verify } });
+    const user = await signInWithoutLock(platform);
+    await lockSetUpElsewhere(platform, true);
+    await waitFor(() => expect(screen.getByTestId('lock')).toHaveTextContent('true'));
+    await user.click(screen.getByText('confirm'));
+    expect(await screen.findByRole('dialog', { name: 'Confirm' })).not.toHaveTextContent(
+      'Set up a device lock',
+    );
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "Your device didn't confirm it's you.",
+    );
+    expect(verify).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    act(() => {
+      hidden('hidden');
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      hidden('visible');
+    });
+    await waitFor(() => expect(status()).toHaveTextContent('locked'));
+  });
+
+  it('asks the device to confirm when a lock was set up elsewhere, unheard', async () => {
+    const verify = vi.fn(() => Promise.resolve(true));
+    const platform = fakePlatform({ lock: { verify } });
+    const user = await signInWithoutLock(platform);
+    await lockSetUpElsewhere(platform, false);
+    await user.click(screen.getByText('confirm'));
+    expect(await screen.findByRole('dialog', { name: 'Confirm' })).not.toHaveTextContent(
+      'Set up a device lock',
+    );
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(document.title).toBe('confirmed'));
+    expect(verify).toHaveBeenCalledTimes(1);
+  });
+
+  it('locks after five minutes away when a lock was set up elsewhere, unheard', async () => {
+    const platform = fakePlatform();
+    await signInWithoutLock(platform);
+    await lockSetUpElsewhere(platform, false);
+    act(() => {
+      hidden('hidden');
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      hidden('visible');
+    });
+    await waitFor(() => expect(status()).toHaveTextContent('locked'));
+  });
+
+  it('locks now when a lock was set up elsewhere, unheard', async () => {
+    const platform = fakePlatform();
+    const user = await signInWithoutLock(platform);
+    await lockSetUpElsewhere(platform, false);
+    await user.click(screen.getByText('lock now'));
+    await waitFor(() => expect(status()).toHaveTextContent('locked'));
+  });
+
+  it('signs out, never opening, when another tab removes the lock it is locked behind', async () => {
+    sessionStorage.setItem('app.sample', '1');
+    localStorage.setItem('app.lockEnabled', 'true');
+    const platform = fakePlatform();
+    await launch(createSampleApi({ latencyMs: 0 }), platform);
+    expect(status()).toHaveTextContent('locked');
+    await platform.lock.clear(); // another tab signs out: the lock goes, and its setting
+    localStorage.removeItem('app.lockEnabled');
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'app.lockEnabled' }));
+    });
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
   });
 });
 

@@ -384,17 +384,62 @@ export function createSessionController(deps: SessionDeps) {
 
   // ---- The lock ----------------------------------------------------------------------------
 
-  function lock(): void {
-    if (state.status !== 'signed-in' || state.lockMethod === null) return;
+  /**
+   * Reads the lock as the device has it now: another tab may have set one up, turned it off or
+   * removed it, so the session never goes by what it saw at launch. A locked app that nothing can
+   * unlock any more signs out. Resolves whether the session still stands. A lock that cannot be
+   * read keeps what the session knew, except a lost key, which signs out.
+   */
+  async function refreshLock(): Promise<boolean> {
+    const gen = generation;
+    let method = state.lockMethod;
+    try {
+      method = await platform.lock.enrolled();
+    } catch (error) {
+      if (gen !== generation) return false;
+      if (isUnreadableKey(error)) {
+        await storageFailed(error);
+        return false;
+      }
+    }
+    if (gen !== generation) return false;
+    const choice = lockPreference.read();
+    if (method !== state.lockMethod || choice !== state.lockChoice) {
+      set({ lockMethod: method, lockChoice: choice });
+    }
+    if (state.status === 'locked' && method === null) {
+      void signOut();
+      return false;
+    }
+    return true;
+  }
+
+  function lockNow(): void {
     closeFlows();
     set({ status: 'locked', unlocking: IDLE });
   }
 
-  /** After five minutes hidden: locks while the lock is on (signs out when nothing can unlock). */
+  /** "Lock now": locks whenever a lock is set up, at once as known, then as the device says. */
+  function lock(): void {
+    if (state.status !== 'signed-in') return;
+    if (state.lockMethod !== null) lockNow();
+    void refreshLock().then((stands) => {
+      if (stands && state.status === 'signed-in' && state.lockMethod !== null) lockNow();
+    });
+  }
+
+  /**
+   * After five minutes hidden: locks while the lock is on (signs out when nothing can unlock it), at
+   * once as the session knows it, then as the device says.
+   */
   function lockAfterHidden(): void {
-    if (state.status !== 'signed-in' || !lockEnabled()) return;
-    if (state.lockMethod !== null) lock();
-    else void signOut();
+    if (state.status !== 'signed-in') return;
+    if (lockEnabled() && state.lockMethod !== null) lockNow();
+    void refreshLock().then((stands) => {
+      if (!stands || state.status !== 'signed-in' || !lockEnabled()) return;
+      if (state.lockMethod !== null) lockNow();
+      else void signOut();
+    });
   }
 
   /**
@@ -454,8 +499,10 @@ export function createSessionController(deps: SessionDeps) {
 
   // ---- Confirmations -----------------------------------------------------------------------
 
-  function confirm(reason: string, options: ConfirmOptions = {}): Promise<boolean> {
-    if (state.status !== 'signed-in') return Promise.resolve(false);
+  async function confirm(reason: string, options: ConfirmOptions = {}): Promise<boolean> {
+    if (state.status !== 'signed-in') return false;
+    // The lock the device has now decides what the sheet asks for.
+    if (!(await refreshLock()) || state.status !== 'signed-in') return false;
     settleConfirmation?.(false); // a newer confirmation replaces one still open
     return new Promise((resolve) => {
       settleConfirmation = resolve;
@@ -634,6 +681,7 @@ export function createSessionController(deps: SessionDeps) {
 
   async function setLockEnabled(on: boolean): Promise<boolean> {
     if (state.status !== 'signed-in') return false;
+    if (!(await refreshLock()) || state.status !== 'signed-in') return false;
     if (!on) {
       if (!lockEnabled()) return true;
       const ok = await confirm(SESSION_COPY.turnOffLock);
@@ -707,12 +755,19 @@ export function createSessionController(deps: SessionDeps) {
     if (MobileApiError.is(error) && error.code === 'storage_error') void storageFailed(error);
   }
 
+  /** Another tab may have set up, turned off or removed the lock: read it again. */
+  function storageChanged(event: StorageEvent): void {
+    if (!lockPreference.changedBy(event)) return;
+    if (state.status === 'signed-in' || state.status === 'locked') void refreshLock();
+  }
+
   /** Listens to the device, the other tabs and the cache, and launches once. */
   function start(): () => void {
     const onNetwork = () => networkChanged();
     document.addEventListener('visibilitychange', visibilityChanged);
     window.addEventListener('online', onNetwork);
     window.addEventListener('offline', onNetwork);
+    window.addEventListener('storage', storageChanged);
     networkChanged();
     const stops = [
       live ? tokenStore.subscribe(storeChanged) : () => {},
@@ -735,6 +790,7 @@ export function createSessionController(deps: SessionDeps) {
       document.removeEventListener('visibilitychange', visibilityChanged);
       window.removeEventListener('online', onNetwork);
       window.removeEventListener('offline', onNetwork);
+      window.removeEventListener('storage', storageChanged);
       for (const stop of stops) stop();
     };
   }
