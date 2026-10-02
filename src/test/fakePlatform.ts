@@ -1,15 +1,17 @@
-import type { Platform } from '../platform/types';
+import type { LockMethod, Platform } from '../platform/types';
 
 /** Per adapter, the methods to replace: `{ lock: { enrolled: () => Promise.resolve(null) } }`. */
 export type PlatformOverrides = { [K in Exclude<keyof Platform, 'kind'>]?: Partial<Platform[K]> };
 
 /**
  * A platform for specs: secure storage over a Map, and a device lock already set up with the
- * device's own prompt, which always verifies (so `confirm()` and `unlock()` pass with a tap). The
- * passcode, when a spec turns it on, is 246810. Notifications, sharing and installing do nothing.
+ * device's own prompt, which always verifies (so `confirm()` and `unlock()` pass with a tap).
+ * Enrolling sets the lock up and clear() forgets it, as on a device; the passcode is 246810.
+ * Notifications, sharing and installing do nothing.
  */
 export function fakePlatform(overrides: PlatformOverrides = {}): Platform {
   const values = new Map<string, string>();
+  let enrolled: LockMethod | null = 'webauthn';
   return {
     kind: 'web',
     storage: {
@@ -34,12 +36,21 @@ export function fakePlatform(overrides: PlatformOverrides = {}): Platform {
     },
     lock: {
       available: () => Promise.resolve('webauthn'),
-      enrolled: () => Promise.resolve('webauthn'),
-      enrollWebAuthn: () => Promise.resolve(),
-      enrollPasscode: () => Promise.resolve(),
+      enrolled: () => Promise.resolve(enrolled),
+      enrollWebAuthn: () => {
+        enrolled = 'webauthn';
+        return Promise.resolve();
+      },
+      enrollPasscode: () => {
+        enrolled = 'passcode';
+        return Promise.resolve();
+      },
       verify: () => Promise.resolve(true),
       verifyPasscode: (code) => Promise.resolve({ ok: code === '246810', attemptsLeft: 5 }),
-      clear: () => Promise.resolve(),
+      clear: () => {
+        enrolled = null;
+        return Promise.resolve();
+      },
       ...overrides.lock,
     },
     notifications: {

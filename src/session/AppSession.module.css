@@ -1,0 +1,51 @@
+/*
+ * A passing notice: a glass pill above the tab bar, there only while it has something to say. Its
+ * live region is always in the page, so a new message is announced.
+ */
+
+.notice {
+  position: fixed;
+  inset: auto max(var(--space-4), var(--safe-right)) calc(var(--safe-bottom) + 6.5rem)
+    max(var(--space-4), var(--safe-left));
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  max-width: 28rem;
+  margin-inline: auto;
+  pointer-events: none;
+}
+
+.notice[data-shown] {
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--popup) 94%, transparent);
+  color: var(--popup-foreground);
+  box-shadow: 0 0.75rem 2rem color-mix(in srgb, var(--background) 60%, transparent);
+  pointer-events: auto;
+}
+
+.message {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.message:empty {
+  display: none;
+}
+
+/* The setup problem: one calm message in the middle of the page. */
+.problem {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: var(--space-8) max(var(--space-4), var(--safe-right)) var(--space-8)
+    max(var(--space-4), var(--safe-left));
+}
