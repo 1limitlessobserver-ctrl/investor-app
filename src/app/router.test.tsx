@@ -8,9 +8,15 @@ import type { LockMethod } from '../platform/types';
 import { stubRadixBrowserApis } from '../test/browserStubs';
 import { FAKE_PASSCODE, fakePlatform } from '../test/fakePlatform';
 import { renderWithApp } from '../test/renderWithApp';
+import { applyWaitingUpdate } from '../pwa/applyWaitingUpdate';
 import { App } from './App';
 import { AppProviders } from './providers';
 import { routes } from './router';
+
+// The update screen's Reload takes the new version through the service worker, which jsdom lacks.
+vi.mock('../pwa/applyWaitingUpdate', () => ({
+  applyWaitingUpdate: vi.fn(() => Promise.resolve()),
+}));
 
 beforeEach(() => {
   localStorage.clear();
@@ -218,6 +224,14 @@ describe('the routes', () => {
       await screen.findByRole('button', { name: 'Explore with sample data' }),
     ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/sign-in');
+  });
+
+  it('takes the new version, not the precached one, on the update screen’s Reload', async () => {
+    renderWithApp({ route: '/', signedIn: true, sample: { minSupportedAppVersion: '99.0.0' } });
+    await screen.findByRole('heading', { name: 'Update the app' });
+    expect(applyWaitingUpdate).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+    expect(applyWaitingUpdate).toHaveBeenCalledTimes(1);
   });
 
   it('ends a locked app whose lock is gone here, showing nothing of it meanwhile', async () => {

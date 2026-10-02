@@ -6,7 +6,7 @@
 export const WORKER_WAIT_MS = 5_000;
 
 /** The browser's service worker container; absent outside a secure context. */
-function browserWorkers(): ServiceWorkerContainer | undefined {
+export function browserWorkers(): ServiceWorkerContainer | undefined {
   return (navigator as Navigator & { serviceWorker?: ServiceWorkerContainer }).serviceWorker;
 }
 
