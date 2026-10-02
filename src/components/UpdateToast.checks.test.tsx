@@ -1,19 +1,32 @@
-// UpdateToast while no version waits, and its hourly look for one. (UpdateToast.test.tsx is the
-// plan's spec of the offer itself, with a version waiting.)
+// UpdateToast beyond the plan's spec of the offer (UpdateToast.test.tsx): while no version waits,
+// its hourly look for one, and how a waiting version takes over when several tabs are open.
 
 import { act, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisterSWOptions } from 'virtual:pwa-register/react';
 
-/** What the toast registered its worker with, as the mocked hook last saw it. */
-const registered = vi.hoisted(() => ({ options: undefined as RegisterSWOptions | undefined }));
+/**
+ * What the toast registered its worker with, as the mocked hook last saw it; whether a version
+ * waits; and the hook's updateServiceWorker.
+ */
+interface Registered {
+  options: RegisterSWOptions | undefined;
+  waiting: boolean;
+  updateServiceWorker: (reloadPage?: boolean) => Promise<void>;
+}
+const registered = vi.hoisted((): Registered => ({
+  options: undefined,
+  waiting: false,
+  updateServiceWorker: () => Promise.resolve(),
+}));
 vi.mock('virtual:pwa-register/react', () => ({
   useRegisterSW: (options?: RegisterSWOptions) => {
     registered.options = options;
     return {
-      needRefresh: [false, () => {}],
+      needRefresh: [registered.waiting, () => {}],
       offlineReady: [false, () => {}],
-      updateServiceWorker: () => Promise.resolve(),
+      updateServiceWorker: (reloadPage?: boolean) => registered.updateServiceWorker(reloadPage),
     };
   },
 }));
@@ -35,6 +48,7 @@ describe('UpdateToast, while no version waits', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     registered.options = undefined;
+    registered.waiting = false;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -109,5 +123,48 @@ describe('UpdateToast, while no version waits', () => {
     render(<UpdateToast />);
     registered.options?.onRegisterError?.(failure);
     expect(warn).toHaveBeenCalledWith('[investor-app] registering the service worker:', failure);
+  });
+});
+
+/** Watches the page's reloads: jsdom's location.reload cannot be spied on, so location is stubbed. */
+function watchReloads() {
+  const reload = vi.fn();
+  vi.stubGlobal('location', { ...window.location, reload });
+  return reload;
+}
+
+describe('UpdateToast, as a waiting version takes over', () => {
+  beforeEach(() => {
+    registered.options = undefined;
+    registered.waiting = true;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('reloads this tab once the new version takes over after its own Reload', async () => {
+    const reload = watchReloads();
+    const update = vi.fn(() => Promise.resolve());
+    registered.updateServiceWorker = update;
+    render(<UpdateToast />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+    expect(update).toHaveBeenCalledWith(true);
+    expect(reload).not.toHaveBeenCalled(); // not before the new version is in control
+    act(() => registered.options?.onNeedReload?.());
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps its page when another tab’s Reload hands over, and then reloads plainly', async () => {
+    const reload = watchReloads();
+    const update = vi.fn(() => Promise.resolve());
+    registered.updateServiceWorker = update;
+    render(<UpdateToast />);
+    act(() => registered.options?.onNeedReload?.()); // another tab chose Reload
+    expect(reload).not.toHaveBeenCalled();
+    expect(screen.getByRole('status', { name: 'Update' })).toHaveTextContent('Update available');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+    // The new version is in control already: nothing waits to be handed over.
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
   });
 });
