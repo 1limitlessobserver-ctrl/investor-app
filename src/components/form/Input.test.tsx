@@ -10,7 +10,9 @@ describe('Input', () => {
   it('forwards its ref and native attributes, and reports what is typed', async () => {
     const ref = createRef<HTMLInputElement>();
     const onChange = vi.fn();
-    render(<Input ref={ref} aria-label="Recipient" placeholder="$tag or email" onChange={onChange} />);
+    render(
+      <Input ref={ref} aria-label="Recipient" placeholder="$tag or email" onChange={onChange} />,
+    );
     const input = screen.getByRole('textbox', { name: 'Recipient' });
     expect(ref.current).toBe(input);
     expect(input).toHaveAttribute('placeholder', '$tag or email');

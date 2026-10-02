@@ -87,7 +87,8 @@ describe('Button', () => {
   it('keeps a 44 px target at every size', () => {
     expect(rem(cssRule(CSS, '.button')['min-height'])).toBeGreaterThanOrEqual(2.75);
     expect(rem(cssRule(CSS, '.button')['min-width'])).toBeGreaterThanOrEqual(2.75);
-    for (const value of cssValues(CSS, 'min-height')) expect(rem(value)).toBeGreaterThanOrEqual(2.75);
+    for (const value of cssValues(CSS, 'min-height'))
+      expect(rem(value)).toBeGreaterThanOrEqual(2.75);
     for (const size of ['.sm', '.md', '.lg']) expect(cssRule(CSS, size)).toBeTruthy();
   });
 });

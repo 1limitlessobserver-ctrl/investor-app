@@ -10,7 +10,11 @@ afterAll(() => vi.unstubAllGlobals());
 
 function Relationship(props: { value?: string; onValueChange?: (value: string) => void }) {
   return (
-    <Field label="Relationship" hint="How they are related to you." error={props.value ? '' : 'Choose one.'}>
+    <Field
+      label="Relationship"
+      hint="How they are related to you."
+      error={props.value ? '' : 'Choose one.'}
+    >
       <Select {...props}>
         <SelectTrigger>
           <SelectValue placeholder="Choose one" />

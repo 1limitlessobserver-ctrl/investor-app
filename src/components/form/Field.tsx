@@ -27,7 +27,11 @@ export function useFieldControl(): FieldControl | null {
 export function controlAttributes(
   field: FieldControl | null,
   own: { id?: string | undefined; describedBy?: string | undefined; invalid?: boolean | undefined },
-): { id: string | undefined; 'aria-describedby': string | undefined; 'aria-invalid': true | undefined } {
+): {
+  id: string | undefined;
+  'aria-describedby': string | undefined;
+  'aria-invalid': true | undefined;
+} {
   const describedBy = [field?.describedBy, own.describedBy].filter(Boolean).join(' ');
   return {
     id: field?.id ?? own.id,
