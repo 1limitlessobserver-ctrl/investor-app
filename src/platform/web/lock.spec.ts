@@ -751,3 +751,175 @@ describe('device lock: a stored record it cannot read', () => {
     expect(await lock.verify()).toBe(true);
   });
 });
+
+describe('device lock: replacing one method with the other', () => {
+  it('keeps the passcode when a WebAuthn enrolment is cancelled or unusable', async () => {
+    const auth = await fakeAuthenticator();
+    const lock = lockOver(auth.credentials);
+    await lock.enrollPasscode('246810');
+    auth.create.mockRejectedValueOnce(new DOMException('Not allowed.', 'NotAllowedError'));
+    await expect(lock.enrollWebAuthn(ada)).rejects.toMatchObject({ name: 'NotAllowedError' });
+    const unusable = [
+      null,
+      {},
+      { rawId: new Uint8Array([1]).buffer, response: {} },
+      {
+        response: {
+          getPublicKey: () => auth.publicKeySpki.buffer,
+          getPublicKeyAlgorithm: () => -7,
+        },
+      },
+    ];
+    for (const created of unusable) {
+      auth.create.mockResolvedValueOnce(created);
+      await expect(lock.enrollWebAuthn(ada), JSON.stringify(created)).rejects.toThrow(
+        'This browser cannot enrol a device lock.',
+      );
+    }
+    expect(await lock.enrolled()).toBe('passcode');
+    expect(await lock.verifyPasscode('246810')).toEqual({ ok: true, attemptsLeft: 5 });
+  });
+
+  it('keeps the passcode when the new credential cannot be stored', async () => {
+    const auth = await fakeAuthenticator();
+    const secure = secureStorage();
+    const flaky: SecureStorage = {
+      ...secure,
+      set: (key, value) =>
+        key === 'lock:webauthn' ? Promise.reject(new Error('disk full')) : secure.set(key, value),
+    };
+    const lock = lockOver(auth.credentials, flaky);
+    await lock.enrollPasscode('246810');
+    await expect(lock.enrollWebAuthn(ada)).rejects.toThrow('disk full');
+    expect(await lock.enrolled()).toBe('passcode');
+    expect(await lock.verifyPasscode('246810')).toEqual({ ok: true, attemptsLeft: 5 });
+  });
+
+  it('keeps the credential when the new passcode is refused or cannot be stored', async () => {
+    const auth = await fakeAuthenticator();
+    const secure = secureStorage();
+    let full = false;
+    const flaky: SecureStorage = {
+      ...secure,
+      set: (key, value) => (full ? Promise.reject(new Error('disk full')) : secure.set(key, value)),
+    };
+    const lock = lockOver(auth.credentials, flaky);
+    await lock.enrollWebAuthn(ada);
+    await expect(lock.enrollPasscode('12')).rejects.toThrow('six digits');
+    full = true;
+    await expect(lock.enrollPasscode('246810')).rejects.toThrow('disk full');
+    full = false;
+    expect(await lock.enrolled()).toBe('webauthn');
+    expect(await lock.verify()).toBe(true);
+  });
+
+  it('never keeps both records once a swap is done', async () => {
+    const auth = await fakeAuthenticator();
+    const secure = secureStorage();
+    const lock = lockOver(auth.credentials, secure);
+    const stored = async () => [
+      (await secure.get('lock:webauthn')) !== null,
+      (await secure.get('lock:passcode')) !== null,
+    ];
+    await lock.enrollPasscode('246810');
+    expect(await stored()).toEqual([false, true]);
+    await lock.enrollWebAuthn(ada);
+    expect(await stored()).toEqual([true, false]);
+    await lock.enrollPasscode('135790');
+    expect(await stored()).toEqual([false, true]);
+  });
+});
+
+/**
+ * Holds back the PBKDF2 derivation under `salt` (a passcode check under way) until release();
+ * `reached` resolves once it is held, `othersDerived` once any other derivation is done.
+ */
+function holdDerivation(salt: string) {
+  const deriveBits = crypto.subtle.deriveBits.bind(crypto.subtle);
+  let reach!: () => void;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  let derived!: () => void;
+  const othersDerived = new Promise<void>((resolve) => (derived = resolve));
+  const spy = vi
+    .spyOn(crypto.subtle, 'deriveBits')
+    .mockImplementation(async (algorithm, baseKey, length) => {
+      if (base64url.encode((algorithm as Pbkdf2Params).salt as Uint8Array) === salt) {
+        reach();
+        await released;
+        return deriveBits(algorithm, baseKey, length);
+      }
+      const bits = await deriveBits(algorithm, baseKey, length);
+      derived();
+      return bits;
+    });
+  return { reached, othersDerived, release, restore: () => spy.mockRestore() };
+}
+
+/** Long enough for a change that is not held back to be written. */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 25));
+const saltOf = async (secure: SecureStorage) =>
+  (JSON.parse((await secure.get('lock:passcode'))!) as { salt: string }).salt;
+
+describe('device lock: enrolments and clear() wait for a passcode check under way', () => {
+  it('keeps a passcode enrolled while the old one was being checked', async () => {
+    const secure = secureStorage();
+    const lock = createLock({ storage: secure, credentials: undefined });
+    await lock.enrollPasscode('246810');
+    const held = holdDerivation(await saltOf(secure));
+    try {
+      const check = lock.verifyPasscode('246810');
+      await held.reached; // the attempt is counted, and the check is deriving
+      const enrol = lock.enrollPasscode('135790');
+      await held.othersDerived; // the new passcode is hashed: stored now, or waiting for the check
+      await Promise.race([enrol, settle()]);
+      held.release();
+      expect(await check).toEqual({ ok: true, attemptsLeft: 5 });
+      await enrol;
+    } finally {
+      held.restore();
+    }
+    expect(await lock.verifyPasscode('135790')).toEqual({ ok: true, attemptsLeft: 5 });
+  });
+
+  it('leaves no passcode behind when WebAuthn is enrolled while it was being checked', async () => {
+    const auth = await fakeAuthenticator();
+    const secure = secureStorage();
+    const lock = lockOver(auth.credentials, secure);
+    await lock.enrollPasscode('246810');
+    const held = holdDerivation(await saltOf(secure));
+    try {
+      const check = lock.verifyPasscode('246810');
+      await held.reached;
+      const enrol = lock.enrollWebAuthn(ada);
+      await Promise.race([enrol, settle()]); // create() answers at once: stored now, or waiting
+      held.release();
+      await check;
+      await enrol;
+    } finally {
+      held.restore();
+    }
+    expect(await lock.enrolled()).toBe('webauthn');
+    expect(await secure.get('lock:passcode')).toBeNull();
+  });
+
+  it('stays cleared when clear() comes while a passcode is being checked', async () => {
+    const secure = secureStorage();
+    const lock = createLock({ storage: secure, credentials: undefined });
+    await lock.enrollPasscode('246810');
+    const held = holdDerivation(await saltOf(secure));
+    try {
+      const check = lock.verifyPasscode('246810');
+      await held.reached;
+      const cleared = lock.clear();
+      await Promise.race([cleared, settle()]);
+      held.release();
+      expect(await check).toEqual({ ok: true, attemptsLeft: 5 });
+      await cleared;
+    } finally {
+      held.restore();
+    }
+    expect(await lock.enrolled()).toBeNull();
+  });
+});
