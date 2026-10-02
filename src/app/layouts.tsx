@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router';
 import { AppShell } from '../components/AppShell';
 import { LockScreen } from '../components/LockScreen';
@@ -58,19 +57,12 @@ export function RouteError() {
   );
 }
 
-/** A locked app with no lock left to open it: nothing of the app shows, and the session ends. */
-function LockedOut({ signOut }: { signOut: () => Promise<void> }) {
-  useEffect(() => {
-    void signOut();
-  }, [signOut]);
-  return <StartingUp />;
-}
-
 /**
  * The routes that need a session. A signed-out visitor goes to sign-in, and comes back after. An
  * app the platform no longer serves shows the update screen instead (sign-out still works). A
  * locked app keeps its screen beneath the lock, which covers it, takes focus and hides it from
- * assistive technology, and gives focus back once unlocked; with no lock to open it, it signs out.
+ * assistive technology, and gives focus back once unlocked. A locked app with no lock left to open
+ * it shows nothing of the app while the session ends (the session ends it here).
  */
 export function RequireSession() {
   const session = useAppSession();
@@ -88,7 +80,7 @@ export function RequireSession() {
     );
   }
   if (status === 'locked') {
-    if (lockMethod === null) return <LockedOut signOut={session.signOut} />;
+    if (lockMethod === null) return <StartingUp />;
     return (
       <>
         <Outlet />

@@ -256,13 +256,15 @@ describe('AppSession: launching with a stored session', () => {
     expect(screen.getByTestId('lock')).toHaveTextContent('false');
   });
 
-  it('signs out, never unlocked, when the lock is on but no longer set up', async () => {
+  it('ends the session here, never unlocked, when the lock is on but gone', async () => {
     localStorage.setItem('app.lockEnabled', 'true');
     const api = createSampleApi({ latencyMs: 0 });
     const logout = vi.spyOn(api, 'logout');
     await launch(api, fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } }));
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
-    expect(logout).toHaveBeenCalledTimes(1);
+    // This tab may be behind the shared store: the platform is not told, so a newer sign-in made
+    // elsewhere is never ended there.
+    expect(logout).not.toHaveBeenCalled();
     expect(sessionStorage.getItem('app.sample')).toBeNull();
   });
 
@@ -553,11 +555,13 @@ describe('AppSession: a lock another tab changes', () => {
     await waitFor(() => expect(status()).toHaveTextContent('locked'));
   });
 
-  it('signs out, never opening, when another tab removes the lock it is behind', async () => {
+  it('ends the session here, never opening, when another tab removes the lock', async () => {
     sessionStorage.setItem('app.sample', '1');
     localStorage.setItem('app.lockEnabled', 'true');
     const platform = fakePlatform();
-    await launch(createSampleApi({ latencyMs: 0 }), platform);
+    const api = createSampleApi({ latencyMs: 0 });
+    const logout = vi.spyOn(api, 'logout');
+    await launch(api, platform);
     expect(status()).toHaveTextContent('locked');
     await platform.lock.clear(); // another tab signs out: the lock goes, and its setting
     localStorage.removeItem('app.lockEnabled');
@@ -565,6 +569,53 @@ describe('AppSession: a lock another tab changes', () => {
       window.dispatchEvent(new StorageEvent('storage', { key: 'app.lockEnabled' }));
     });
     await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(logout).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppSession: a lock whose record is lost', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    document.title = '';
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Signs in and sets up the device's own lock (app.lockEnabled becomes true), then loses the
+   * lock's record behind the session's back, without a sign-out.
+   */
+  async function lockLost() {
+    const api = createSampleApi({ latencyMs: 0 });
+    const logout = vi.spyOn(api, 'logout');
+    const platform = fakePlatform();
+    const user = await launch(api, platform);
+    await user.click(screen.getByText('enter'));
+    await setUpDeviceLock(user);
+    expect(localStorage.getItem('app.lockEnabled')).toBe('true');
+    await platform.lock.clear();
+    return { user, logout };
+  }
+
+  it('ends the session here on Lock now', async () => {
+    const { user, logout } = await lockLost();
+    await user.click(screen.getByText('lock now'));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(logout).not.toHaveBeenCalled();
+  });
+
+  it('ends the session here after five minutes away', async () => {
+    const { logout } = await lockLost();
+    act(() => {
+      hidden('hidden');
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      hidden('visible');
+    });
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(logout).not.toHaveBeenCalled();
   });
 });
 

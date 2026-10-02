@@ -79,14 +79,17 @@ describe('the routes', () => {
     expect(router.state.location.pathname).toBe('/sign-in');
   });
 
-  it('signs out a locked app whose lock is gone, showing nothing of it meanwhile', async () => {
+  it('ends a locked app whose lock is gone here, showing nothing of it meanwhile', async () => {
     sessionStorage.setItem('app.sample', '1'); // a session from before the reload
     let method: LockMethod | null = 'webauthn';
-    renderWithApp({
+    let release!: () => void;
+    const clearing = new Promise<void>((resolve) => (release = resolve));
+    const { api } = renderWithApp({
       route: '/',
-      latencyMs: 50, // the sign-out takes a moment
-      platform: { lock: { enrolled: () => Promise.resolve(method) } },
+      // The session's end waits on the lock being cleared, until release().
+      platform: { lock: { enrolled: () => Promise.resolve(method), clear: () => clearing } },
     });
+    const logout = vi.spyOn(api, 'logout');
     expect(await screen.findByRole('heading', { name: 'Locked' })).toBeInTheDocument();
     // Another tab signs out: the device's lock goes, and its setting.
     method = null;
@@ -95,9 +98,12 @@ describe('the routes', () => {
     });
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Locked' })).toBeNull());
     expect(screen.queryByRole('heading', { name: 'Home', hidden: true })).toBeNull();
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    act(() => release());
     expect(
       await screen.findByRole('button', { name: 'Explore with sample data' }),
     ).toBeInTheDocument();
+    expect(logout).not.toHaveBeenCalled();
   });
 
   it('says plainly when a screen fails, never with the router’s own page', async () => {

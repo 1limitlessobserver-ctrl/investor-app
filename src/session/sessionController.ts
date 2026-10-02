@@ -11,8 +11,9 @@
 //  - The lock is on once the investor sets one up, until they turn it off (app.lockEnabled); with
 //    no choice stored, a lock that is set up counts as on ("Not now" stores none). It locks after
 //    five minutes hidden, on lock() and at launch; confirmations always ask, whatever it says.
-//    The device's lock is read afresh before each of these, and when another tab changes it: a
-//    locked app whose lock has gone signs out.
+//    The device's lock is read afresh before each of these, and when another tab changes it.
+//  - A lock found gone (at launch, after time away, or under a locked app) ends the session here,
+//    without telling the platform, as this tab may be behind a newer sign-in made elsewhere.
 //  - Sign-out: the platform first (waited for 3 s at most), then the store, the lock, push, the
 //    cache and the flag. The client's onSignedOut (and the sample's) ends the session the same
 //    way without the platform, and nothing else does: a rejected call never signs out on its own.
@@ -255,8 +256,10 @@ export function createSessionController(deps: SessionDeps) {
       } else if (method !== null) {
         set({ status: 'locked', lockMethod: method, lockChoice: choice, unlocking: IDLE });
       } else {
-        // The lock is on and nothing can unlock it any more: the app never opens unlocked.
-        await signOut();
+        // The lock is on and nothing can unlock it any more: the app never opens unlocked. The
+        // session ends here only: this tab may be behind the shared store, and telling the
+        // platform could end a newer sign-in made elsewhere.
+        await endHere();
       }
     } catch (error) {
       if (gen === generation) await storageFailed(error);
@@ -397,8 +400,9 @@ export function createSessionController(deps: SessionDeps) {
   /**
    * Reads the lock as the device has it now: another tab may have set one up, turned it off or
    * removed it, so the session never goes by what it saw at launch. A locked app that nothing can
-   * unlock any more signs out. Resolves whether the session still stands. A lock that cannot be
-   * read keeps what the session knew, except a lost key, which signs out.
+   * unlock any more ends the session here, as at launch, without telling the platform. Resolves
+   * whether the session still stands. A lock that cannot be read keeps what the session knew,
+   * except a lost key, which signs out.
    */
   async function refreshLock(): Promise<boolean> {
     const gen = generation;
@@ -417,8 +421,8 @@ export function createSessionController(deps: SessionDeps) {
     if (method !== state.lockMethod || choice !== state.lockChoice) {
       set({ lockMethod: method, lockChoice: choice });
     }
-    if (state.status === 'locked' && method === null) {
-      void signOut();
+    if (method === null && state.status === 'locked') {
+      void endHere();
       return false;
     }
     return true;
@@ -439,8 +443,8 @@ export function createSessionController(deps: SessionDeps) {
   }
 
   /**
-   * After five minutes hidden: locks while the lock is on (signs out when nothing can unlock it),
-   * at once as the session knows it, then as the device says.
+   * After five minutes hidden: locks while the lock is on (ends the session here when nothing can
+   * unlock it), at once as the session knows it, then as the device says.
    */
   function lockAfterHidden(): void {
     if (state.status !== 'signed-in') return;
@@ -448,7 +452,7 @@ export function createSessionController(deps: SessionDeps) {
     void refreshLock().then((stands) => {
       if (!stands || state.status !== 'signed-in' || !lockEnabled()) return;
       if (state.lockMethod !== null) lockNow();
-      else void signOut();
+      else void endHere();
     });
   }
 
