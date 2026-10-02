@@ -49,6 +49,27 @@ describe('Slider', () => {
     expect(thumb).toHaveAttribute('aria-valuenow', '20');
   });
 
+  it('gives the Field its first thumb to point at, and marks it invalid', () => {
+    render(
+      <Field label="Horizon" error="Keep it under 40 years.">
+        <Slider min={1} max={60} defaultValue={[50]} />
+      </Field>,
+    );
+    const thumb = screen.getByRole('slider', { name: 'Horizon' });
+    expect(thumb.id).not.toBe('');
+    expect(document.querySelector('label')).toHaveAttribute('for', thumb.id);
+    expect(thumb).toHaveAttribute('aria-invalid', 'true');
+    expect(thumb).toHaveAccessibleDescription('Keep it under 40 years.');
+  });
+
+  it('can be marked invalid outside a Field', () => {
+    render(<Slider aria-label="Draw rate" aria-invalid defaultValue={[12]} max={10} />);
+    expect(screen.getByRole('slider', { name: 'Draw rate' })).toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
+  });
+
   it('moves on its own state when uncontrolled', async () => {
     const user = userEvent.setup();
     render(<Slider aria-label="Draw rate" min={0} max={10} step={0.5} defaultValue={[4]} />);
