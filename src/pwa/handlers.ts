@@ -1,6 +1,7 @@
 // What the app's service worker does beyond the precache (src/sw.ts wires these to its events): it
-// shows a push as a notification, opens the app at the alert a tapped notification names, and
-// takes over when the app asks it to (once the investor chose Reload). Each takes the worker's
+// takes control of the open pages once it activates, shows a push as a notification, opens the app
+// at the alert a tapped notification names, and takes over when the app asks it to (once the
+// investor chose Reload). Each takes the worker's
 // global scope as an argument, so specs run it against a stand-in, and names only what it uses
 // of the scope and the event: the types hold under both the DOM and the WebWorker libraries.
 
@@ -24,12 +25,13 @@ export interface WorkerScope {
   readonly clients: {
     matchAll(options: { type: 'window'; includeUncontrolled: true }): Promise<readonly AppWindow[]>;
     openWindow(url: string): Promise<unknown>;
+    claim(): Promise<void>;
   };
   skipWaiting(): Promise<void>;
 }
 
 /** An event the worker may keep running for (an ExtendableEvent). */
-interface Lasting {
+export interface Lasting {
   waitUntil(promise: Promise<unknown>): void;
 }
 
@@ -77,6 +79,16 @@ function readPush(data: PushLike['data']): { notificationId?: string; title?: st
   const heading = text(title);
   if (heading !== undefined) read.title = heading;
   return read;
+}
+
+/**
+ * The worker's activation: it takes control of every open page of the app at once, as
+ * workbox-core's clientsClaim() does, a first visit's page included, which no worker controlled
+ * when it loaded. A tapped notification can then take that window to the alert, rather than open
+ * a second one.
+ */
+export function onActivate(scope: WorkerScope, event: Lasting): void {
+  event.waitUntil(scope.clients.claim());
 }
 
 /** A push: its title as a notification with the app's icon and badge, tagged with its alert. */

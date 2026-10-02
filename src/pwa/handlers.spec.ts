@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest';
 import {
   NOTIFICATION_BADGE,
   NOTIFICATION_ICON,
+  onActivate,
   onMessage,
   onNotificationClick,
   onPush,
@@ -16,6 +17,7 @@ function fakeScope(windows: AppWindow[] = []) {
     clients: {
       matchAll: vi.fn(() => Promise.resolve(windows)),
       openWindow: vi.fn(() => Promise.resolve(null)),
+      claim: vi.fn(() => Promise.resolve()),
     },
     skipWaiting: vi.fn(() => Promise.resolve()),
   } satisfies WorkerScope;
@@ -178,4 +180,15 @@ describe('the service worker: a message from the app', () => {
       expect(scope.skipWaiting).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('the service worker: its activation', () => {
+  it('takes control of every open page of the app, a first visit’s included', async () => {
+    const scope = fakeScope();
+    const event = lifetime();
+    onActivate(scope, event);
+    await event.waited();
+    expect(scope.clients.claim).toHaveBeenCalledTimes(1);
+    expect(event.waits).toHaveLength(1); // the activation lasts until the pages are its own
+  });
 });

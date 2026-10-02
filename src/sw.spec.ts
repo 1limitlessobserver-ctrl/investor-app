@@ -46,6 +46,7 @@ function fakeWorker() {
     clients: {
       matchAll: vi.fn(() => Promise.resolve([])),
       openWindow: vi.fn(() => Promise.resolve(null)),
+      claim: vi.fn(() => Promise.resolve()),
     },
     skipWaiting: vi.fn(() => Promise.resolve()),
     listeners,
@@ -113,6 +114,15 @@ describe('the service worker', () => {
     });
     await Promise.all(waits);
     expect(worker.clients.openWindow).toHaveBeenCalledWith('/alerts?open=al_1');
+  });
+
+  it('takes control of the open pages once it activates', async () => {
+    const worker = fakeWorker();
+    const on = await start(worker);
+    const waitUntil = vi.fn();
+    on('activate')({ waitUntil });
+    expect(worker.clients.claim).toHaveBeenCalledTimes(1);
+    expect(waitUntil).toHaveBeenCalledTimes(1);
   });
 
   it('takes over when the app asks it to', async () => {
