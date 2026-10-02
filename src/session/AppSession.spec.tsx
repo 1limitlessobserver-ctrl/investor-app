@@ -600,6 +600,15 @@ describe('AppSession: a lock whose record is lost', () => {
     return { user, logout };
   }
 
+  it('cancels a confirmation, and ends the session here: nothing can check it', async () => {
+    const { user, logout } = await lockLost();
+    await user.click(screen.getByText('confirm'));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(logout).not.toHaveBeenCalled();
+  });
+
   it('ends the session here on Lock now', async () => {
     const { user, logout } = await lockLost();
     await user.click(screen.getByText('lock now'));
