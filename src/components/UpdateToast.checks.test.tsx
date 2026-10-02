@@ -206,7 +206,7 @@ describe('UpdateToast, in a tab no worker controlled when it registered', () => 
     Reflect.deleteProperty(navigator, 'serviceWorker');
   });
 
-  it('hands over on the first tap, and reloads once the new version controls the page', async () => {
+  it('hands over on the first tap, and reloads once the new version is in control', async () => {
     const reload = watchReloads();
     const takeOver = fakeWorkers();
     const update = vi.fn(() => Promise.resolve());
@@ -232,7 +232,7 @@ describe('UpdateToast, in a tab no worker controlled when it registered', () => 
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('reloads once though both the plugin and the browser say the new version took over', async () => {
+  it('reloads once though both the plugin and the browser report the take-over', async () => {
     const reload = watchReloads();
     const takeOver = fakeWorkers();
     registered.updateServiceWorker = () => Promise.resolve();
