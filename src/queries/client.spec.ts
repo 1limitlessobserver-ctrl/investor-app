@@ -21,6 +21,7 @@ describe('retryQuery', () => {
       error('rate_limited', 429),
       error('network', 0),
       error('timeout', 0),
+      error('timeout', 504), // a timeout is never tried again, whatever status it carries
       error('server_error', 200), // a 2xx whose body was not the route's answer
     ]) {
       expect(retryQuery(0, refused)).toBe(false);
