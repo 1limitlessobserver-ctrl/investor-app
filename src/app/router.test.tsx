@@ -55,7 +55,9 @@ describe('the routes', () => {
     const user = userEvent.setup();
     renderWithApp({ route: '/' });
     expect(await screen.findByRole('heading', { name: 'Locked' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Home' })).toBeNull(); // hidden beneath
+    // The screen stays mounted beneath the lock, hidden from assistive technology.
+    expect(screen.getByRole('heading', { name: 'Home', hidden: true })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Home' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Locked' })).toBeNull());

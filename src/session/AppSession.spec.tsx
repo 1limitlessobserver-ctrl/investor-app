@@ -390,6 +390,74 @@ describe('AppSession: the lock while signed in', () => {
   });
 });
 
+describe('AppSession: confirming with the lock', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    document.title = '';
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Signs in, sets up the device's own lock, and opens a confirmation. */
+  async function confirmWithDeviceLock(platform: Platform) {
+    const user = await launch(createSampleApi({ latencyMs: 0 }), platform);
+    await user.click(screen.getByText('enter'));
+    await setUpDeviceLock(user);
+    await user.click(screen.getByText('confirm'));
+    await screen.findByRole('dialog', { name: 'Confirm' });
+    return user;
+  }
+
+  it('stays open, and says so, when the device does not confirm it is the investor', async () => {
+    const verify = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const user = await confirmWithDeviceLock(fakePlatform({ lock: { verify } }));
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "Your device didn't confirm it's you.",
+    );
+    expect(document.title).toBe('');
+    await user.click(screen.getByRole('button', { name: 'Confirm' })); // and tries again
+    await waitFor(() => expect(document.title).toBe('confirmed'));
+    expect(verify).toHaveBeenCalledTimes(2);
+  });
+
+  it('stays open, and says so, when the lock cannot be checked', async () => {
+    const user = await confirmWithDeviceLock(
+      fakePlatform({ lock: { verify: () => Promise.reject(new Error('NotReadableError')) } }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "The lock couldn't be checked. Try again.",
+    );
+    expect(screen.getByRole('dialog', { name: 'Confirm' })).toBeInTheDocument();
+    expect(document.title).toBe('');
+    expect(status()).toHaveTextContent('signed-in');
+  });
+
+  it('cancels, and signs out, after the last wrong passcode', async () => {
+    const verifyPasscode = vi.fn(() => Promise.resolve({ ok: false, attemptsLeft: 0 }));
+    const user = await launch(
+      createSampleApi({ latencyMs: 0 }),
+      fakePlatform({ lock: { verifyPasscode } }),
+    );
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Set a passcode' }));
+    await user.type(screen.getByLabelText('Passcode'), '246810');
+    await user.type(await screen.findByLabelText('Repeat passcode'), '246810');
+    await user.click(screen.getByRole('button', { name: 'Save passcode' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await user.click(screen.getByText('confirm'));
+    await user.type(await screen.findByLabelText('Passcode'), '000000');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    await waitFor(() => expect(status()).toHaveTextContent('signed-out'));
+    expect(verifyPasscode).toHaveBeenCalledWith('000000');
+  });
+});
+
 describe('AppSession: a lock another tab changes', () => {
   beforeEach(() => {
     localStorage.clear();
