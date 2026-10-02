@@ -265,8 +265,9 @@ const nameHeaderOf = (name: string | undefined): string | null =>
  * send, and every method rejects with a MobileApiError, with two codes of the client's own beside
  * `network`: `timeout` (it gave up waiting; a money call may still have gone through) and
  * `storage_error` (the store failed before the platform was asked). Beyond the interface:
- *  - refresh() resolves the new pair and rotates it into the store; with nothing stored it rejects
- *    `unauthorized` and sends nothing;
+ *  - refresh() resolves the new pair, stored while the store still holds that sign-in, and only
+ *    while the store still holds the sign-in it renewed: otherwise, and with nothing stored (when
+ *    it sends nothing), it rejects `unauthorized`;
  *  - a call that must refresh first (no access token on this page) rejects `unauthorized`, unsent,
  *    when that refresh renewed another sign-in or the investor signed out meanwhile;
  *  - logout() clears the store first, then sends at most one request, whose failure it ignores;
@@ -588,7 +589,16 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     login: (body) => call('login', { body, check: isLoginResult }),
     loginTwoFactor: async (body) =>
       pairOf(await call('loginTwoFactor', { body, check: isTokenPair })),
-    refresh: async () => pairOf(await refreshOnce()),
+    /**
+     * The shared refresh's new pair, only while the store holds the sign-in it renewed: otherwise
+     * `unauthorized`, so no caller takes up a pair of a session this device has left.
+     */
+    refresh: async () => {
+      const renewed = await refreshOnce();
+      const now = await read();
+      if (now?.sessionKey !== renewed.sessionKey) throw new MobileApiError('unauthorized', 401);
+      return pairOf(renewed);
+    },
     /**
      * Ends the session on this device first, then tells the platform once with the tokens it read,
      * whatever that request meets. A store that could not be read or cleared makes it reject

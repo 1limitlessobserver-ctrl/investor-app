@@ -1173,13 +1173,14 @@ describe('the refresh and its edges', () => {
   // is shared, the access token is not). The answer then belongs to a session that is over, so it
   // must change nothing of what the store holds now. In the last row only the key differs, which
   // no real sign-in does (its tokens are new too): the store's session is told apart by its key.
-  const changes: [string, StoredSession | null][] = [
-    ['a logout', null],
-    ['a new sign-in', session(5, 'k2')],
-    ["another tab's refresh", { ...session(1), refreshToken: 'r9' }],
-    ['a sign-in that only its key tells apart', session(1, 'k2')],
+  // refresh() itself answers the pair only while the store holds the sign-in it renewed.
+  const changes: [string, StoredSession | null, 'the pair' | 'unauthorized'][] = [
+    ['a logout', null, 'unauthorized'],
+    ['a new sign-in', session(5, 'k2'), 'unauthorized'],
+    ["another tab's refresh", { ...session(1), refreshToken: 'r9' }, 'the pair'],
+    ['a sign-in that only its key tells apart', session(1, 'k2'), 'unauthorized'],
   ];
-  describe.each(changes)('a refresh answered after %s', (_name, now) => {
+  describe.each(changes)('a refresh answered after %s', (_name, now, answered) => {
     /** Asks for a refresh, makes the change while it is out, then lets the platform answer it. */
     async function overlap(answer: () => Response) {
       const started = gate();
@@ -1201,9 +1202,13 @@ describe('the refresh and its edges', () => {
       return { t, outcome: await refreshing };
     }
 
-    it('stores nothing, and still gives its callers the pair', async () => {
+    it(`stores nothing, and refresh() answers ${answered}`, async () => {
       const { t, outcome } = await overlap(() => json(200, pair(2)));
-      expect(outcome).toEqual({ tokens: pair(2) });
+      expect(outcome).toEqual(
+        answered === 'the pair'
+          ? { tokens: pair(2) }
+          : { error: expect.objectContaining({ code: 'unauthorized', status: 401 }) as unknown },
+      );
       expect(t.tokens()).toEqual(now);
       expect(t.signedOut).toEqual([]);
     });
@@ -1218,9 +1223,11 @@ describe('the refresh and its edges', () => {
 
   it('rotates under the key it read, which the store turns away once another sign-in is in', async () => {
     // Another tab signs in after the client's own check and before its rotate() lands: only the
-    // store's compare can see it. The callers still get the pair, and nothing failed to report.
+    // store's compare can see it. Nothing failed to report, and refresh() answers no pair of a
+    // sign-in the store no longer holds.
     const t = setup(() => json(200, pair(2)), session(1), { cutIn: session(5, 'k2') });
-    expect(await t.api.refresh()).toEqual(pair(2));
+    const e = await failure(t.api.refresh());
+    expect([e.code, e.status]).toEqual(['unauthorized', 401]);
     expect([t.tokens(), t.writes]).toEqual([session(5, 'k2'), [pair(2)]]);
     expect([t.storageErrors, t.signedOut]).toEqual([[], []]);
   });
@@ -1372,14 +1379,15 @@ describe('the session a request belongs to', () => {
         await answer.open;
         return json(200, pair(2));
       });
-      const refreshing = how === 'joined' ? t.api.refresh() : undefined;
+      const refreshing = how === 'joined' ? failure(t.api.refresh()) : undefined;
       const call = failure(t.api.me());
       await started.open;
       await settle(); // the call has heard its 401 and waits for the refresh
       t.store(session(5, 'k2'));
       answer.release();
       expect((await call).code).toBe('unauthorized');
-      expect(await refreshing).toEqual(how === 'joined' ? pair(2) : undefined);
+      // refresh() itself answers no pair of a sign-in the store no longer holds.
+      expect((await refreshing)?.code).toBe(how === 'joined' ? 'unauthorized' : undefined);
       // No retry: the store no longer holds the sign-in the call went out with.
       expect(t.calls.map(path).sort()).toEqual(['/auth/refresh', '/me']);
       expect([t.signedOut, t.writes, t.tokens()]).toEqual([[], [], session(5, 'k2')]);
@@ -1402,7 +1410,7 @@ describe('the session a request belongs to', () => {
         }
         return bearer(c) === 'Bearer a5' ? json(401, { error: code }) : json(200, { id: 'u1' });
       });
-      const refreshing = t.api.refresh();
+      const refreshing = failure(t.api.refresh());
       await started.open;
       await t.api.logout();
       t.store(session(5, 'k2')); // the session layer starts the new sign-in
@@ -1410,7 +1418,7 @@ describe('the session a request belongs to', () => {
       await settle(); // the call has heard its 401 and joined the refresh still out
       answer.release();
       expect((await call).code).toBe(code);
-      expect(await refreshing).toEqual(pair(2));
+      expect((await refreshing).code).toBe('unauthorized');
       expect(t.calls.map((c) => `${path(c)} ${bearer(c)}`)).toEqual([
         '/auth/refresh null',
         '/auth/logout Bearer a1',
@@ -1431,7 +1439,7 @@ describe('the session a request belongs to', () => {
       await answer.open;
       return json(200, pair(2));
     });
-    const refreshing = t.api.refresh();
+    const refreshing = failure(t.api.refresh());
     await started.open;
     t.store(restarted(5, 'k2'));
     const call = failure(t.api.me());
@@ -1439,7 +1447,7 @@ describe('the session a request belongs to', () => {
     answer.release();
     const e = await call;
     expect([e.code, e.status]).toEqual(['unauthorized', 401]);
-    expect(await refreshing).toEqual(pair(2));
+    expect((await refreshing).code).toBe('unauthorized');
     expect(t.calls.map(path)).toEqual(['/auth/refresh']);
     expect([t.signedOut, t.writes, t.tokens()]).toEqual([[], [], restarted(5, 'k2')]);
   });
@@ -1526,13 +1534,13 @@ describe('the session a request belongs to', () => {
         await answer.open;
         return json(200, pair(2));
       });
-      const refreshing = how === 'joined' ? t.api.refresh() : undefined;
+      const refreshing = how === 'joined' ? failure(t.api.refresh()) : undefined;
       const call = failure(t.api.me());
       await started.open;
       await t.api.logout();
       answer.release();
       expect((await call).code).toBe('unauthorized');
-      await refreshing;
+      expect((await refreshing)?.code).toBe(how === 'joined' ? 'unauthorized' : undefined);
       // No retry: the pair belongs to a session the investor has ended.
       expect(t.calls.map(path).sort()).toEqual(['/auth/logout', '/auth/refresh', '/me']);
       expect([t.signedOut, t.tokens()]).toEqual([[], null]);

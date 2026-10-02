@@ -64,8 +64,9 @@ export interface PlatformApi {
   }): Promise<MobileTokens>;
   /**
    * POST /auth/refresh with the stored refresh token. Each token works once, so the new pair is
-   * stored and concurrent callers share one request. Resolves the new pair; with no session stored
-   * it rejects `unauthorized` and sends nothing.
+   * stored while the store still holds that sign-in, and concurrent callers share one request.
+   * Resolves the new pair only while the store still holds the sign-in it renewed; otherwise, and
+   * with no session stored (when it sends nothing), it rejects `unauthorized`.
    */
   refresh(): Promise<MobileTokens>;
   /**
