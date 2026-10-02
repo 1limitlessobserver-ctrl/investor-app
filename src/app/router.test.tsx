@@ -227,11 +227,15 @@ describe('the routes', () => {
   });
 
   it('takes the new version, not the precached one, on the update screen’s Reload', async () => {
+    // Taking the new version can wait on the worker for a while: Reload shows it is under way.
+    vi.mocked(applyWaitingUpdate).mockReturnValue(new Promise<void>(() => {}));
     renderWithApp({ route: '/', signedIn: true, sample: { minSupportedAppVersion: '99.0.0' } });
     await screen.findByRole('heading', { name: 'Update the app' });
     expect(applyWaitingUpdate).not.toHaveBeenCalled();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+    const reload = screen.getByRole('button', { name: 'Reload' });
+    await userEvent.setup().click(reload);
     expect(applyWaitingUpdate).toHaveBeenCalledTimes(1);
+    expect(reload).toHaveAttribute('aria-busy', 'true');
   });
 
   it('ends a locked app whose lock is gone here, showing nothing of it meanwhile', async () => {

@@ -61,11 +61,16 @@ describe('applyWaitingUpdate', () => {
     const waiting = fakeWorker('installed');
     const { workers, registration, takeOver } = fakeWorkers({ waiting });
     const reload = vi.fn();
-    await applyWaitingUpdate({ workers, reload });
+    const applying = applyWaitingUpdate({ workers, reload });
+    let settled = false;
+    void applying.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
     expect(registration?.update).toHaveBeenCalledTimes(1); // the newest version, from the server
     expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     expect(reload).not.toHaveBeenCalled(); // not before the new version controls the page
+    expect(settled).toBe(false); // the update screen shows Reload busy until then
     takeOver();
+    await applying;
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
@@ -99,9 +104,10 @@ describe('applyWaitingUpdate', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(installing.postMessage).not.toHaveBeenCalled();
     installing.become('installed');
-    await applying;
+    await vi.advanceTimersByTimeAsync(0);
     expect(installing.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     takeOver();
+    await applying;
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
@@ -123,10 +129,12 @@ describe('applyWaitingUpdate', () => {
     const waiting = fakeWorker('installed');
     const { workers, takeOver } = fakeWorkers({ waiting, update: () => Promise.reject(failure) });
     const reload = vi.fn();
-    await applyWaitingUpdate({ workers, reload });
+    const applying = applyWaitingUpdate({ workers, reload });
+    await vi.advanceTimersByTimeAsync(0);
     expect(warn).toHaveBeenCalledWith('[investor-app] looking for the new version:', failure);
     expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     takeOver();
+    await applying;
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
@@ -134,10 +142,11 @@ describe('applyWaitingUpdate', () => {
     const waiting = fakeWorker('installed');
     const { workers, takeOver } = fakeWorkers({ waiting });
     const reload = vi.fn();
-    await applyWaitingUpdate({ workers, reload });
+    const applying = applyWaitingUpdate({ workers, reload });
     await vi.advanceTimersByTimeAsync(TAKE_OVER_WAIT_MS - 1);
     expect(reload).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
+    await applying;
     expect(reload).toHaveBeenCalledTimes(1);
     takeOver(); // late
     expect(reload).toHaveBeenCalledTimes(1);

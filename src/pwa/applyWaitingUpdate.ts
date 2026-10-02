@@ -2,7 +2,8 @@
 // precached, so a plain reload would open the same version again. This asks the server for the
 // newest worker; the one waiting (or the one installing, once it has installed) is told to take
 // over, and the page reloads as soon as the new version controls it. Where no worker waits, or
-// none takes over in time, the page reloads as it is.
+// none takes over in time, the page reloads as it is. Its promise settles once it has reloaded,
+// so the screen can show its Reload busy until then.
 
 import { reportProblem } from '../lib/report';
 import { browserWorkers } from './workerReady';
@@ -37,16 +38,19 @@ export async function applyWaitingUpdate({
     reload();
     return;
   }
-  let done = false;
-  const reloadOnce = () => {
-    if (done) return;
-    done = true;
-    clearTimeout(timer);
-    reload();
-  };
-  const timer = setTimeout(reloadOnce, TAKE_OVER_WAIT_MS);
-  workers.addEventListener('controllerchange', reloadOnce, { once: true });
-  waiting.postMessage({ type: 'SKIP_WAITING' });
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const reloadOnce = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reload();
+      resolve();
+    };
+    const timer = setTimeout(reloadOnce, TAKE_OVER_WAIT_MS);
+    workers.addEventListener('controllerchange', reloadOnce, { once: true });
+    waiting.postMessage({ type: 'SKIP_WAITING' });
+  });
 }
 
 /** The worker once it has installed; null when there is none, it fails, or it takes too long. */

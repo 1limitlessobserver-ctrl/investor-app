@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { VisuallyHidden } from 'radix-ui';
 import { BrandMark, type BrandIdentity } from './BrandMark';
 import { Button } from './form/Button';
@@ -10,8 +11,11 @@ export interface UpdateRequiredProps {
   minVersion: string;
   /** A store page for the update, opened in a new tab; without one, Reload gets the new version. */
   storeUrl?: string | null | undefined;
-  /** What Reload does; reloading the page when left out. */
-  onReload?: (() => void) | undefined;
+  /**
+   * What Reload does; reloading the page when left out. While the promise it may answer is
+   * pending (taking a new version can wait on the service worker), Reload shows it is busy.
+   */
+  onReload?: (() => void | Promise<void>) | undefined;
   /** Sign out still works here. */
   onSignOut: () => void;
 }
@@ -29,6 +33,17 @@ export function UpdateRequired({
   onSignOut,
 }: UpdateRequiredProps) {
   const target = minVersion ? `version ${minVersion} or later` : 'the latest version';
+  const [reloading, setReloading] = useState(false);
+
+  async function reload() {
+    setReloading(true);
+    try {
+      await (onReload ?? (() => window.location.reload()))();
+    } finally {
+      setReloading(false);
+    }
+  }
+
   return (
     <main className={styles.screen}>
       <div className={styles.content}>
@@ -52,7 +67,7 @@ export function UpdateRequired({
               </a>
             </Button>
           ) : (
-            <Button size="lg" onClick={onReload ?? (() => window.location.reload())}>
+            <Button size="lg" loading={reloading} onClick={() => void reload()}>
               Reload
             </Button>
           )}

@@ -94,7 +94,7 @@ export function RequireSession() {
       <UpdateRequired
         brand={brand}
         minVersion={updateRequired}
-        onReload={() => void applyWaitingUpdate()}
+        onReload={() => applyWaitingUpdate()}
         onSignOut={() => void session.signOut()}
       />
     );
