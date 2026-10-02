@@ -2,12 +2,13 @@
 // platform's docs/MOBILE_API.md). Screens never call fetch; they reach this through src/queries.
 //
 // The token store answers a StoredSession, and must read its shared part from storage on every
-// `get`, apply `rotate` and `clear` only to the session key they name (compared within the write),
-// make them visible to every later `get`, and write in call order. The client ends a session on
-// its own only when the platform revokes it or refuses its refresh, and says so through
-// onSignedOut. A 426 tells onUpgradeRequired and keeps the session. Retry logic keys on the
-// platform's `code`, never on a status alone: only a 401 `unauthorized` or `session_revoked` is
-// ever sent again, and once.
+// `get`, apply `rotate` and a keyed `clear` only to the session key they name (compared within
+// the write), while `clear()` with no key, which logout() uses, clears whatever is stored; make
+// them visible to every later `get`; and write in call order. The client ends a session on its
+// own only when the platform revokes it or refuses its refresh, and says so through onSignedOut.
+// A 426 tells onUpgradeRequired and keeps the session. Retry logic keys on the platform's
+// `code`, never on a status alone: only a 401 `unauthorized` or `session_revoked` is ever sent
+// again, and once.
 
 import {
   isPublic,
@@ -62,11 +63,12 @@ export type StoredSession = {
 /**
  * Where the app keeps the session; the tabs share it. The client never starts a session (the
  * session layer's own start(tokens) does, outside this interface), and writes land in call order.
- * rotate() and clear() name the session they are for, and the store itself compares that key with
- * the one it holds, inside the same transaction or lock as the write: another tab can sign in
- * between any check of the client's and its write, so the client's own checks only spare it
- * pointless writes. A store that rejects makes the call reject `storage_error`, or, where the
- * platform has already answered, is reported beside its answer.
+ * rotate() and a keyed clear() name the session they are for, and the store itself compares that
+ * key with the one it holds, inside the same transaction or lock as the write: another tab can
+ * sign in between any check of the client's and its write, so the client's own checks only spare
+ * it pointless writes. clear() with no key, which logout() uses, clears whatever is stored. A
+ * store that rejects makes the call reject `storage_error`, or, where the platform has already
+ * answered, is reported beside its answer.
  */
 export type TokenStore = {
   /**
