@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Dialog as RadixDialog } from 'radix-ui';
 import type { LockMethod } from '../platform/types';
 import { BrandMark, type BrandIdentity } from './BrandMark';
@@ -71,8 +71,9 @@ function DeviceUnlock({
  * (opaque, so nothing behind it shows). It holds the brand, the way to unlock (the device prompt,
  * or the passcode labelled "Passcode") and "Sign out instead". Over anything already open (a
  * Sheet, a Dialog) it takes focus (the passcode box, or Unlock), keeps Tab inside, hides the rest
- * from assistive technology and stops the page scrolling. Escape and presses outside do nothing.
- * Render it once, at the app's root, outside the shell frame, while the app is locked.
+ * from assistive technology and stops the page scrolling; once it goes away, focus goes back to
+ * where it was, if that is still there. Escape and presses outside do nothing. Render it once, at
+ * the app's root, outside the shell frame, while the app is locked.
  */
 export function LockScreen({
   method,
@@ -89,6 +90,8 @@ export function LockScreen({
     (attemptsLeft !== undefined && attemptsLeft > 0
       ? attemptsLeftMessage(attemptsLeft)
       : undefined);
+  // What had focus before the lock, to have it back once the lock goes away.
+  const returnFocus = useRef<HTMLElement | null>(null);
 
   return (
     <RadixDialog.Root open modal>
@@ -98,6 +101,16 @@ export function LockScreen({
           className={styles.screen}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
+          onOpenAutoFocus={() => {
+            const active = document.activeElement;
+            returnFocus.current =
+              active instanceof HTMLElement && active !== document.body ? active : null;
+          }}
+          onCloseAutoFocus={(event) => {
+            // Radix would focus a trigger, and the lock has none.
+            event.preventDefault();
+            if (returnFocus.current?.isConnected) returnFocus.current.focus();
+          }}
         >
           <div className={styles.content}>
             <div className={styles.emblem} aria-hidden="true">

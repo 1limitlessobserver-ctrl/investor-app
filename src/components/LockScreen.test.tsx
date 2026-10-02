@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { cssRule, rem } from '../test/cssRules';
@@ -14,6 +15,29 @@ function renderLock(props: Partial<LockScreenProps> = {}) {
   return { ...handlers, ...view };
 }
 
+/** A Withdraw sheet with its Amount box focused, and the lock over it while `locked`. */
+function OverSheet({ locked }: { locked: boolean }) {
+  return (
+    <>
+      <Sheet open>
+        <SheetContent>
+          <SheetTitle>Withdraw</SheetTitle>
+          <input aria-label="Amount" />
+        </SheetContent>
+      </Sheet>
+      {locked && (
+        <LockScreen
+          method="passcode"
+          brand={brand}
+          onUnlock={() => {}}
+          onPasscode={() => {}}
+          onSignOut={() => {}}
+        />
+      )}
+    </>
+  );
+}
+
 describe('LockScreen', () => {
   it('is a dialog named Locked that shows the brand and waits in the passcode', () => {
     renderLock();
@@ -24,28 +48,45 @@ describe('LockScreen', () => {
   });
 
   it('takes focus over an open sheet and hides that sheet from assistive technology', () => {
-    const handlers = { onUnlock: vi.fn(), onPasscode: vi.fn(), onSignOut: vi.fn() };
-    function App({ locked }: { locked: boolean }) {
-      return (
-        <>
-          <Sheet open>
-            <SheetContent>
-              <SheetTitle>Withdraw</SheetTitle>
-              <input aria-label="Amount" />
-            </SheetContent>
-          </Sheet>
-          {locked && <LockScreen method="passcode" brand={brand} {...handlers} />}
-        </>
-      );
-    }
-    const { rerender } = render(<App locked={false} />);
+    const { rerender } = render(<OverSheet locked={false} />);
     expect(screen.getByRole('textbox', { name: 'Amount' })).toHaveFocus();
 
-    rerender(<App locked />);
+    rerender(<OverSheet locked />);
     expect(screen.getByLabelText('Passcode')).toHaveFocus();
     expect(screen.getByRole('heading', { level: 1, name: 'Locked' })).toBeVisible();
     expect(screen.queryByRole('dialog', { name: 'Withdraw' })).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Amount' })).toBeNull();
+  });
+
+  it('gives focus back to where it was once it goes away', async () => {
+    const { rerender } = render(<OverSheet locked={false} />);
+    const amount = screen.getByRole('textbox', { name: 'Amount' });
+    rerender(<OverSheet locked />);
+    expect(screen.getByLabelText('Passcode')).toHaveFocus();
+
+    rerender(<OverSheet locked={false} />);
+    await waitFor(() => expect(amount).toHaveFocus());
+  });
+
+  it('does the same under strict mode, never letting focus visit the sheet behind', async () => {
+    const strict = (locked: boolean) => (
+      <StrictMode>
+        <OverSheet locked={locked} />
+      </StrictMode>
+    );
+    const { rerender } = render(strict(false));
+    const amount = screen.getByRole('textbox', { name: 'Amount' });
+    rerender(strict(true));
+    const amountFocused = vi.fn();
+    amount.addEventListener('focus', amountFocused);
+    // Strict mode runs effects twice; focus returns a task after an unmount, so wait one out. It
+    // must stay in the lock, never visiting the sheet behind it.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(amountFocused).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Passcode')).toHaveFocus();
+
+    rerender(strict(false));
+    await waitFor(() => expect(amount).toHaveFocus());
   });
 
   it('keeps Tab inside and cannot be dismissed with Escape', async () => {
