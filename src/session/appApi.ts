@@ -1,6 +1,7 @@
 // The PlatformApi the app talks to, made once at launch: the sample world when the build names no
-// platform (with the address's sample options), else the live client for the company's platform,
-// naming the app and this device on every request and answering to the session's callbacks.
+// platform (with the address's sample options, and the company the build was made for as its
+// brand's name and accent), else the live client for the company's platform, naming the app and
+// this device on every request and answering to the session's callbacks.
 
 import { createLiveApi } from '../api/createLiveApi';
 import { createSampleApi } from '../api/createSampleApi';
@@ -32,7 +33,15 @@ export function createAppApi(
 ): PlatformApi {
   const { config, search, userAgent } = context;
   if (config.platformUrl === '') {
-    return createSampleApi({ ...readSampleOptions(search), onSignedOut: events.onSignedOut });
+    // A build without the company's files (the dev server) keeps the sample world's own company.
+    const company = config.productName
+      ? { name: config.productName, accentHex: config.accentFallback }
+      : undefined;
+    return createSampleApi({
+      ...readSampleOptions(search),
+      company,
+      onSignedOut: events.onSignedOut,
+    });
   }
   return createLiveApi({
     baseUrl: `${config.platformUrl}/api/mobile/v1`,

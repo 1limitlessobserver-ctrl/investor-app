@@ -283,9 +283,20 @@ function offset(now: Date, days: number, hours = 0): Date {
 const SAMPLE_VAPID_PUBLIC_KEY =
   'BPQrQfhlzk4mPvkpTTyldOhVJC3Qmoq9EnBEAKkyD5Nxxp_Jzqh4DSKilScSHi_jfhwtvpghMAFEDSg2H6D8O7c';
 
+/** The sample world's own company, where the build names none. */
+const SAMPLE_BRAND_NAME = 'Everest Reserve';
+const SAMPLE_ACCENT = '#1F9E76';
 /** The overflow audit's world (40 characters). */
 const STRESS_BRAND_NAME = 'Everest Reserve International Wealth Co.';
 const STRESS_BALANCE_CENTS = 1_234_567_890;
+const HEX_COLOUR = /^#[0-9a-f]{6}$/i;
+
+/** The deploying company's install-time identity, which the sample world's brand takes on. */
+export interface SampleCompany {
+  name?: string | undefined;
+  /** "#RRGGBB"; anything else is not taken. */
+  accentHex?: string | undefined;
+}
 
 const SAMPLE_INSTRUCTIONS =
   "Sample method for the preview — do not send funds. The live app shows the company's own instructions here.";
@@ -526,11 +537,17 @@ function sampleDepositMethods(): DepositMethod[] {
 }
 
 /**
- * A fresh, mutable copy of the sample world, dated relative to `now`. `stress` is the overflow
- * audit's world: a 40-character company name and $12,345,678.90 in the wallet and the cash balance.
+ * A fresh, mutable copy of the sample world, dated relative to `now`. Its brand takes the
+ * `company`'s name and accent where they are given, so a company's own sample app (and its
+ * manifest screenshots) shows its identity. `stress` is the overflow audit's world: a 40-character
+ * company name, whatever the company, and $12,345,678.90 in the wallet and the cash balance.
  */
-function createState(opts: { now?: Date; stress?: boolean } = {}): SampleState {
-  const { now = new Date(), stress = false } = opts;
+function createState(
+  opts: { now?: Date; stress?: boolean; company?: SampleCompany | undefined } = {},
+): SampleState {
+  const { now = new Date(), stress = false, company } = opts;
+  const name = company?.name?.trim() || SAMPLE_BRAND_NAME;
+  const accent = company?.accentHex;
   const positions = samplePositions(now);
   const evergreen = positions.find((p) => p.id === 'pos_evergreen')!;
   const treasury = positions.find((p) => p.id === 'pos_treasury')!;
@@ -544,9 +561,10 @@ function createState(opts: { now?: Date; stress?: boolean } = {}): SampleState {
     createdAt: now,
     brand: {
       apiVersion: 1,
-      name: stress ? STRESS_BRAND_NAME : 'Everest Reserve',
+      name: stress ? STRESS_BRAND_NAME : name,
       tagline: 'Your wealth should think for itself.',
-      accentHex: '#1F9E76',
+      accentHex:
+        !stress && accent !== undefined && HEX_COLOUR.test(accent) ? accent : SAMPLE_ACCENT,
       logoDataUrl: null,
       defaultTheme: 'orbital',
       themes: ['orbital', 'obsidian', 'ivory', 'aurora', 'verdant', 'aegis'],

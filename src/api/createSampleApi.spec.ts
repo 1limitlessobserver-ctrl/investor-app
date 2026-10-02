@@ -177,6 +177,39 @@ describe('createSampleApi', () => {
   });
 });
 
+describe('createSampleApi: the company in the sample world', () => {
+  const northwind = { name: 'Northwind Invest', accentHex: '#6EA8FF' };
+
+  it('names the deploying company and paints its accent in the brand', async () => {
+    const brand = await createSampleApi({ latencyMs: 0, company: northwind }).brand();
+    expect(brand.name).toBe('Northwind Invest');
+    expect(brand.accentHex).toBe('#6EA8FF');
+  });
+
+  it('keeps its own identity when no company is named, or a blank one', async () => {
+    for (const company of [undefined, { name: '  ', accentHex: 'not a colour' }]) {
+      const brand = await createSampleApi({ latencyMs: 0, company }).brand();
+      expect(brand.name).toBe('Everest Reserve');
+      expect(brand.accentHex).toBe('#1F9E76');
+    }
+  });
+
+  it('keeps an accent it is given apart from a name it is not', async () => {
+    const brand = await createSampleApi({
+      latencyMs: 0,
+      company: { accentHex: '#6EA8FF' },
+    }).brand();
+    expect(brand.name).toBe('Everest Reserve');
+    expect(brand.accentHex).toBe('#6EA8FF');
+  });
+
+  it('keeps the stress world’s long name and own accent, whatever the company', async () => {
+    const brand = await createSampleApi({ latencyMs: 0, stress: true, company: northwind }).brand();
+    expect(brand.name).toBe('Everest Reserve International Wealth Co.');
+    expect(brand.accentHex).toBe('#1F9E76');
+  });
+});
+
 describe('createSampleApi: the platform’s rules in the sample world', () => {
   it('waits the latency before answering', async () => {
     vi.useFakeTimers();
