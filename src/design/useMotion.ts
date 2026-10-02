@@ -23,13 +23,30 @@ function forcedReduced(): boolean {
   }
 }
 
+function prefersReducedMotion(): boolean {
+  return window.matchMedia(REDUCED).matches || forcedReduced();
+}
+
 function canAnimate(): boolean {
-  const reduced = window.matchMedia(REDUCED).matches || forcedReduced();
-  return motion(reduced, document.visibilityState === 'hidden').animate;
+  return motion(prefersReducedMotion(), document.visibilityState === 'hidden').animate;
+}
+
+function subscribeReduced(onChange: () => void): () => void {
+  const query = window.matchMedia(REDUCED);
+  query.addEventListener('change', onChange);
+  return () => query.removeEventListener('change', onChange);
 }
 
 /** Whether decorative motion may run now; follows the system setting and the app's visibility. */
 export function useMotion(): { animate: boolean } {
   const animate = useSyncExternalStore(subscribe, canAnimate);
   return useMemo(() => ({ animate }), [animate]);
+}
+
+/**
+ * Whether the investor asked for reduced motion (or the audits force it), whatever the app's
+ * visibility: for an entrance that should not replay when the app comes back on screen.
+ */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(subscribeReduced, prefersReducedMotion);
 }

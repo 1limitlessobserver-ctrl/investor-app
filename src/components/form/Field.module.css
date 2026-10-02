@@ -1,0 +1,76 @@
+.field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.label {
+  justify-self: start;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.control {
+  min-width: 0;
+}
+
+/* A small dot leads the message; it is drawn, not written, so the alert reads the message alone. */
+.error {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--error);
+  text-wrap: pretty;
+}
+
+.error::before {
+  content: '';
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  transform: translateY(-0.125rem);
+}
+
+/* Label and control share a row; the hint sits under the label, the error under both. */
+.inline {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+}
+
+.inline .label {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: var(--text-md);
+}
+
+.inline .hint {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.inline .control {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.inline .error {
+  grid-column: 1 / -1;
+}

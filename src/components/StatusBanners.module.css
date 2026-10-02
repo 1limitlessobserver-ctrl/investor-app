@@ -1,0 +1,51 @@
+/*
+ * Notices are slim glass strips tinted by meaning: the warning colour for offline, the accent for
+ * an update. The regions have no box of their own, so they take no space while empty (and are
+ * not shown); they keep `display: block`, as `contents` can drop a live region in some browsers.
+ */
+
+.banners {
+  display: grid;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--foreground);
+}
+
+.offline {
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, var(--card));
+}
+
+.offline .icon {
+  color: var(--warning);
+}
+
+.update {
+  border-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
+  background: color-mix(in srgb, var(--accent-text) 10%, var(--card));
+}
+
+.update .icon {
+  color: var(--accent-text);
+}
+
+.icon {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.message {
+  flex: 1;
+  min-width: 0;
+}

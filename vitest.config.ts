@@ -1,8 +1,17 @@
+import { readFileSync } from 'node:fs';
 import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
+/** The package.json version, as vite.config.ts defines it for the app. */
+const appVersion = (
+  JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
+    version: string;
+  }
+).version;
+
 export default defineConfig({
   plugins: [react()],
+  define: { __APP_VERSION__: JSON.stringify(appVersion) },
   test: {
     environment: 'jsdom',
     globals: false,
@@ -13,6 +22,9 @@ export default defineConfig({
     // `vmThreads` in the run summary. Plain forks (the default) keep every file in its own process.
     pool: 'forks',
     setupFiles: ['./vitest.setup.ts'],
+    // Every spy is restored before each test, so a stub (a quiet console, say) never outlives its
+    // test and hides what a later one prints.
+    restoreMocks: true,
     include: ['src/**/*.{spec,test}.{ts,tsx}', 'scripts/**/*.spec.ts'],
     exclude: [...configDefaults.exclude, '.reference/**'],
     css: { modules: { classNameStrategy: 'non-scoped' } },

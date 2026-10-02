@@ -195,8 +195,9 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
     }
   });
 
-  it('reports the minimum app version it was given', async () => {
-    expect((await api().brand()).minSupportedAppVersion).toBe('1.0.0');
+  it('reports the minimum app version it was given, and none unless told', async () => {
+    // No minimum by default: the template's own version (0.1.0) must never read as outdated.
+    expect((await api().brand()).minSupportedAppVersion).toBe('0.0.0');
     const old = createSampleApi({ latencyMs: 0, minSupportedAppVersion: '99.0.0' });
     expect((await old.brand()).minSupportedAppVersion).toBe('99.0.0');
   });
@@ -215,6 +216,50 @@ describe('createSampleApi: the platform’s rules in the sample world', () => {
       false,
     );
     await expect(a.me()).resolves.toMatchObject({ fullName: 'Alex Morgan' });
+  });
+
+  it('tells onSignedOut once, when the first signed-in call meets an ended session', async () => {
+    const onSignedOut = vi.fn();
+    const a = createSampleApi({ latencyMs: 0, onSignedOut });
+    await a.me();
+    a._test_revoke();
+    expect(onSignedOut).not.toHaveBeenCalled();
+    expect((await failure(a.me())).code).toBe('session_revoked');
+    expect(onSignedOut.mock.calls).toEqual([['session_revoked']]);
+    // Later calls still meet the ended session, but it was told once; the public routes never tell.
+    await a.brand();
+    await a.logout();
+    expect((await failure(a.dashboard())).code).toBe('session_revoked');
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+    // A sign-in starts a new session, whose end is told again.
+    await a.login({ email: 'anyone@example.com', password: 'x' });
+    a._test_revoke();
+    await failure(a.me());
+    expect(onSignedOut).toHaveBeenCalledTimes(2);
+  });
+
+  it('tells onSignedOut after the two-factor step starts the new session', async () => {
+    const onSignedOut = vi.fn();
+    const a = createSampleApiFor(sampleData.createState(), { latencyMs: 0, onSignedOut });
+    a._test_revoke();
+    await failure(a.me());
+    const step = await a.login({ email: 'investor+2fa@sample.app', password: 'x' });
+    if (!step.requiresTwoFactor) throw new Error('expected the two-factor step');
+    await a.loginTwoFactor({ challenge: step.challenge, code: '123456' });
+    await expect(a.me()).resolves.toMatchObject({ fullName: 'Alex Morgan' });
+    a._test_revoke();
+    await failure(a.me());
+    expect(onSignedOut).toHaveBeenCalledTimes(2);
+  });
+
+  it('tells onSignedOut when a call meets a session the investor ended here', async () => {
+    const onSignedOut = vi.fn();
+    const a = createSampleApi({ latencyMs: 0, onSignedOut });
+    const me = await a.me();
+    await a.revokeSession(me.sessionId);
+    expect(onSignedOut).not.toHaveBeenCalled();
+    await failure(a.sessions());
+    expect(onSignedOut.mock.calls).toEqual([['session_revoked']]);
   });
 
   it('computes the dashboard from the rows with the platform’s functions', async () => {

@@ -1,0 +1,71 @@
+/*
+ * Glass: the card colour at 72 % over the backdrop, blurred, with a hairline edge. Light catches
+ * the top edge (brightest left of centre, warming into the accent) and falls off down the face.
+ */
+
+.panel {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  list-style: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(1.125rem) saturate(140%);
+  backdrop-filter: blur(1.125rem) saturate(140%);
+  color: var(--card-foreground);
+}
+
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: -1px var(--radius-lg) auto;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--foreground) 34%, transparent) 38%,
+    color-mix(in srgb, var(--accent-text) 26%, transparent) 64%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+.panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--foreground) 5%, transparent),
+    transparent 45%
+  );
+  pointer-events: none;
+}
+
+.none {
+  padding: 0;
+}
+
+.sm {
+  padding: var(--space-3);
+}
+
+.md {
+  padding: var(--space-5);
+}
+
+.lg {
+  padding: var(--space-7);
+}
+
+.glow {
+  border-color: color-mix(in srgb, var(--accent-text) 38%, transparent);
+  box-shadow:
+    0 1.5rem 3rem -2rem var(--glow),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-text) 8%, transparent);
+}

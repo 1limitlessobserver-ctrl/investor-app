@@ -1,0 +1,48 @@
+/* Input's field look and focus indicator, taller, growing by hand. */
+
+.textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 6rem;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  caret-color: var(--accent-text);
+  resize: vertical;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.textarea::placeholder {
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+
+/* Only while it can be used; :where() adds no weight, so the error's rule after it still wins. */
+.textarea:hover:where(:not(:disabled)) {
+  border-color: var(--muted-foreground);
+}
+
+.textarea[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+/* After hover and the error, so focus wins; the outline is the indicator forced colours keep. */
+.textarea:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-text) 28%, transparent);
+}
+
+.textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

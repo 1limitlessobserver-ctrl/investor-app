@@ -3,12 +3,12 @@
 //
 // The token store answers a StoredSession, and must read its shared part from storage on every
 // `get`, apply `rotate` and a keyed `clear` only to the session key they name (compared within
-// the write), while `clear()` with no key, which logout() uses, clears whatever is stored; make
-// them visible to every later `get`; and write in call order. The client ends a session on its
-// own only when the platform revokes it or refuses its refresh, and says so through onSignedOut.
-// A 426 tells onUpgradeRequired and keeps the session. Retry logic keys on the platform's
-// `code`, never on a status alone: only a 401 `unauthorized` or `session_revoked` is ever sent
-// again, and once.
+// the write), while `clear()` with no key (logout() uses it unless it names a sign-in) clears
+// whatever is stored; make them visible to every later `get`; and write in call order. The client
+// ends a session on its own only when the platform revokes it or refuses its refresh, and says so
+// through onSignedOut. A 426 tells onUpgradeRequired and keeps the session. Retry logic keys on
+// the platform's `code`, never on a status alone: only a 401 `unauthorized` or `session_revoked`
+// is ever sent again, and once.
 
 import {
   isPublic,
@@ -66,9 +66,9 @@ export type StoredSession = {
  * rotate() and a keyed clear() name the session they are for, and the store itself compares that
  * key with the one it holds, inside the same transaction or lock as the write: another tab can
  * sign in between any check of the client's and its write, so the client's own checks only spare
- * it pointless writes. clear() with no key, which logout() uses, clears whatever is stored. A
- * store that rejects makes the call reject `storage_error`, or, where the platform has already
- * answered, is reported beside its answer.
+ * it pointless writes. clear() with no key (logout() uses it unless it names a sign-in) clears
+ * whatever is stored. A store that rejects makes the call reject `storage_error`, or, where the
+ * platform has already answered, is reported beside its answer.
  */
 export type TokenStore = {
   /**
@@ -277,8 +277,9 @@ const nameHeaderOf = (name: string | undefined): string | null =>
  *  - a call that must refresh first (no access token on this page) rejects `unauthorized`, unsent,
  *    when that refresh renewed another sign-in, another sign-in is stored by the time its pair
  *    is in, or the investor signed out meanwhile;
- *  - logout() clears the store first, then sends at most one request, whose failure it ignores;
- *    it never refreshes, retries or calls onSignedOut, and rejects only when the store fails;
+ *  - logout() clears the store first (with a key, only that sign-in: another one stored is left,
+ *    and nothing is sent), then sends at most one request, whose failure it ignores; it never
+ *    refreshes, retries or calls onSignedOut, and rejects only when the store fails;
  *  - login() and loginTwoFactor() store nothing: the session layer stores the pair it signs in
  *    with.
  */
@@ -630,12 +631,15 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     /**
      * Ends the session on this device first, then tells the platform once with the tokens it read,
      * whatever that request meets. A store that could not be read or cleared makes it reject
-     * `storage_error` after that.
+     * `storage_error` after that. With `sessionKey`, only that sign-in: another one stored is left
+     * as it is, untold, and nothing of this client's changes for it.
      */
-    logout: async () => {
+    logout: async (sessionKey) => {
       // The session ends here, at once: the count moves before anything is read or cleared, so a
       // call or a refresh that resumes from now on belongs to an ended session and changes nothing.
-      generation += 1;
+      // A logout that names its sign-in moves it once that sign-in is found stored: a refresh of
+      // another one, under way in this page, must still land.
+      if (sessionKey === undefined) generation += 1;
       let stored: StoredSession | null = null;
       let broken: { cause: unknown } | undefined;
       try {
@@ -643,8 +647,12 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       } catch (cause) {
         broken = { cause };
       }
+      if (sessionKey !== undefined) {
+        if (stored !== null && stored.sessionKey !== sessionKey) return;
+        generation += 1;
+      }
       try {
-        await tokenStore.clear();
+        await tokenStore.clear(sessionKey);
       } catch (cause) {
         broken ??= { cause };
       }

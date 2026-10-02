@@ -1,0 +1,65 @@
+/*
+ * The button is a 44 px target; the track is drawn inside it. Off is quiet (muted track, muted
+ * knob); on fills with the accent, the knob in the accent's own readable ink, with a faint glow.
+ */
+
+.root {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-width: 3.25rem;
+  min-height: 2.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.root::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: 1.75rem;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  transform: translateY(-50%);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.root[data-state='checked']::before {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: 0 0 1rem -0.25rem var(--glow);
+}
+
+.root:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.thumb {
+  position: relative;
+  display: block;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-inline-start: 0.25rem;
+  border-radius: var(--radius-full);
+  background: var(--muted-foreground);
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 160ms ease;
+}
+
+.thumb[data-state='checked'] {
+  background: var(--primary-foreground);
+  transform: translateX(1.5rem);
+}

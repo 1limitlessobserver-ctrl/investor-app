@@ -550,7 +550,7 @@ function createState(opts: { now?: Date; stress?: boolean } = {}): SampleState {
       logoDataUrl: null,
       defaultTheme: 'orbital',
       themes: ['orbital', 'obsidian', 'ivory', 'aurora', 'verdant', 'aegis'],
-      minSupportedAppVersion: '1.0.0',
+      minSupportedAppVersion: '0.0.0',
       features: { kyc: true, deposits: true, oracle: true, support: true },
       stores: { appStore: null, googlePlay: null, androidDirect: null },
       links: {

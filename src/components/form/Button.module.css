@@ -1,0 +1,122 @@
+/*
+ * Buttons. Radius follows the theme (near-pill on the soft themes, square-ish on AEGIS); the
+ * accent appears only on the primary action, as its fill and a glow beneath it. Every size keeps
+ * a 44 px target; long labels wrap rather than overflow.
+ */
+
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 90ms ease;
+}
+
+.button:active:not(:disabled, [aria-disabled='true']) {
+  transform: scale(0.98);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.button[aria-busy='true'] {
+  cursor: progress;
+}
+
+.label {
+  min-width: 0;
+}
+
+.sm {
+  min-height: 2.75rem;
+  padding-inline: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.md {
+  min-height: 3rem;
+}
+
+.lg {
+  min-height: 3.5rem;
+  padding-inline: var(--space-6);
+  font-size: var(--text-lg);
+}
+
+.primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 0.75rem 1.5rem -1rem var(--glow);
+}
+
+/* Toward the foreground: lighter on dark themes, darker on Ivory, so the label gains contrast. */
+.primary:hover:not(:disabled, [aria-disabled='true']) {
+  background: color-mix(in srgb, var(--primary) 86%, var(--foreground));
+  box-shadow: 0 0.875rem 1.75rem -0.875rem var(--glow);
+}
+
+.outline {
+  border-color: color-mix(in srgb, var(--accent-text) 55%, transparent);
+}
+
+.outline:hover:not(:disabled, [aria-disabled='true']) {
+  border-color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent-text) 10%, transparent);
+}
+
+.ghost:hover:not(:disabled, [aria-disabled='true']) {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+/* The error colour is always the opposite ink of the background, so the background reads on it. */
+.destructive {
+  background: var(--error);
+  color: var(--background);
+}
+
+.destructive:hover:not(:disabled, [aria-disabled='true']) {
+  background: color-mix(in srgb, var(--error) 86%, var(--foreground));
+}
+
+.spinner {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: var(--radius-full);
+}
+
+.spinner[data-motion='on'] {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

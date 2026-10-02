@@ -1,0 +1,114 @@
+/*
+ * The shells' frame, transparent over the fixed SpaceBackdrop. Phones: a frosted header pinned to
+ * the top under the status bar (dense enough that text scrolling beneath never competes with it,
+ * blur or not), the content column, room at the bottom for the tab bar and the home indicator.
+ * 900 px and above: a glass rail on the left, the content centred in at most 720 px.
+ */
+
+.frame {
+  position: relative;
+  z-index: 1;
+  min-height: 100dvh;
+  color: var(--foreground);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.skip {
+  position: absolute;
+  top: calc(var(--safe-top) + var(--space-2));
+  left: max(var(--space-2), var(--safe-left));
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--popup);
+  color: var(--popup-foreground);
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.skip:focus {
+  transform: none;
+}
+
+.main {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 45rem;
+  margin: 0 auto;
+}
+
+.main:focus {
+  outline: none;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: calc(var(--safe-top) + var(--space-2)) max(var(--space-4), var(--safe-right))
+    var(--space-2) max(var(--space-4), var(--safe-left));
+  border-bottom: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  -webkit-backdrop-filter: blur(1.25rem) saturate(160%);
+  backdrop-filter: blur(1.25rem) saturate(160%);
+}
+
+.phone .main {
+  padding: var(--space-5) max(var(--space-4), var(--safe-right))
+    calc(var(--space-8) + var(--safe-bottom)) max(var(--space-4), var(--safe-left));
+}
+
+.phone[data-footer] .main {
+  padding-bottom: calc(6.5rem + var(--safe-bottom));
+}
+
+.wide {
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 1fr);
+  align-items: start;
+}
+
+.rail {
+  position: sticky;
+  top: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  height: 100dvh;
+  overflow-y: auto;
+  padding: calc(var(--safe-top) + var(--space-6)) var(--space-4) var(--space-6)
+    max(var(--space-5), var(--safe-left));
+  border-right: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--card) 55%, transparent);
+  -webkit-backdrop-filter: blur(1.25rem) saturate(150%);
+  backdrop-filter: blur(1.25rem) saturate(150%);
+}
+
+.brand {
+  padding-inline: var(--space-2);
+}
+
+.column {
+  min-width: 0;
+  padding: calc(var(--safe-top) + var(--space-6)) max(var(--space-8), var(--safe-right))
+    calc(var(--space-8) * 2) var(--space-8);
+}
+
+.top,
+.banners {
+  max-width: 45rem;
+  margin: 0 auto;
+}
+
+.top {
+  margin-bottom: var(--space-2);
+}
+
+.wide .main {
+  padding-top: var(--space-5);
+}

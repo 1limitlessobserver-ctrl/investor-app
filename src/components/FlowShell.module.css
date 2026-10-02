@@ -1,0 +1,80 @@
+/*
+ * Phones: Back and the controls on the first row, the title in the display face across the whole
+ * second row. 900 px and above: Back, title and actions on one row. A long title wraps between
+ * words; only a word longer than the line breaks.
+ */
+
+.bar {
+  display: grid;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.phone {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'back . actions shell'
+    'title title title title';
+}
+
+.wide {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'back title actions';
+}
+
+.back {
+  grid-area: back;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-left: calc(var(--space-2) * -1);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.back:hover {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+.back svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.title {
+  grid-area: title;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+
+.phone .title {
+  padding-bottom: var(--space-1);
+}
+
+.wide .title {
+  font-size: var(--text-3xl);
+}
+
+.actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.shellActions {
+  grid-area: shell;
+}

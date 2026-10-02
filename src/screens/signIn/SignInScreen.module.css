@@ -1,0 +1,189 @@
+/*
+ * Sign-in sits in the open sky: the company's mark on its orbit with a lit satellite, its name in
+ * the display face, then one glass panel for the form. The sample offer reads as a quieter second
+ * door below it, edged rather than filled, so the form stays the first thing to do.
+ */
+
+/* Two rows: the status line (no height while empty) above everything else, centred in the rest. */
+.screen {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  place-items: center;
+  min-height: 100dvh;
+  padding: calc(var(--safe-top) + var(--space-8)) max(var(--space-4), var(--safe-right))
+    calc(var(--safe-bottom) + var(--space-8)) max(var(--space-4), var(--safe-left));
+  color: var(--foreground);
+}
+
+.loading {
+  width: min(100%, 20rem);
+}
+
+.column {
+  display: grid;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: 26rem;
+}
+
+.hero {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.emblem {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 6.5rem;
+  height: 6.5rem;
+  margin-bottom: var(--space-3);
+}
+
+.emblem::before {
+  content: '';
+  position: absolute;
+  inset: 22% -18%;
+  border: 1px solid color-mix(in srgb, var(--accent-text) 42%, transparent);
+  border-radius: 50%;
+  transform: rotate(-16deg);
+}
+
+.emblem::after {
+  content: '';
+  position: absolute;
+  top: 26%;
+  right: -11%;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--accent-text);
+  box-shadow: 0 0 0.75rem var(--glow);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-4xl);
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.tagline {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-lg);
+  line-height: 1.45;
+  text-wrap: balance;
+}
+
+/* The company's details did not load: one quiet line and the way to try again. It is the screen's
+   first row, the same node in the loading view and the form, so what fills it is announced; empty,
+   it has no height, and the screen's grid has no gap. It is not in the header, whose gap it would
+   add to. */
+.unbranded {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.unbranded[data-shown] {
+  padding-bottom: var(--space-6);
+}
+
+.panel {
+  display: grid;
+}
+
+.form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.formTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.lead {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.alert {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.alternatives {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-2);
+}
+
+/* A link that reads as one: the accent, underlined, and a 44 px tall target. */
+.link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  min-height: 2.75rem;
+  color: var(--accent-text);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.sample {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border: 1px dashed color-mix(in srgb, var(--warning) 55%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+
+.sampleTitle {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.register {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  margin: 0;
+  color: var(--muted-foreground);
+}

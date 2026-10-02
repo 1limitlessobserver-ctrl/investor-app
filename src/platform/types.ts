@@ -53,13 +53,24 @@ export interface LockAdapter {
    * Creates a platform credential through the operating system's prompt (in the investor's tap),
    * stores it, and only then removes any passcode: a cancelled enrolment, or one whose credential
    * cannot be stored, leaves the lock as it was. When only that removal fails, the call rejects
-   * with the credential enrolled; it outranks the passcode, which no longer unlocks. `user.email`
-   * names the credential in the prompt; `user.id` is not used (the credential gets a random
-   * handle). Throws `Error('This browser cannot enrol a device lock.')` where the browser has no
-   * WebAuthn or hands over no public key this lock can use; the caller then offers the passcode. A
-   * cancelled prompt rejects with the browser's own error.
+   * with the credential enrolled; it outranks the passcode, which no longer unlocks. Throws
+   * `Error('This browser cannot enrol a device lock.')` where the browser has no WebAuthn or hands
+   * over no public key this lock can use; the caller then offers the passcode. A cancelled prompt
+   * rejects with the browser's own error.
+   *
+   * `user.email` names the credential in the prompt (`user.id` is not used). Privacy: the
+   * operating system shows that name, here and among the investor's passkeys; it stays on the
+   * investor's own device, as a saved password does, and nothing is sent anywhere. The credential
+   * is not discoverable (`residentKey: 'discouraged'`). `user.handle` (32 bytes) is its user
+   * handle: pass the same one for every enrolment on this install (the session passes the SHA-256
+   * of `app.deviceId`), so the authenticator replaces the earlier credential instead of piling up
+   * another; without it, a random handle.
    */
-  enrollWebAuthn(user: { id: string; email: string }): Promise<void>;
+  enrollWebAuthn(user: {
+    id: string;
+    email: string;
+    handle?: Uint8Array | undefined;
+  }): Promise<void>;
   /**
    * Stores a six-digit passcode (anything else throws), and only then removes any WebAuthn
    * credential. Until both are done the lock stays as it was: when that removal fails, the call

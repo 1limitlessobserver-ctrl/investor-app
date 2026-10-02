@@ -1,0 +1,74 @@
+/*
+ * The company's logo or, without one, its initial in the display face on a small dark disc with
+ * an accent rim, like a planet catching light. The name sits beside it in the display face.
+ */
+
+.brand {
+  --mark: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  color: var(--foreground);
+}
+
+.sm {
+  --mark: 2rem;
+  gap: var(--space-2);
+}
+
+.lg {
+  --mark: 4rem;
+  gap: var(--space-4);
+}
+
+.logo {
+  flex: none;
+  width: auto;
+  max-width: calc(var(--mark) * 3);
+  height: var(--mark);
+  object-fit: contain;
+}
+
+.monogram {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--mark);
+  height: var(--mark);
+  border-radius: var(--radius-full);
+  background:
+    radial-gradient(
+      circle at 32% 28%,
+      color-mix(in srgb, var(--accent-text) 30%, var(--surface)),
+      var(--surface) 62%
+    ),
+    var(--surface);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-text) 45%, transparent),
+    0 0 1.25rem -0.5rem var(--glow);
+  font-family: var(--font-display);
+  font-size: calc(var(--mark) * 0.5);
+  line-height: 1;
+  color: var(--foreground);
+}
+
+.name {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.sm .name {
+  font-size: var(--text-lg);
+}
+
+.lg .name {
+  font-size: var(--text-2xl);
+}

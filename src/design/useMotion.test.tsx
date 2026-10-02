@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubMatchMedia } from '../test/stubMatchMedia';
-import { useMotion } from './useMotion';
+import { useMotion, useReducedMotion } from './useMotion';
 
 function setVisibility(state: DocumentVisibilityState) {
   Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
@@ -73,5 +73,26 @@ describe('useMotion', () => {
     unmount();
     expect(media.listeners.size).toBe(0);
     expect(removeListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+  });
+
+  describe('useReducedMotion', () => {
+    it('follows the system setting and the audits’ flag', () => {
+      const media = stubMatchMedia(false);
+      const { result } = renderHook(() => useReducedMotion());
+      expect(result.current).toBe(false);
+      media.change(true);
+      expect(result.current).toBe(true);
+      media.change(false);
+      localStorage.setItem('app.forceReducedMotion', '1');
+      const forced = renderHook(() => useReducedMotion());
+      expect(forced.result.current).toBe(true);
+    });
+
+    it('does not change while the app is hidden', () => {
+      stubMatchMedia(false);
+      const { result } = renderHook(() => useReducedMotion());
+      setVisibility('hidden');
+      expect(result.current).toBe(false);
+    });
   });
 });

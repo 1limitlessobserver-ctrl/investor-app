@@ -1,0 +1,122 @@
+/*
+ * The lock is the shell's one ceremonial moment: an opaque night with a soft accent dawn behind
+ * the company's mark, which sits on its own orbit with a lit satellite; "Locked" in the display
+ * face; then a narrow column (six code boxes and their gaps, 19rem) for the way in. The opaque
+ * backdrop and the scrolling content are the dialog's overlay and content, above every sheet.
+ */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background:
+    radial-gradient(
+      circle at 50% 28%,
+      color-mix(in srgb, var(--accent-text) 16%, transparent),
+      transparent 40%
+    ),
+    radial-gradient(
+      ellipse 120% 60% at 50% 120%,
+      color-mix(in srgb, var(--info) 8%, transparent),
+      transparent 70%
+    ),
+    var(--background);
+}
+
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: calc(var(--safe-top) + var(--space-8)) max(var(--space-4), var(--safe-right))
+    calc(var(--safe-bottom) + var(--space-8)) max(var(--space-4), var(--safe-left));
+  color: var(--foreground);
+  pointer-events: auto;
+}
+
+.screen:focus {
+  outline: none;
+}
+
+.content {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 19rem;
+  text-align: center;
+}
+
+.emblem {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 7.5rem;
+  height: 7.5rem;
+  margin-bottom: var(--space-4);
+}
+
+.emblem::before {
+  content: '';
+  position: absolute;
+  inset: 20% -16%;
+  border: 1px solid color-mix(in srgb, var(--accent-text) 42%, transparent);
+  border-radius: 50%;
+  transform: rotate(-16deg);
+}
+
+.emblem::after {
+  content: '';
+  position: absolute;
+  top: 24%;
+  right: -9%;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--accent-text);
+  box-shadow: 0 0 0.75rem var(--glow);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-4xl);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.015em;
+}
+
+.company {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+}
+
+.unlock {
+  justify-self: stretch;
+  display: grid;
+  gap: var(--space-4);
+  margin: var(--space-6) 0 var(--space-2);
+  text-align: start;
+}
+
+.lead {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.alert {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: center;
+}

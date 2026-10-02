@@ -27,15 +27,24 @@ export interface SampleApiOptions {
   now?: () => Date;
   /** The overflow audit's world: a 40-character company name and a $12,345,678.90 wallet. */
   stress?: boolean;
-  /** What GET /brand reports as the minimum app version ("1.0.0" unless set). */
+  /**
+   * What GET /brand reports as the minimum app version: "0.0.0" (none) unless set, so the app,
+   * whatever its version, is outdated in the sample world only when asked (?sampleMinVersion).
+   */
   minSupportedAppVersion?: string;
+  /**
+   * The session ended, as the live client's callback of that name says: told once per ended
+   * session, by the first signed-in call that meets it (which still rejects `session_revoked`),
+   * whatever ended it (`_test_revoke`, or this device's own revocation or account closure).
+   */
+  onSignedOut?: ((reason: 'session_revoked') => void) | undefined;
 }
 
 export type SampleApi = PlatformApi & {
   /**
    * Ends the session, as a revocation elsewhere would: every later call answers 401
    * `session_revoked` except the public routes (brand, login, loginTwoFactor and logout), until a
-   * sign-in starts a new session.
+   * sign-in starts a new session. The first signed-in call to meet it tells `onSignedOut`.
    */
   _test_revoke(): void;
 };
@@ -45,28 +54,32 @@ export function createSampleApi(options: SampleApiOptions = {}): SampleApi {
     latencyMs = 450,
     now = () => new Date(),
     stress = false,
-    minSupportedAppVersion = '1.0.0',
+    minSupportedAppVersion = '0.0.0',
+    onSignedOut,
   } = options;
   const state = sampleData.createState({ now: now(), stress });
   state.brand.minSupportedAppVersion = minSupportedAppVersion;
-  return createSampleApiFor(state, { latencyMs, now });
+  return createSampleApiFor(state, { latencyMs, now, onSignedOut });
 }
 
 /** The sample API over a given world; createSampleApi builds a fresh one, tests may change it first. */
 export function createSampleApiFor(
   state: SampleState,
-  options: Pick<SampleApiOptions, 'latencyMs' | 'now'> = {},
+  options: Pick<SampleApiOptions, 'latencyMs' | 'now' | 'onSignedOut'> = {},
 ): SampleApi {
-  const { latencyMs = 450, now = () => new Date() } = options;
+  const { latencyMs = 450, now = () => new Date(), onSignedOut } = options;
   const ctx = createContext(state, now, latencyMs);
+  // Whether onSignedOut has heard of the session that ended; a sign-in starts a session afresh.
+  let told = false;
 
   /**
    * Waits the latency, then answers as the platform would: a signed-in route of an ended session
-   * is 401 `session_revoked`; a public one always runs. The public ones are the platform's
-   * (mobilePublicRoute): GET /brand, the two sign-in steps and POST /auth/logout, which answers
-   * `{ ok: true }` whatever the tokens. POST /auth/refresh is public there too, but a refresh of an
-   * ended session is refused with `session_revoked`, so it goes through the session check here. The
-   * answer is a copy, as if it had crossed the wire, so no caller holds a piece of the world.
+   * is 401 `session_revoked` (the first such call tells onSignedOut); a public one always runs. The
+   * public ones are the platform's (mobilePublicRoute): GET /brand, the two sign-in steps and
+   * POST /auth/logout, which answers `{ ok: true }` whatever the tokens. POST /auth/refresh is
+   * public there too, but a refresh of an ended session is refused with `session_revoked`, so it
+   * goes through the session check here. The answer is a copy, as if it had crossed the wire, so
+   * no caller holds a piece of the world.
    */
   async function answer<T>(run: () => T, access: 'signed-in' | 'public' = 'signed-in'): Promise<T> {
     await new Promise<void>((resolve) => {
@@ -74,9 +87,15 @@ export function createSampleApiFor(
       else resolve();
     });
     if (access === 'signed-in' && ctx.session.ended) {
+      if (!told) {
+        told = true;
+        onSignedOut?.('session_revoked');
+      }
       throw new MobileApiError('session_revoked', 401, 'This session has ended. Sign in again.');
     }
-    return structuredClone(run());
+    const answered = structuredClone(run());
+    if (!ctx.session.ended) told = false;
+    return answered;
   }
 
   return {
