@@ -1,0 +1,56 @@
+/* Back, then the title in the display face taking what room is left; it wraps rather than clips. */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+}
+
+.back {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-left: calc(var(--space-2) * -1);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.back:hover {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+.back svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.wide .title {
+  font-size: var(--text-3xl);
+}
+
+.actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}

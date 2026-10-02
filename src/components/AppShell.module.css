@@ -1,0 +1,11 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.75rem;
+}
+
+.actions {
+  flex: none;
+  margin-left: auto;
+}
