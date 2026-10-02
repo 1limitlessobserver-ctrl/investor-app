@@ -46,7 +46,8 @@ function digitsOf(text: string): string {
  * (or `aria-label`) and the rest "Digit 2 of 6" and so on. Typing moves to the next box,
  * Backspace on an empty box steps back, the arrow keys, Home and End move, and a code pasted,
  * autofilled from a text message or filled in at once lands across the boxes. There are no gaps:
- * focus on a box past the first empty one moves to that one. Nothing is submitted on its own;
+ * focus on a box past the first empty one moves to that one. The boxes are one tab stop (the
+ * next box to fill), so Tab moves on to the next control. Nothing is submitted on its own;
  * `onComplete` only reports the full code.
  */
 export function PinInput({
@@ -69,12 +70,13 @@ export function PinInput({
   const [own, setOwn] = useState(() => digitsOf(defaultValue ?? '').slice(0, length));
   const current = digitsOf(value ?? own).slice(0, length);
   const boxes = useRef<(HTMLInputElement | null)[]>([]);
-  // The newest digits, read by focus handlers that run before the next render.
+  // The newest digits, read by handlers that run before the next render. Synced after every
+  // render, so a parent that keeps its value after onChange is followed too.
   const latest = useRef(current);
 
   useEffect(() => {
     latest.current = current;
-  }, [current]);
+  });
 
   useImperativeHandle<HTMLInputElement | null, HTMLInputElement | null>(
     ref,
@@ -166,6 +168,8 @@ export function PinInput({
     else event.currentTarget.select();
   }
 
+  // One tab stop, at the next box to fill (the last once full), so Tab moves on past the code.
+  const stop = Math.min(current.length, length - 1);
   const shared = [field?.describedBy, describedBy].filter(Boolean).join(' ');
   const isInvalid = invalid === true || field?.invalid === true ? true : undefined;
 
@@ -188,6 +192,7 @@ export function PinInput({
             pattern="[0-9]*"
             autoComplete={index === 0 && !mask ? 'one-time-code' : 'off'}
             spellCheck={false}
+            tabIndex={index === stop ? 0 : -1}
             value={current[index] ?? ''}
             disabled={disabled}
             id={index === 0 ? (field?.id ?? id) : undefined}

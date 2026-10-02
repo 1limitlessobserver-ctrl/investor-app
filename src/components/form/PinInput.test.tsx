@@ -117,6 +117,26 @@ describe('PinInput', () => {
     expect(values()).toBe('7_____');
   });
 
+  it('is one tab stop, at the next box to fill, so Tab moves on past it', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button type="button">Before</button>
+        <PinInput length={6} aria-label="Code" defaultValue="12" />
+        <button type="button">After</button>
+      </>,
+    );
+    screen.getByRole('button', { name: 'Before' }).focus();
+    await user.tab();
+    expect(boxes()[2]).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'After' })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(boxes()[2]).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(screen.getByRole('button', { name: 'Before' })).toHaveFocus();
+  });
+
   it('follows a value it is given, and masks the digits when asked', () => {
     function Controlled() {
       const [pin, setPin] = useState('12');
