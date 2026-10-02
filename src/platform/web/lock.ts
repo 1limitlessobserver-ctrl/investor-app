@@ -178,16 +178,22 @@ export function createLock(opts: {
       return exclusive(async () => {
         const passcode = await readPasscode();
         if (!passcode) return { ok: false, attemptsLeft: 0 };
+        if (passcode.attempts >= MAX_ATTEMPTS) {
+          // A fifth wrong attempt that could not wipe the passcode: wipe it now, checking nothing.
+          await storage.remove(PASSCODE);
+          return { ok: false, attemptsLeft: 0 };
+        }
+        // Count the attempt before checking it: an attempt that cannot be counted is not checked.
+        const attempts = passcode.attempts + 1;
+        await writePasscode({ ...passcode, attempts });
         if (sameBytes(await derive(code, passcode.salt), passcode.hash)) {
-          if (passcode.attempts > 0) await writePasscode({ ...passcode, attempts: 0 });
+          await writePasscode({ ...passcode, attempts: 0 });
           return { ok: true, attemptsLeft: MAX_ATTEMPTS };
         }
-        const attempts = passcode.attempts + 1;
         if (attempts >= MAX_ATTEMPTS) {
           await storage.remove(PASSCODE);
           return { ok: false, attemptsLeft: 0 };
         }
-        await writePasscode({ ...passcode, attempts });
         return { ok: false, attemptsLeft: MAX_ATTEMPTS - attempts };
       });
     },

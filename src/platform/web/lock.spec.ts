@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createLock, verifyAssertion } from './lock';
 import { createSecureStorage, type KvStore } from './storage';
 import { base64url } from '../../lib/base64url';
+import type { SecureStorage } from '../types';
 
 function memoryStore(): KvStore {
   const raw = new Map<string, unknown>();
@@ -420,6 +421,51 @@ describe('passcode lock: what it keeps and how it counts', () => {
   it('answers attemptsLeft 0 when no passcode is enrolled', async () => {
     const lock = createLock({ storage: storage(), credentials: undefined });
     expect(await lock.verifyPasscode('246810')).toEqual({ ok: false, attemptsLeft: 0 });
+  });
+
+  it('checks no passcode whose attempt cannot be counted, so nothing answers ok', async () => {
+    const secure = storage();
+    let full = false;
+    const flaky: SecureStorage = {
+      ...secure,
+      set: (key, value) => (full ? Promise.reject(new Error('disk full')) : secure.set(key, value)),
+    };
+    const lock = createLock({ storage: flaky, credentials: undefined });
+    await lock.enrollPasscode('246810');
+    full = true;
+    const deriveBits = vi.spyOn(crypto.subtle, 'deriveBits');
+    try {
+      for (let i = 0; i < 12; i++) {
+        await expect(lock.verifyPasscode('000000')).rejects.toThrow('disk full');
+      }
+      await expect(lock.verifyPasscode('246810')).rejects.toThrow('disk full');
+      expect(deriveBits).not.toHaveBeenCalled();
+    } finally {
+      deriveBits.mockRestore();
+    }
+  });
+
+  it('stays locked, without checking, when the fifth wrong attempt could not wipe it', async () => {
+    const secure = storage();
+    let stuck = false;
+    const flaky: SecureStorage = {
+      ...secure,
+      remove: (key) => (stuck ? Promise.reject(new Error('disk error')) : secure.remove(key)),
+    };
+    const lock = createLock({ storage: flaky, credentials: undefined });
+    await lock.enrollPasscode('246810');
+    for (let i = 0; i < 4; i++) await lock.verifyPasscode('000000');
+    stuck = true;
+    await expect(lock.verifyPasscode('000000')).rejects.toThrow('disk error');
+    stuck = false;
+    const deriveBits = vi.spyOn(crypto.subtle, 'deriveBits');
+    try {
+      expect(await lock.verifyPasscode('246810')).toEqual({ ok: false, attemptsLeft: 0 });
+      expect(deriveBits).not.toHaveBeenCalled();
+    } finally {
+      deriveBits.mockRestore();
+    }
+    expect(await lock.enrolled()).toBeNull();
   });
 
   it('refuses anything but exactly six digits, and enrols nothing', async () => {
