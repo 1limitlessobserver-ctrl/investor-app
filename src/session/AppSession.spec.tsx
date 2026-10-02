@@ -2252,6 +2252,25 @@ describe('AppSession: a step that answers after the session changed', () => {
     expect(a.session.getSnapshot().unlocking.error).toBeUndefined();
   });
 
+  it('turns no lock on when the device answers what it offers during a sign-out', async () => {
+    let offer!: (method: 'webauthn') => void;
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    const device = fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } });
+    const a = openTab(device, () => api);
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.enterSample();
+    a.session.skipLockSetup();
+    device.lock.available = () => new Promise((resolve) => (offer = resolve));
+    const turningOn = a.session.setLockEnabled(true); // it asks what the device offers
+    await waitFor(() => expect(offer).toBeDefined());
+    void a.session.signOut(); // and the investor signs out meanwhile
+    offer('webauthn');
+    await vi.advanceTimersByTimeAsync(20);
+    expect(a.session.getSnapshot().lockSetup).toBeNull();
+    expect(await turningOn).toBe(false);
+  });
+
   it('offers no lock when the device answers what it offers during a sign-out', async () => {
     let offer!: (method: 'webauthn') => void;
     const available = () => new Promise<'webauthn'>((resolve) => (offer = resolve));

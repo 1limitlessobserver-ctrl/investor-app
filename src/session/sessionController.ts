@@ -930,7 +930,11 @@ export function createSessionController(deps: SessionDeps) {
       saveChoice(true);
       return true;
     }
-    return showLockSetup(await whatTheDeviceOffers());
+    const gen = generation;
+    const offer = await whatTheDeviceOffers();
+    // The session may have changed while the device answered: nothing is offered then.
+    if (gen !== generation || state.status !== 'signed-in') return false;
+    return showLockSetup(offer);
   }
 
   /** Settles a confirmation and closes a setup that a change of session cut short. */
