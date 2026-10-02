@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createLiveApi } from './createLiveApi';
+import { createLiveApi, type StoredSession } from './createLiveApi';
 import { MobileApiError } from './MobileApiError';
 import type { MobileTokens } from './types';
 
@@ -22,15 +22,20 @@ function setup(
   initial: MobileTokens | null = pair(1),
 ) {
   const calls: Call[] = [];
-  let tokens = initial;
+  // The session a sign-in stored under its key; a rotation keeps the key and replaces the pair.
+  let tokens: StoredSession | null = initial === null ? null : { sessionKey: 'k1', ...initial };
   const signedOut: string[] = [];
   const upgrades: string[] = [];
   const api = createLiveApi({
     baseUrl: 'https://platform.test/api/mobile/v1',
     tokenStore: {
       get: () => Promise.resolve(tokens),
-      set: (t) => {
-        tokens = t;
+      rotate: (t) => {
+        if (tokens !== null) tokens = { sessionKey: tokens.sessionKey, ...t };
+        return Promise.resolve();
+      },
+      clear: () => {
+        tokens = null;
         return Promise.resolve();
       },
     },

@@ -41,18 +41,28 @@ const pair = (n: number): MobileTokens => ({
   accessExpiresAt: '2026-10-01T12:15:00.000Z',
   refreshExpiresAt: '2026-10-31T12:00:00.000Z',
 });
-/** What the store answers after a restart: the refresh token alone. */
-const restarted = (n: number): StoredSession => ({ refreshToken: `r${n}`, accessToken: null });
+/** What the store holds: pair n of the sign-in named `key` (a refresh keeps the key). */
+const session = (n: number, key = 'k1'): StoredSession & MobileTokens => ({
+  sessionKey: key,
+  ...pair(n),
+});
+/** What the store answers after a restart: the refresh token alone, under its sign-in's key. */
+const restarted = (n: number, key = 'k1'): StoredSession => ({
+  sessionKey: key,
+  refreshToken: `r${n}`,
+  accessToken: null,
+});
 
 /** Makes the fake store fail: each returns the error to reject with, or undefined to work. */
 type Faults = {
   get?: () => Error | undefined;
-  set?: (tokens: MobileTokens | null) => Error | undefined;
+  rotate?: (tokens: MobileTokens) => Error | undefined;
+  clear?: () => Error | undefined;
 };
 
 function setup(
   script: Script,
-  initial: StoredSession | null = pair(1),
+  initial: StoredSession | null = session(1),
   options: {
     baseUrl?: string;
     app?: AppIdentity;
@@ -63,7 +73,7 @@ function setup(
 ) {
   const calls: Call[] = [];
   let tokens = initial;
-  /** Every write the client asked for (a pair, or null to clear), in order, failed ones too. */
+  /** Every write the client asked for (a rotation's pair, null for a clear), failed ones too. */
   const writes: (MobileTokens | null)[] = [];
   const signedOut: string[] = [];
   const upgrades: string[] = [];
@@ -75,11 +85,19 @@ function setup(
         const fault = options.faults?.get?.();
         return fault === undefined ? Promise.resolve(tokens) : Promise.reject(fault);
       },
-      set: (t) => {
+      rotate: (t) => {
         writes.push(t);
-        const fault = options.faults?.set?.(t);
+        const fault = options.faults?.rotate?.(t);
         if (fault !== undefined) return Promise.reject(fault);
-        tokens = t;
+        // The pair replaces the tokens under the session's own key; a rotation starts nothing.
+        if (tokens !== null) tokens = { sessionKey: tokens.sessionKey, ...t };
+        return Promise.resolve();
+      },
+      clear: () => {
+        writes.push(null);
+        const fault = options.faults?.clear?.();
+        if (fault !== undefined) return Promise.reject(fault);
+        tokens = null;
         return Promise.resolve();
       },
     },
@@ -105,7 +123,7 @@ function setup(
     upgrades,
     storageErrors,
     tokens: () => tokens,
-    /** Changes the store behind the api's back, as another request or a sign-out would. */
+    /** Changes the store behind the api's back, as another tab, a sign-in or a sign-out would. */
     store: (t: StoredSession | null) => {
       tokens = t;
     },
@@ -158,7 +176,7 @@ describe('the request as it goes out', () => {
 
   it.each([undefined, ''])('leaves X-Device-Name out when the device name is %j', async (name) => {
     const app: AppIdentity = { ...APP, deviceName: name };
-    const t = setup(() => json(200, {}), pair(1), { app });
+    const t = setup(() => json(200, {}), session(1), { app });
     await t.api.me();
     expect(header(t.calls[0]!, 'X-Device-Name')).toBeNull();
     expect(header(t.calls[0]!, 'X-Device-Id')).toBe('device-0001');
@@ -176,7 +194,11 @@ describe('the request as it goes out', () => {
     const build = () =>
       createLiveApi({
         baseUrl: BASE,
-        tokenStore: { get: () => Promise.resolve(null), set: () => Promise.resolve() },
+        tokenStore: {
+          get: () => Promise.resolve(null),
+          rotate: () => Promise.resolve(),
+          clear: () => Promise.resolve(),
+        },
         app: APP,
         ...change,
       });
@@ -186,7 +208,7 @@ describe('the request as it goes out', () => {
 
   it('reads its config once: changing it afterwards changes nothing that is sent', async () => {
     const app = { ...APP };
-    const t = setup(() => json(200, {}), pair(1), { app });
+    const t = setup(() => json(200, {}), session(1), { app });
     Object.assign(app, { deviceId: 'another-device', deviceName: 'Another' });
     await t.api.me();
     expect([header(t.calls[0]!, 'X-Device-Id'), header(t.calls[0]!, 'X-Device-Name')]).toEqual([
@@ -200,7 +222,7 @@ describe('the request as it goes out', () => {
     ['a lone surrogate, as U+FFFD', 'Ada\uD83D', 'Ada%EF%BF%BD'],
     ['a lone trailing surrogate, as U+FFFD', '\uDC00Ada', '%EF%BF%BDAda'],
   ])('sends the device name with %s, and every call goes out', async (_what, deviceName, sent) => {
-    const t = setup(() => json(200, { ok: true }), pair(1), { app: { ...APP, deviceName } });
+    const t = setup(() => json(200, { ok: true }), session(1), { app: { ...APP, deviceName } });
     await t.api.me();
     await t.api.logout();
     expect(t.calls.map(path)).toEqual(['/me', '/auth/logout']);
@@ -208,7 +230,7 @@ describe('the request as it goes out', () => {
   });
 
   it('tolerates a trailing slash on the base URL', async () => {
-    const t = setup(() => json(200, {}), pair(1), { baseUrl: `${BASE}/` });
+    const t = setup(() => json(200, {}), session(1), { baseUrl: `${BASE}/` });
     await t.api.me();
     expect(t.calls[0]!.url).toBe(`${BASE}/me`);
   });
@@ -221,7 +243,11 @@ describe('the request as it goes out', () => {
     const stub = vi.fn<typeof fetch>(() => Promise.resolve(json(200, { name: 'Northwind' })));
     const api = createLiveApi({
       baseUrl: BASE,
-      tokenStore: { get: () => Promise.resolve(null), set: () => Promise.resolve() },
+      tokenStore: {
+        get: () => Promise.resolve(null),
+        rotate: () => Promise.resolve(),
+        clear: () => Promise.resolve(),
+      },
       app: APP,
     });
     vi.stubGlobal('fetch', stub);
@@ -233,10 +259,17 @@ describe('the request as it goes out', () => {
   it('offers _test_setTokens, which writes to the store, in test mode only', async () => {
     const t = setup(() => json(200, {}));
     await t.api._test_setTokens?.(pair(2));
-    expect(t.tokens()).toEqual(pair(2));
+    expect(t.tokens()).toEqual(session(2));
     vi.stubEnv('MODE', 'production');
     const built: LiveApi = setup(() => json(200, {})).api;
     expect(built).not.toHaveProperty('_test_setTokens');
+  });
+
+  it('keeps the key of the stored session when _test_setTokens puts a pair in it', async () => {
+    const t = setup(() => json(200, {}), session(1, 'k7'));
+    await t.api._test_setTokens?.(pair(2));
+    // A rotation, as a refresh stores its pair: the same sign-in with new tokens.
+    expect([t.tokens(), t.writes]).toEqual([session(2, 'k7'), [pair(2)]]);
   });
 });
 
@@ -824,7 +857,7 @@ describe('sign-in and sign-out', () => {
     expect([e.code, e.status, e.message]).toEqual([code, status, 'Not this time.']);
     expect(t.calls).toHaveLength(1);
     expect(t.signedOut).toEqual([]);
-    expect(t.tokens()).toEqual(pair(1));
+    expect(t.tokens()).toEqual(session(1));
   });
 
   it('logs out without a request when nothing is stored', async () => {
@@ -905,11 +938,11 @@ describe('sign-in and sign-out', () => {
   const closed = new DOMException('The database is closed', 'InvalidStateError');
   it.each([
     ['read', { get: () => unreadable }, unreadable, []],
-    ['cleared', { set: () => closed }, closed, ['/auth/logout']],
+    ['cleared', { clear: () => closed }, closed, ['/auth/logout']],
   ])(
     'still clears and tells what it can, then rejects storage_error, when the store cannot be %s',
     async (_what, faults: Faults, cause, sent) => {
-      const t = setup(() => json(200, { ok: true }), pair(1), { faults });
+      const t = setup(() => json(200, { ok: true }), session(1), { faults });
       const e = await failure(t.api.logout());
       expect([e.code, e.status, e.cause]).toEqual(['storage_error', 0, cause]);
       // The clear is asked for either way; the platform is told whenever the tokens were read.
@@ -940,7 +973,7 @@ describe('the refresh and its edges', () => {
     const t = setup(() => new Response('<html>Hotspot login</html>', { status: 401 }));
     const e = await failure(t.api.me());
     expect([e.code, e.status, t.calls.length, t.signedOut]).toEqual(['request_failed', 401, 1, []]);
-    expect(t.tokens()).toEqual(pair(1));
+    expect(t.tokens()).toEqual(session(1));
   });
 
   it.each(['unauthorized', 'session_revoked'])(
@@ -950,7 +983,7 @@ describe('the refresh and its edges', () => {
       expect((await failure(t.api.me())).code).toBe(code);
       expect(t.calls).toHaveLength(1);
       expect(t.signedOut).toEqual([]);
-      expect(t.tokens()).toEqual(pair(1));
+      expect(t.tokens()).toEqual(session(1));
     },
   );
 
@@ -1010,8 +1043,8 @@ describe('the refresh and its edges', () => {
   });
 
   it.each([
-    ['another request refreshed again', pair(3)],
-    ['another tab rotated the refresh token', { ...pair(2), refreshToken: 'r9' }],
+    ['another request refreshed again', session(3)],
+    ['another tab rotated the refresh token', { ...session(2), refreshToken: 'r9' }],
   ])('does not end the session when %s while the retry was out', async (_how, moved) => {
     const first = gate();
     const retried = gate();
@@ -1026,7 +1059,7 @@ describe('the refresh and its edges', () => {
       return json(401, { error: 'session_revoked' });
     });
     const call = failure(t.api.me());
-    t.store(pair(2));
+    t.store(session(2));
     first.release(); // a1 is revoked, the store holds a2: the call retries with a2
     await retried.open;
     t.store(moved);
@@ -1045,7 +1078,7 @@ describe('the refresh and its edges', () => {
       return json(401, { error: 'unauthorized' });
     });
     const first = t.api.me();
-    t.store(pair(2));
+    t.store(session(2));
     wait.release();
     expect((await first).id).toBe('u1');
     expect(t.calls.map(path)).toEqual(['/me', '/me']);
@@ -1089,12 +1122,12 @@ describe('the refresh and its edges', () => {
     // The 401 reaches the call while the refresh is still held, and the call has not judged yet.
     await later();
     expect(t.signedOut).toEqual([]);
-    expect(t.tokens()).toEqual(pair(1));
+    expect(t.tokens()).toEqual(session(1));
     wait.release();
     expect([(await call).id, await refreshing]).toEqual(['u1', pair(2)]);
     expect(t.calls.map(bearer)).toEqual([null, 'Bearer a1', 'Bearer a2']);
     expect(t.signedOut).toEqual([]);
-    expect(t.tokens()).toEqual(pair(2));
+    expect(t.tokens()).toEqual(session(2));
   });
 
   it('gives every call that meets a failing refresh that failure, from one refresh request', async () => {
@@ -1120,7 +1153,7 @@ describe('the refresh and its edges', () => {
     ]);
     expect(t.calls.filter(isRefresh)).toHaveLength(1);
     expect(t.signedOut).toEqual([]);
-    expect(t.tokens()).toEqual(pair(1));
+    expect(t.tokens()).toEqual(session(1));
   });
 
   it('shares the refresh with refresh(), and starts a new one once that has finished', async () => {
@@ -1130,10 +1163,10 @@ describe('the refresh and its edges', () => {
     const [x, y] = await Promise.all([t.api.refresh(), t.api.refresh()]);
     expect([x, y]).toEqual([pair(2), pair(2)]);
     expect(t.calls).toHaveLength(1);
-    expect(t.tokens()).toEqual(pair(2));
+    expect(t.tokens()).toEqual(session(2));
     await t.api.refresh();
     expect(t.calls.map(bodyOf)).toEqual([{ refreshToken: 'r1' }, { refreshToken: 'r2' }]);
-    expect(t.tokens()).toEqual(pair(3));
+    expect(t.tokens()).toEqual(session(3));
   });
 
   it('rejects refresh() with unauthorized, and sends nothing, when no tokens are stored', async () => {
@@ -1164,7 +1197,7 @@ describe('the refresh and its edges', () => {
       expect([e.code, e.status]).toEqual(['server_error', 200]);
       expect(t.calls.map(path)).toEqual(['/me', '/auth/refresh']);
       expect(t.signedOut).toEqual([]);
-      expect(t.tokens()).toEqual(pair(1));
+      expect(t.tokens()).toEqual(session(1));
     },
   );
 
@@ -1190,7 +1223,7 @@ describe('the refresh and its edges', () => {
       const t = setup((c) => (isRefresh(c) ? answer(c) : json(401, { error: 'unauthorized' })));
       expect((await failure(t.api.me())).code).toBe(code);
       expect([t.signedOut, t.tokens()]).toEqual(
-        refused ? [['refresh_failed'], null] : [[], pair(1)],
+        refused ? [['refresh_failed'], null] : [[], session(1)],
       );
     },
   );
@@ -1199,10 +1232,10 @@ describe('the refresh and its edges', () => {
   // between: the investor signs out, signs in again, or another tab refreshes (the refresh token
   // is shared, the access token is not). The answer then belongs to a session that is over, so it
   // must change nothing of what the store holds now.
-  const changes: [string, MobileTokens | null][] = [
+  const changes: [string, StoredSession | null][] = [
     ['a logout', null],
-    ['a new sign-in', pair(5)],
-    ["another tab's refresh", { ...pair(1), refreshToken: 'r9' }],
+    ['a new sign-in', session(5, 'k2')],
+    ["another tab's refresh", { ...session(1), refreshToken: 'r9' }],
   ];
   describe.each(changes)('a refresh answered after %s', (_name, now) => {
     /** Asks for a refresh, makes the change while it is out, then lets the platform answer it. */
@@ -1281,7 +1314,7 @@ describe('the refresh and its edges', () => {
     });
     expect((await failure(t.api.me())).code).toBe('network');
     expect((await t.api.me()).id).toBe('u1');
-    expect([refreshes, t.signedOut, t.tokens()]).toEqual([2, [], pair(2)]);
+    expect([refreshes, t.signedOut, t.tokens()]).toEqual([2, [], session(2)]);
   });
 });
 
@@ -1301,7 +1334,7 @@ describe('the session a request belongs to', () => {
       });
       const invest = failure(t.api.invest({ planId: 'p1', amountCents: 500000 }));
       await t.api.logout();
-      t.store(pair(5)); // someone signs in: the session layer stores the new pair
+      t.store(session(5, 'k2')); // someone signs in: the session layer starts a new session
       held.release();
       expect((await invest).code).toBe(code);
       // The investment and the logout, both as a1: nothing goes out as the new session.
@@ -1309,7 +1342,7 @@ describe('the session a request belongs to', () => {
         '/invest Bearer a1',
         '/auth/logout Bearer a1',
       ]);
-      expect([t.signedOut, t.tokens()]).toEqual([[], pair(5)]);
+      expect([t.signedOut, t.tokens()]).toEqual([[], session(5, 'k2')]);
     },
   );
 
@@ -1326,7 +1359,7 @@ describe('the session a request belongs to', () => {
         return json(401, { error: code });
       });
       const call = t.api.me();
-      t.store({ ...pair(1), refreshToken: 'r9' });
+      t.store({ ...session(1), refreshToken: 'r9' });
       held.release();
       expect((await call).id).toBe('u1');
       expect(t.calls.map((c) => `${path(c)} ${bearer(c)}`)).toEqual([
@@ -1335,7 +1368,7 @@ describe('the session a request belongs to', () => {
         '/me Bearer a10',
       ]);
       expect(bodyOf(t.calls[1]!)).toEqual({ refreshToken: 'r9' });
-      expect([t.signedOut, t.tokens()]).toEqual([[], pair(10)]);
+      expect([t.signedOut, t.tokens()]).toEqual([[], session(10)]);
     },
   );
 
@@ -1384,7 +1417,9 @@ describe('when the token store or a callback fails', () => {
   const full = new DOMException('The quota has been exceeded', 'QuotaExceededError');
 
   it('rejects storage_error, and asks the platform nothing, when the store cannot be read', async () => {
-    const t = setup(() => json(200, { id: 'u1' }), pair(1), { faults: { get: () => unreadable } });
+    const t = setup(() => json(200, { id: 'u1' }), session(1), {
+      faults: { get: () => unreadable },
+    });
     for (const ask of [() => t.api.me(), () => t.api.refresh()]) {
       const e = await failure(ask());
       expect([e.code, e.status, e.cause]).toEqual(['storage_error', 0, unreadable]);
@@ -1396,7 +1431,7 @@ describe('when the token store or a callback fails', () => {
     'keeps a %s as the answer, with the store failure as its cause, when the store fails after it',
     async (code) => {
       let reads = 0;
-      const t = setup(() => json(401, { error: code }), pair(1), {
+      const t = setup(() => json(401, { error: code }), session(1), {
         faults: { get: () => (++reads > 1 ? unreadable : undefined) },
       });
       const e = await failure(t.api.me());
@@ -1418,7 +1453,7 @@ describe('when the token store or a callback fails', () => {
   ])(
     "still signs out on %s when the store cannot be cleared, and throws the platform's error",
     async (_what, script: Script, reason) => {
-      const t = setup(script, pair(1), { faults: { set: () => closed } });
+      const t = setup(script, session(1), { faults: { clear: () => closed } });
       const e = await failure(t.api.me());
       expect([e.code, e.status, e.cause]).toEqual(['session_revoked', 401, closed]);
       expect([t.signedOut, t.writes]).toEqual([[reason], [null]]);
@@ -1433,12 +1468,12 @@ describe('when the token store or a callback fails', () => {
           : bearer(c) === 'Bearer a1'
             ? json(401, { error: 'unauthorized' })
             : json(200, { id: 'u1' }),
-      pair(1),
-      { faults: { set: (tokens) => (tokens === null ? undefined : full) } },
+      session(1),
+      { faults: { rotate: () => full } },
     );
     expect((await t.api.me()).id).toBe('u1');
     expect(t.calls.map(bearer)).toEqual(['Bearer a1', null, 'Bearer a2']);
-    expect([t.storageErrors, t.tokens()]).toEqual([[full], pair(1)]);
+    expect([t.storageErrors, t.tokens()]).toEqual([[full], session(1)]);
   });
 
   it('reports a callback that throws on its own, and still answers the call', async () => {
@@ -1459,12 +1494,12 @@ describe('when the token store or a callback fails', () => {
     const thrower = () => {
       throw bug;
     };
-    const revoked = setup(() => json(401, { error: 'session_revoked' }), pair(1), {
+    const revoked = setup(() => json(401, { error: 'session_revoked' }), session(1), {
       config: { onSignedOut: thrower },
     });
     expect((await failure(revoked.api.me())).code).toBe('session_revoked');
     expect(revoked.tokens()).toBeNull();
-    const outdated = setup(() => json(426, { error: 'upgrade_required' }), pair(1), {
+    const outdated = setup(() => json(426, { error: 'upgrade_required' }), session(1), {
       config: { onUpgradeRequired: thrower },
     });
     expect((await failure(outdated.api.me())).code).toBe('upgrade_required');
@@ -1472,7 +1507,7 @@ describe('when the token store or a callback fails', () => {
       (c) => (isRefresh(c) ? json(200, pair(2)) : json(200, {})),
       restarted(1),
       {
-        faults: { set: () => full },
+        faults: { rotate: () => full },
         config: { onStorageError: thrower },
       },
     );
@@ -1528,7 +1563,7 @@ describe('a platform that does not answer', () => {
         call.error?.status,
         (call.error?.cause as Error | undefined)?.name,
       ]).toEqual(['timeout', 0, 'TimeoutError']);
-      expect([t.calls.length, t.signedOut, t.tokens()]).toEqual([1, [], pair(1)]);
+      expect([t.calls.length, t.signedOut, t.tokens()]).toEqual([1, [], session(1)]);
     },
   );
 
@@ -1563,7 +1598,7 @@ describe('a platform that does not answer', () => {
     expect([first.error?.code, joined.error?.code]).toEqual(['timeout', 'timeout']);
     expect((await t.api.me()).id).toBe('u1');
     expect(t.calls.filter(isRefresh)).toHaveLength(2);
-    expect([t.signedOut, t.tokens()]).toEqual([[], pair(2)]);
+    expect([t.signedOut, t.tokens()]).toEqual([[], session(2)]);
   });
 });
 
@@ -1590,7 +1625,7 @@ describe.each([
   ])('%s is sent once, and its failure thrown', async (_method, ask) => {
     const t = setup(answer);
     await failure(ask(t.api));
-    expect([t.calls.length, t.signedOut, t.tokens()]).toEqual([1, [], pair(1)]);
+    expect([t.calls.length, t.signedOut, t.tokens()]).toEqual([1, [], session(1)]);
   });
 });
 
@@ -1609,7 +1644,7 @@ describe('onSignedOut', () => {
     'hears of %s once the store is already clear',
     async (_what, script: Script, reason) => {
       const heard: [string, StoredSession | null][] = [];
-      const t = setup(script, pair(1), {
+      const t = setup(script, session(1), {
         config: { onSignedOut: (why) => heard.push([why, t.tokens()]) },
       });
       await failure(t.api.me());

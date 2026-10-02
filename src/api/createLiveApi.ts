@@ -1,36 +1,46 @@
 // The live PlatformApi: the app's HTTP client for a company's platform under /api/mobile/v1 (the
 // platform's docs/MOBILE_API.md). Screens never call fetch; they reach this through src/queries.
 //
-// The token store answers a StoredSession, and must read the refresh token from storage on every
-// `get`, make a `set` visible to every later `get`, and write in call order. The client ends a
-// session on its own only when the platform revokes it or refuses its refresh, and says so
-// through onSignedOut. A 426 tells onUpgradeRequired and keeps the session. Retry logic keys on
-// the platform's `code`, never on a status alone: only a 401 `unauthorized` or `session_revoked`
-// is ever sent again, and once.
+// The token store answers a StoredSession, and must read its shared part from storage on every
+// `get`, make `rotate` and `clear` visible to every later `get`, and write in call order. The
+// client ends a session on its own only when the platform revokes it or refuses its refresh, and
+// says so through onSignedOut. A 426 tells onUpgradeRequired and keeps the session. Retry logic
+// keys on the platform's `code`, never on a status alone: only a 401 `unauthorized` or
+// `session_revoked` is ever sent again, and once.
 
 import { MobileApiError } from './MobileApiError';
 import type { PlatformApi } from './PlatformApi';
 import type { LoginResult, MobileTokens, SessionView } from './types';
 
 /**
- * What the token store answers: the refresh token, and this page's access token. `accessToken` is
- * null when this page has none yet (after a restart): the next signed-in call refreshes first. A
- * MobileTokens pair is a StoredSession too.
+ * What the token store answers. A sign-in's pair is stored by the session layer under a new
+ * sessionKey; the client's rotate() keeps the key and replaces the tokens; clear() forgets
+ * everything. accessToken is null when this page has none yet (after a restart): the next
+ * signed-in call refreshes first.
  */
 export type StoredSession = {
+  /** Names the sign-in this session came from; random per sign-in, unchanged by a refresh. */
+  readonly sessionKey: string;
   readonly refreshToken: string;
   readonly accessToken: string | null;
 };
 
 /**
- * Where the app keeps the session. `get` reads the refresh token from storage every time (the
- * tabs share it), a `set` is visible to every `get` made after it was called, and writes land in
- * call order; `set(null)` forgets the session. A store that rejects makes the call reject
- * `storage_error`, or, where the platform has already answered, is reported beside its answer.
+ * Where the app keeps the session; the tabs share it. The client never starts a session (the
+ * session layer's own start(tokens) does, outside this interface), and writes land in call order.
+ * A store that rejects makes the call reject `storage_error`, or, where the platform has already
+ * answered, is reported beside its answer.
  */
 export type TokenStore = {
+  /**
+   * Reads the shared part (sessionKey, refresh token) from storage every time; never a copy in
+   * memory.
+   */
   get(): Promise<StoredSession | null>;
-  set(tokens: MobileTokens | null): Promise<void>;
+  /** After a refresh: the new pair under the same sessionKey. Visible to every later get(). */
+  rotate(tokens: MobileTokens): Promise<void>;
+  /** Forgets the session. Visible to every later get(). */
+  clear(): Promise<void>;
 };
 
 /** The tokens a request went out with: an access token, and the refresh token stored beside it. */
@@ -83,7 +93,7 @@ export type LiveApiConfig = {
   onStorageError?: ((error: unknown) => void) | undefined;
 };
 
-/** What createLiveApi returns: the interface, and in test mode `_test_setTokens`, a store write. */
+/** What createLiveApi returns: the interface, and in test mode `_test_setTokens`, a rotate(). */
 export type LiveApi = PlatformApi & { _test_setTokens?: (tokens: MobileTokens) => Promise<void> };
 
 /** The name of a PlatformApi method (`mode` is not one). */
@@ -637,7 +647,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
   async function signOut(e: MobileApiError, reason: SignedOutReason): Promise<never> {
     generation += 1;
     try {
-      await tokenStore.set(null);
+      await tokenStore.clear();
     } catch (cause) {
       throw withCause(e, cause);
     } finally {
@@ -694,7 +704,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       throw e;
     }
     try {
-      if (unchanged(await tokenStore.get())) await tokenStore.set(fresh);
+      if (unchanged(await tokenStore.get())) await tokenStore.rotate(fresh);
     } catch (error) {
       // The platform has rotated the token, so dropping the pair would strand this device: its
       // callers get it all the same, and the store's failure is reported.
@@ -739,7 +749,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
       // call that hears a 401 from now on belongs to an ended session and changes nothing.
       generation += 1;
       try {
-        await tokenStore.set(null);
+        await tokenStore.clear();
       } catch (cause) {
         broken ??= { cause };
       }
@@ -822,7 +832,7 @@ export function createLiveApi(config: LiveApiConfig): LiveApi {
     oracleAsk: (body) => call('oracleAsk', { body }),
   };
 
-  // Tests put a session in the store without signing in.
-  if (import.meta.env.MODE === 'test') api._test_setTokens = (tokens) => tokenStore.set(tokens);
+  // Tests rotate the stored session to a pair of their own, keeping its key, without a refresh.
+  if (import.meta.env.MODE === 'test') api._test_setTokens = (tokens) => tokenStore.rotate(tokens);
   return api;
 }
