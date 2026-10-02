@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SampleApi } from '../api/createSampleApi';
+import { createSampleApi, type SampleApi } from '../api/createSampleApi';
 import { createSecureStorage } from '../platform/web/storage';
 import { memoryKvStore } from '../test/memoryKvStore';
 import { createAppApi } from './appApi';
@@ -69,6 +69,72 @@ describe('createAppApi', () => {
       'X-Device-Name': 'Chrome%20on%20Windows',
     });
     expect(wired.events.onUpgradeRequired).toHaveBeenCalledWith('2.0.0');
+  });
+
+  describe('wired to the session', () => {
+    const live = {
+      config: readAppConfig({ VITE_PLATFORM_URL: 'https://invest.example.com' }, '1.4.2'),
+      search: '',
+      userAgent: CHROME_ON_WINDOWS,
+    };
+    const pair = {
+      tokenType: 'Bearer' as const,
+      accessToken: 'a1',
+      refreshToken: 'r1',
+      accessExpiresAt: '2026-10-01T12:15:00.000Z',
+      refreshExpiresAt: '2026-10-31T12:00:00.000Z',
+    };
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    it('sends the access token the session’s store holds', async () => {
+      const wired = wiring();
+      await wired.tokenStore.start(pair);
+      const me = await createSampleApi({ latencyMs: 0 }).me();
+      const fetch = vi.fn(() => Promise.resolve(json(me)));
+      vi.stubGlobal('fetch', fetch);
+      await createAppApi(wired, live).me();
+      const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer a1' });
+    });
+
+    it('tells the session when the platform revokes it', async () => {
+      const wired = wiring();
+      await wired.tokenStore.start(pair);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => Promise.resolve(json({ error: 'session_revoked' }, 401))),
+      );
+      await expect(createAppApi(wired, live).me()).rejects.toMatchObject({
+        code: 'session_revoked',
+      });
+      expect(wired.events.onSignedOut).toHaveBeenCalledWith('session_revoked');
+      expect(await wired.tokenStore.get()).toBeNull();
+    });
+
+    it('tells the session when the store cannot keep a refreshed pair', async () => {
+      const storage = createSecureStorage({ db: memoryKvStore() });
+      await createTokenStore(storage, { channel: null }).start(pair);
+      // A page that has just started holds no access token: its first call refreshes first.
+      const reloaded = createTokenStore(storage, { channel: null });
+      const failure = new Error('disk full');
+      const tokenStore = { ...reloaded, rotate: () => Promise.reject(failure) };
+      const me = await createSampleApi({ latencyMs: 0 }).me();
+      const refreshed = { ...pair, accessToken: 'a2', refreshToken: 'r2' };
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string) =>
+          Promise.resolve(json(url.endsWith('/auth/refresh') ? refreshed : me)),
+        ),
+      );
+      const events = { onSignedOut: vi.fn(), onUpgradeRequired: vi.fn(), onStorageError: vi.fn() };
+      await createAppApi({ events, tokenStore }, live).me();
+      expect(events.onStorageError).toHaveBeenCalledWith(failure);
+      expect(events.onSignedOut).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses a platform address the client cannot use', () => {
