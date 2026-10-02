@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { join } from 'node:path';
 import { MobileApiError } from '../../api/MobileApiError';
 import { appConfig } from '../../session/appConfig';
+import { cssRule } from '../../test/cssRules';
 import { renderWithApp } from '../../test/renderWithApp';
 
 describe('SignInScreen', () => {
@@ -173,9 +175,42 @@ describe('SignInScreen', () => {
     return found;
   }
 
-  it('keeps a status line in its header, empty while the company’s details are in', async () => {
+  /** The screen's status line for the company's details (found by its place: CSS classes). */
+  function statusLine() {
+    const line = document.querySelector('.unbranded > [role="status"]');
+    if (!(line instanceof HTMLElement)) throw new Error('The screen has no status line.');
+    return line;
+  }
+
+  it('keeps its status line out of the header, empty while the details are in', async () => {
     renderWithApp({ route: '/sign-in' });
-    expect(within(await header()).getByRole('status')).toBeEmptyDOMElement();
+    const top = await header();
+    expect(statusLine()).toBeEmptyDOMElement();
+    expect(top.contains(statusLine())).toBe(false);
+  });
+
+  it('keeps one status line from the loading view to the form, and fills it there', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    renderWithApp({
+      route: '/sign-in',
+      mode: 'live',
+      live: {
+        answer: (path) =>
+          path === '/brand'
+            ? held.then(() => Promise.reject(new TypeError('Failed to fetch')))
+            : undefined,
+      },
+    });
+    expect(await screen.findByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    const line = statusLine(); // in the page with the loading view, empty
+    expect(line).toBeEmptyDOMElement();
+    release(); // the company's details fail to load
+    await waitFor(() =>
+      expect(line).toHaveTextContent("The company's details couldn't be loaded."),
+    );
+    expect(statusLine()).toBe(line);
+    expect(await header()).toBeInTheDocument(); // the form is up, around the same line
   });
 
   it('fills its status line once the line is in the page, so it is announced', async () => {
@@ -195,12 +230,21 @@ describe('SignInScreen', () => {
           path === '/brand' ? Promise.reject(new TypeError('Failed to fetch')) : undefined,
       },
     });
-    const line = within(await header()).getByRole('status');
     await waitFor(() =>
-      expect(line).toHaveTextContent("The company's details couldn't be loaded."),
+      expect(statusLine()).toHaveTextContent("The company's details couldn't be loaded."),
     );
     await waitFor(() => expect(filled).toContain("The company's details couldn't be loaded."));
     watch.disconnect();
+  });
+
+  it('adds no gap to a branded header: the status line is a row of the screen', () => {
+    const css = join(import.meta.dirname, 'SignInScreen.module.css');
+    const page = cssRule(css, '.screen');
+    expect(page['grid-template-rows']).toBe('auto 1fr');
+    for (const gap of ['gap', 'row-gap', 'grid-gap']) expect(page[gap], gap).toBeUndefined();
+    expect(Object.keys(cssRule(css, '.unbranded')).filter((p) => p.startsWith('margin'))).toEqual(
+      [],
+    );
   });
 
   it('says the company’s details did not load, and tries again', async () => {
@@ -224,7 +268,7 @@ describe('SignInScreen', () => {
       await screen.findByRole('heading', { level: 1, name: 'Everest Reserve' }),
     ).toBeInTheDocument();
     expect(screen.queryByText("The company's details couldn't be loaded.")).toBeNull();
-    expect(within(await header()).getByRole('status')).toBeEmptyDOMElement();
+    expect(statusLine()).toBeEmptyDOMElement();
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
   });
 

@@ -4,11 +4,13 @@
  * door below it, edged rather than filled, so the form stays the first thing to do.
  */
 
+/* Two rows: the status line (no height while empty) above everything else, centred in the rest. */
 .screen {
   position: relative;
   z-index: 1;
   box-sizing: border-box;
   display: grid;
+  grid-template-rows: auto 1fr;
   place-items: center;
   min-height: 100dvh;
   padding: calc(var(--safe-top) + var(--space-8)) max(var(--space-4), var(--safe-right))
@@ -83,8 +85,10 @@
   text-wrap: balance;
 }
 
-/* The company's details did not load: one quiet line and the way to try again. The line stays in
-   the page, empty and taking no room otherwise, so what fills it is announced. */
+/* The company's details did not load: one quiet line and the way to try again. It is the screen's
+   first row, the same node in the loading view and the form, so what fills it is announced; empty,
+   it has no height, and the screen's grid has no gap. It is not in the header, whose gap it would
+   add to. */
 .unbranded {
   display: grid;
   justify-items: center;
@@ -93,7 +97,7 @@
 }
 
 .unbranded[data-shown] {
-  margin-top: var(--space-2);
+  padding-bottom: var(--space-6);
 }
 
 .panel {

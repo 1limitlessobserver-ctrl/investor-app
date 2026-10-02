@@ -77,10 +77,27 @@ export function SignInScreen() {
   if (status === 'signed-in' || status === 'locked') {
     return <Navigate to={nextPathFrom(params.get('next'))} replace />;
   }
+  // The company's details did not load: a line saying so, and the way to try again. The line is
+  // the screen's first row, one node from the loading view to the form, so the failure fills a
+  // region already in the page; outside the header, it adds nothing to the header's layout.
+  const brandFailed = brand === null && brandQuery.isError;
+  const unbranded = (
+    <div className={styles.unbranded} data-shown={brandFailed || undefined}>
+      <p role="status" className={styles.lead}>
+        {brandFailed && "The company's details couldn't be loaded."}
+      </p>
+      {brandFailed && (
+        <Button variant="outline" size="sm" onClick={() => void brandQuery.refetch()}>
+          Try again
+        </Button>
+      )}
+    </div>
+  );
   // The company's identity first: wait for it while it is on its way (never offline).
   if (status === 'loading' || (brand === null && brandQuery.fetchStatus === 'fetching')) {
     return (
       <main className={styles.screen}>
+        {unbranded}
         <StateView kind="loading" className={styles.loading} />
       </main>
     );
@@ -140,7 +157,6 @@ export function SignInScreen() {
   }
 
   const name = brand?.name ?? (appConfig.productName || 'Sign in');
-  const brandFailed = brand === null && brandQuery.isError;
   const links = linksFor(brand);
   const onPasswordStep = step.name === 'password';
   // Signing in: a message the platform tied to neither field is the form's one alert. The code
@@ -167,6 +183,7 @@ export function SignInScreen() {
 
   return (
     <main className={styles.screen} aria-labelledby={titleId}>
+      {unbranded}
       <div className={styles.column}>
         <header className={styles.hero}>
           <div className={styles.emblem} aria-hidden="true">
@@ -185,17 +202,6 @@ export function SignInScreen() {
             {name}
           </h1>
           {brand?.tagline && <p className={styles.tagline}>{brand.tagline}</p>}
-          <div className={styles.unbranded} data-shown={brandFailed || undefined}>
-            <StatusLine
-              className={styles.lead}
-              text={brandFailed ? "The company's details couldn't be loaded." : null}
-            />
-            {brandFailed && (
-              <Button variant="outline" size="sm" onClick={() => void brandQuery.refetch()}>
-                Try again
-              </Button>
-            )}
-          </div>
         </header>
 
         <Panel className={styles.panel} padding="lg" aria-labelledby={formTitleId}>
@@ -329,16 +335,4 @@ export function SignInScreen() {
       </span>
     </main>
   );
-}
-
-/**
- * A status line that is always in the page, so what fills it is announced: the text goes in after
- * the line does (a live region that arrives with its text is not read out).
- */
-function StatusLine({ text, className }: { text: string | null; className?: string | undefined }) {
-  const line = useRef<HTMLParagraphElement>(null);
-  useEffect(() => {
-    if (line.current) line.current.textContent = text ?? '';
-  }, [text]);
-  return <p ref={line} role="status" className={className} />;
 }
