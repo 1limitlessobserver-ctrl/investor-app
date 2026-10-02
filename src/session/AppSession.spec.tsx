@@ -2309,3 +2309,90 @@ describe('AppSession: a lock set up after its offer closed', () => {
     expect(localStorage.getItem('app.lockEnabled')).toBeNull();
   });
 });
+
+describe('AppSession: a look at the lock that fails', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    document.title = '';
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('confirms nothing, and says the lock could not be checked', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let failing = false;
+    const verify = vi.fn(() => Promise.resolve(true));
+    const device = fakePlatform({ lock: { verify } });
+    const enrolled = device.lock.enrolled.bind(device.lock);
+    device.lock.enrolled = () =>
+      failing ? Promise.reject(new Error('UnknownError: IDB transaction failed')) : enrolled();
+    const user = await launch(createSampleApi({ latencyMs: 0 }), device);
+    await user.click(screen.getByText('enter'));
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+    await device.lock.enrollWebAuthn({ id: 'inv_1', email: 'investor@sample.app' }); // elsewhere
+    failing = true; // and this tab's look at the device's lock fails
+    await user.click(screen.getByText('confirm'));
+    await waitFor(() => expect(document.title).toBe('cancelled'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(verify).not.toHaveBeenCalled();
+    const notice = screen.getByText("The lock couldn't be checked. Try again.");
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+    expect(status()).toHaveTextContent('signed-in');
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('never ends the session on a look at the lock that fails', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform();
+    const a = openTab(device, liveOver());
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.signIn(pairOf(1));
+    a.session.skipLockSetup();
+    // Another tab of this session sets up the lock, and this tab's look at it fails.
+    await device.lock.enrollWebAuthn({ id: 'inv_1', email: 'investor@sample.app' });
+    device.lock.enrolled = () => Promise.reject(new Error('UnknownError: IDB transaction failed'));
+    localStorage.setItem('app.lockEnabled', 'true');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'app.lockEnabled', newValue: 'true' }));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.status()).toBe('signed-in');
+    expect(await storedKey(device)).not.toBeNull();
+  });
+
+  it.each([
+    ['on', true],
+    ['off', false],
+  ])('leaves the lock be, and says so, when it cannot be read to turn it %s', async (_, on) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const device = fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } });
+    const a = openTab(device, () => createSampleApi({ latencyMs: 0 }));
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.enterSample();
+    a.session.skipLockSetup();
+    device.lock.enrolled = () => Promise.reject(new Error('UnknownError: IDB transaction failed'));
+    expect(await a.session.setLockEnabled(on)).toBe(false);
+    expect(a.session.getSnapshot().notice).toBe("The lock couldn't be checked. Try again.");
+    expect(a.session.getSnapshot().lockSetup).toBeNull();
+    expect(a.status()).toBe('signed-in');
+  });
+
+  it('says nothing of a failed look at the lock once the investor signed out', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let fail!: (error: Error) => void;
+    const api = createSampleApi({ latencyMs: 0 });
+    vi.spyOn(api, 'logout').mockReturnValue(new Promise<void>(() => undefined));
+    const device = fakePlatform({ lock: { enrolled: () => Promise.resolve(null) } });
+    const a = openTab(device, () => api);
+    await waitFor(() => expect(a.status()).toBe('signed-out'));
+    await a.session.enterSample();
+    a.session.skipLockSetup();
+    device.lock.enrolled = () => new Promise((_, reject) => (fail = reject));
+    const confirming = a.session.confirm('Send $10.00 to $grace'); // it looks at the lock
+    void a.session.signOut(); // and the investor signs out meanwhile
+    fail(new Error('UnknownError: IDB transaction failed'));
+    expect(await confirming).toBe(false);
+    expect(a.session.getSnapshot().notice).toBeNull();
+  });
+});

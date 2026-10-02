@@ -149,6 +149,9 @@ type Check = { ok: boolean; attemptsLeft?: number | undefined };
 export type EndReason =
   'investor' | 'revoked' | 'refresh_failed' | 'storage' | 'lock_gone' | 'elsewhere';
 
+/** What a fresh look at the device's lock found: see refreshLock(). */
+type LockRead = 'stands' | 'gone' | 'unread';
+
 /** A sign-out or an end of the session under way, and the generation it started. */
 type Ending = { gen: number; done: Promise<void> };
 
@@ -494,23 +497,24 @@ export function createSessionController(deps: SessionDeps) {
    * removed it, so the session never goes by what it saw at launch. When nothing can check the
    * investor any more (a locked app, the lock on, or a lock this session knew, with no lock left
    * on the device) the session ends here, as at launch, without telling the platform. Resolves
-   * whether the session still stands. A lock that cannot be read keeps what the session knew,
-   * except a lost key, which signs out.
+   * 'stands' while the session does, 'gone' once it ended or moved on, and 'unread' when the lock
+   * could not be read: that decides nothing, and the session keeps what it knew (a lost key,
+   * though, resets storage and signs out).
    */
-  async function refreshLock(): Promise<boolean> {
+  async function refreshLock(): Promise<LockRead> {
     const gen = generation;
     const knew = state.lockMethod !== null;
-    let method = state.lockMethod;
+    let method: LockMethod | null;
     try {
       method = await platform.lock.enrolled();
     } catch (error) {
-      if (gen !== generation) return false;
-      if (isUnreadableKey(error)) {
-        await storageFailed(error);
-        return false;
-      }
+      if (gen !== generation) return 'gone';
+      reportProblem('reading the device lock', error);
+      if (!isUnreadableKey(error)) return 'unread';
+      await storageFailed(error);
+      return 'gone';
     }
-    if (gen !== generation) return false;
+    if (gen !== generation) return 'gone';
     const choice = lockPreference.read();
     if (method !== state.lockMethod || choice !== state.lockChoice) {
       set({ lockMethod: method, lockChoice: choice });
@@ -519,9 +523,9 @@ export function createSessionController(deps: SessionDeps) {
     // last wrong passcode wipes it, and a confirmation must never then go through unasked.
     if (method === null && (knew || state.status === 'locked' || lockEnabled())) {
       void endUnlessMoved('lock_gone', gen);
-      return false;
+      return 'gone';
     }
-    return true;
+    return 'stands';
   }
 
   function lockNow(): void {
@@ -533,8 +537,10 @@ export function createSessionController(deps: SessionDeps) {
   function lock(): void {
     if (state.status !== 'signed-in') return;
     if (state.lockMethod !== null) lockNow();
-    void refreshLock().then((stands) => {
-      if (stands && state.status === 'signed-in' && state.lockMethod !== null) lockNow();
+    void refreshLock().then((read) => {
+      if (read === 'stands' && state.status === 'signed-in' && state.lockMethod !== null) {
+        lockNow();
+      }
     });
   }
 
@@ -545,10 +551,9 @@ export function createSessionController(deps: SessionDeps) {
   function lockAfterHidden(): void {
     if (state.status !== 'signed-in') return;
     if (lockEnabled() && state.lockMethod !== null) lockNow();
-    void refreshLock().then((stands) => {
-      if (stands && state.status === 'signed-in' && lockEnabled() && state.lockMethod !== null) {
-        lockNow();
-      }
+    void refreshLock().then((read) => {
+      const on = lockEnabled() && state.lockMethod !== null;
+      if (read === 'stands' && state.status === 'signed-in' && on) lockNow();
     });
   }
 
@@ -615,8 +620,10 @@ export function createSessionController(deps: SessionDeps) {
 
   async function confirm(reason: string, options: ConfirmOptions = {}): Promise<boolean> {
     if (state.status !== 'signed-in' || leavingNow()) return false;
-    // The lock the device has now decides what the sheet asks for.
-    if (!(await refreshLock()) || state.status !== 'signed-in') return false;
+    // The lock the device has now decides what the sheet asks for; unread, nothing is confirmed.
+    const read = await refreshLock();
+    if (read === 'unread') set({ notice: SESSION_COPY.checkFailed });
+    if (read !== 'stands' || state.status !== 'signed-in') return false;
     settleConfirmation?.(false); // a newer confirmation replaces one still open
     return new Promise((resolve) => {
       settleConfirmation = resolve;
@@ -810,7 +817,9 @@ export function createSessionController(deps: SessionDeps) {
 
   async function setLockEnabled(on: boolean): Promise<boolean> {
     if (state.status !== 'signed-in') return false;
-    if (!(await refreshLock()) || state.status !== 'signed-in') return false;
+    const read = await refreshLock();
+    if (read === 'unread') set({ notice: SESSION_COPY.checkFailed });
+    if (read !== 'stands' || state.status !== 'signed-in') return false;
     if (!on) {
       if (!lockEnabled()) return true;
       const ok = await confirm(SESSION_COPY.turnOffLock);
