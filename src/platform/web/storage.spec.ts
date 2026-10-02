@@ -188,9 +188,13 @@ describe('secure storage: the key and the sealed entries', () => {
     expect(await storage.get('a')).toBe('1');
   });
 
-  it('keeps its key and values in IndexedDB by default (investor-app / secure)', async () => {
+  it('keeps its key and values in IndexedDB: investor-app-secure / secure', async () => {
     await createSecureStorage().set('refreshToken', 'r-1');
-    const store = createStore('investor-app', 'secure');
+    // A database of its own: idb-keyval makes its one store only when it creates the database.
+    const databases = (await indexedDB.databases()).map((database) => database.name);
+    expect(databases).toContain('investor-app-secure');
+    expect(databases).not.toContain('investor-app');
+    const store = createStore('investor-app-secure', 'secure');
     const key: unknown = await get('secure:key', store);
     expect(key).toBeInstanceOf(CryptoKey);
     const { extractable, algorithm, usages } = key as CryptoKey;
@@ -204,7 +208,7 @@ describe('secure storage: the key and the sealed entries', () => {
   });
 
   it('keeps one key in IndexedDB when two instances first use it at the same time', async () => {
-    await clear(createStore('investor-app', 'secure'));
+    await clear(createStore('investor-app-secure', 'secure'));
     const [first, second] = [createSecureStorage(), createSecureStorage()];
     await Promise.all([first.set('a', '1'), second.set('b', '2')]);
     const again = createSecureStorage();

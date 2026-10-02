@@ -4,10 +4,12 @@
 // IndexedDB entry), so the sealing protects a value copied out of storage and stops a script from
 // carrying the key away; it does not protect against a copy of the whole browser profile.
 //
-// The key is kept in IndexedDB (idb-keyval: database `investor-app`, store `secure`) under
-// `secure:key`, committed in one transaction so that instances starting together keep one key. A
-// stored key that cannot be read (browsers read a value they cannot deserialise as null) is never
-// replaced: every call rejects until reset() removes the values and the key.
+// The key is kept in IndexedDB (idb-keyval: database `investor-app-secure`, store `secure`) under
+// `secure:key`, committed in one transaction so that instances starting together keep one key. No
+// other store may share that database: idb-keyval creates its object store only when it creates
+// the database, so a second store name there would never get one. A stored key that cannot be read
+// (browsers read a value they cannot deserialise as null) is never replaced: every call rejects
+// until reset() removes the values and the key.
 //
 // Each value is kept under `secure:<name>` as { iv, data }: a fresh random 12-byte IV and the
 // ciphertext, sealed with its name as additional data so it cannot be moved to another name. An
@@ -219,7 +221,7 @@ async function openUnlessStale(
 }
 
 function indexedDbStore(): KvStore {
-  const store = createStore('investor-app', 'secure');
+  const store = createStore('investor-app-secure', 'secure');
   return {
     get: (key) => get<unknown>(key, store),
     set: (key, value) => set(key, value, store),
