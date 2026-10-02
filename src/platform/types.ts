@@ -15,6 +15,11 @@ export interface SecureStorage {
   remove(key: string): Promise<void>;
   /** Removes every value. */
   clear(): Promise<void>;
+  /**
+   * Removes every value and the key. Where the stored key cannot be read, every other call rejects
+   * with `Error('The secure storage key cannot be read.')`; reset() is the way on from there.
+   */
+  reset(): Promise<void>;
 }
 
 export type LockMethod = 'webauthn' | 'passcode';

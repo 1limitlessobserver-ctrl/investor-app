@@ -5,7 +5,10 @@
 // carrying the key away; it does not protect against a copy of the whole browser profile.
 //
 // The key is kept in IndexedDB (idb-keyval: database `investor-app`, store `secure`) under
-// `secure:key`, committed in one transaction so that instances starting together keep one key.
+// `secure:key`, committed in one transaction so that instances starting together keep one key. A
+// stored key that cannot be read (browsers read a value they cannot deserialise as null) is never
+// replaced: every call rejects until reset() removes the values and the key.
+//
 // Each value is kept under `secure:<name>` as { iv, data }: a fresh random 12-byte IV and the
 // ciphertext, sealed with its name as additional data so it cannot be moved to another name. An
 // instance runs its calls one at a time, in call order. A value that no longer decrypts (its key
@@ -20,12 +23,16 @@ export interface KvStore {
   set(key: string, value: unknown): Promise<void>;
   del(key: string): Promise<void>;
   keys(): Promise<string[]>;
-  /** Replaces the value with `updater(old)` in one transaction, and answers what it stored. */
+  /**
+   * Replaces the value with `updater(old)` in one transaction, and answers what it stored. An
+   * updater that throws stores nothing, and the call rejects with its error.
+   */
   update<T>(key: string, updater: (old: T | undefined) => T): Promise<T>;
 }
 
 const PREFIX = 'secure:';
 const KEY_ENTRY = `${PREFIX}key`;
+const KEY_UNREADABLE = 'The secure storage key cannot be read.';
 
 /** What a value is kept as. */
 interface Sealed {
@@ -75,17 +82,18 @@ export function createSecureStorage(
     get: (name) =>
       inOrder(async () => {
         const entry = entryName(name);
+        const cryptoKey = await theKey();
         const sealed = await db.get(entry);
         if (sealed === undefined) return null;
-        const cryptoKey = await theKey();
         try {
           return await open(cryptoKey, name, sealed);
         } catch {
           // Another instance may have stored a different key since this one read it: adopt the
           // stored key and try once more before calling the value stale. (IndexedDB answers a new
-          // object on every read, so there the second try always runs.)
-          const stored = await keyStore.get(KEY_ENTRY);
-          if (stored instanceof CryptoKey && stored !== cryptoKey) {
+          // object on every read, so there the second try always runs.) A stored key that cannot be
+          // read stops the call here, with the value kept.
+          const stored = await storedKey(keyStore);
+          if (stored && stored !== cryptoKey) {
             key = Promise.resolve(stored);
             try {
               return await open(stored, name, sealed);
@@ -102,12 +110,26 @@ export function createSecureStorage(
         const entry = entryName(name);
         await db.set(entry, await seal(await theKey(), name, value));
       }),
-    remove: (name) => inOrder(() => db.del(entryName(name))),
+    remove: (name) =>
+      inOrder(async () => {
+        const entry = entryName(name);
+        await theKey(); // like every call, refused while the stored key cannot be read
+        await db.del(entry);
+      }),
     clear: () =>
       inOrder(async () => {
+        await theKey();
         for (const entry of await db.keys()) {
           if (entry.startsWith(PREFIX) && entry !== KEY_ENTRY) await db.del(entry);
         }
+      }),
+    reset: () =>
+      inOrder(async () => {
+        key = undefined;
+        for (const entry of await db.keys()) {
+          if (entry.startsWith(PREFIX)) await db.del(entry);
+        }
+        if (keyStore !== db) await keyStore.del(KEY_ENTRY);
       }),
   };
 }
@@ -119,20 +141,31 @@ function entryName(name: string): string {
   return entry;
 }
 
+/** The key stored, or undefined when there is none; throws when what is stored is not a key. */
+async function storedKey(store: KvStore): Promise<CryptoKey | undefined> {
+  const stored = await store.get(KEY_ENTRY);
+  if (stored === undefined || stored instanceof CryptoKey) return stored;
+  throw new Error(KEY_UNREADABLE);
+}
+
 /**
- * The stored key; when there is none (or what is stored is not a key), a new one, committed in one
- * transaction that keeps a key another instance stored first. Either way, the key that is stored.
+ * The stored key; when there is none, a new one, committed in one transaction that keeps a key
+ * another instance stored first. Either way, the key that is stored. Something stored that is not
+ * a key is never replaced: that throws.
  */
 async function loadKey(store: KvStore): Promise<CryptoKey> {
-  const stored = await store.get(KEY_ENTRY);
-  if (stored instanceof CryptoKey) return stored;
+  const stored = await storedKey(store);
+  if (stored) return stored;
   const generated = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, [
     'encrypt',
     'decrypt',
   ]);
-  return store.update<CryptoKey>(KEY_ENTRY, (current) =>
-    current instanceof CryptoKey ? current : generated,
-  );
+  const committed = await store.update<unknown>(KEY_ENTRY, (current) => {
+    if (current === undefined) return generated;
+    if (current instanceof CryptoKey) return current;
+    throw new Error(KEY_UNREADABLE); // stores nothing
+  });
+  return committed as CryptoKey;
 }
 
 async function seal(key: CryptoKey, name: string, value: string): Promise<Sealed> {

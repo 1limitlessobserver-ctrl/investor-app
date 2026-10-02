@@ -247,3 +247,79 @@ describe('secure storage: the call queue', () => {
     expect(await storage.get('b')).toBe('2');
   });
 });
+
+describe('secure storage: a stored key that cannot be read', () => {
+  const KEY_UNREADABLE = 'The secure storage key cannot be read.';
+
+  it('rejects every call, and replaces, removes and writes nothing', async () => {
+    // Chromium and WebKit read back a value they cannot deserialise as null.
+    for (const unreadable of [null, 'not a key', {}]) {
+      const db = memoryKvStore();
+      await createSecureStorage({ db }).set('a', '1');
+      db.raw.set('secure:key', unreadable);
+      const before = new Map(db.raw);
+      const storage = createSecureStorage({ db });
+      const calls = [
+        () => storage.get('a'),
+        () => storage.get('absent'),
+        () => storage.set('b', '2'),
+        () => storage.remove('a'),
+        () => storage.clear(),
+      ];
+      for (const call of calls) {
+        await expect(call(), JSON.stringify(unreadable)).rejects.toThrow(KEY_UNREADABLE);
+      }
+      expect(db.raw).toEqual(before);
+    }
+  });
+
+  it('never replaces it from the transaction that commits a new key either', async () => {
+    const memory = memoryKvStore();
+    memory.raw.set('secure:key', null);
+    // A first read that misses the entry, as if it were stored just after: only the transaction
+    // that commits the new key sees it.
+    const db: KvStore = {
+      ...memory,
+      get: (key) => (key === 'secure:key' ? Promise.resolve(undefined) : memory.get(key)),
+    };
+    await expect(createSecureStorage({ db }).set('a', '1')).rejects.toThrow(KEY_UNREADABLE);
+    expect([...memory.raw]).toEqual([['secure:key', null]]);
+  });
+
+  it('keeps a value it cannot decrypt when the stored key has become unreadable', async () => {
+    const db = memoryKvStore();
+    const storage = createSecureStorage({ db });
+    await storage.set('a', '1');
+    db.raw.set('secure:b', db.raw.get('secure:a')); // sealed for another name: it will not decrypt
+    db.raw.set('secure:key', null);
+    await expect(storage.get('b')).rejects.toThrow(KEY_UNREADABLE);
+    expect(db.raw.has('secure:b')).toBe(true);
+  });
+
+  it('reset() removes every value and the key; the next call seals under a new key', async () => {
+    const db = memoryKvStore();
+    await createSecureStorage({ db }).set('a', '1');
+    db.raw.set('secure:key', null);
+    db.raw.set('app.theme', 'ivory');
+    const storage = createSecureStorage({ db });
+    await expect(storage.get('a')).rejects.toThrow(KEY_UNREADABLE);
+    await storage.reset();
+    expect([...db.raw.keys()]).toEqual(['app.theme']);
+    await storage.set('b', '2');
+    expect(db.raw.get('secure:key')).toBeInstanceOf(CryptoKey);
+    expect(await createSecureStorage({ db }).get('b')).toBe('2');
+  });
+
+  it("reset() forgets the instance's key too, and clears a key store of its own", async () => {
+    const db = memoryKvStore();
+    const keyStore = memoryKvStore();
+    const storage = createSecureStorage({ db, keyStore });
+    await storage.set('a', '1');
+    const old = keyStore.raw.get('secure:key');
+    await storage.reset();
+    expect([...db.raw.keys(), ...keyStore.raw.keys()]).toEqual([]);
+    await storage.set('b', '2');
+    expect(keyStore.raw.get('secure:key')).not.toBe(old);
+    expect(await createSecureStorage({ db, keyStore }).get('b')).toBe('2');
+  });
+});
