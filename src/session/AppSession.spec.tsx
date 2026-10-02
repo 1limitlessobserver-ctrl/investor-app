@@ -50,6 +50,13 @@ const hidden = (value: 'hidden' | 'visible') => {
   Object.defineProperty(document, 'visibilityState', { value, configurable: true });
   document.dispatchEvent(new Event('visibilitychange'));
 };
+
+// The page as each test left it: back online, in view, untitled (vitest.setup.ts does the same).
+afterEach(() => {
+  Reflect.deleteProperty(navigator, 'onLine');
+  Reflect.deleteProperty(document, 'visibilityState');
+  document.title = '';
+});
 const status = () => screen.getByTestId('status');
 const urlOf = (input: RequestInfo | URL) =>
   typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;

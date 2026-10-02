@@ -1,3 +1,4 @@
+import { onlineManager } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { get, set } from 'idb-keyval';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -59,6 +60,24 @@ describe('vitest.setup', () => {
     it('starts the next test on a fresh device', () => {
       expect(localStorage.length).toBe(0);
       expect(sessionStorage.length).toBe(0);
+    });
+  });
+
+  describe('the network and the page', () => {
+    it('lets a test take the device offline and hide the page', () => {
+      Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      onlineManager.setOnline(false);
+      expect(navigator.onLine).toBe(false);
+      expect(document.visibilityState).toBe('hidden');
+    });
+
+    it('starts the next test online, with the page in view', () => {
+      expect(Object.hasOwn(navigator, 'onLine')).toBe(false);
+      expect(navigator.onLine).toBe(true);
+      expect(Object.hasOwn(document, 'visibilityState')).toBe(false);
+      expect(document.visibilityState).toBe('visible');
+      expect(onlineManager.isOnline()).toBe(true);
     });
   });
 
